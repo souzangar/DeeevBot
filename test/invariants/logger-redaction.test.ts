@@ -10,6 +10,9 @@
 //   is passed as a number or as a string, in any field: a count or a
 //   duration of 10000 or more is logged only coarsened ("420M"), never as
 //   its digits;
+// - the report-id field keeps a report id (20 lowercase letters, the shape
+//   src/db/ids.ts draws) and drops anything else, a username-shaped handle
+//   and a hex reporter reference or digest included;
 // - the logger is the only code in src/ that touches the console.
 // The commit gate runs this file on every commit (`npm run test:invariants`).
 import { GrammyError, HttpError } from 'grammy';
@@ -18,8 +21,10 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
+import { randomId } from '../../src/db/ids';
 import { AppError } from '../../src/errors/app-error';
 import { consoleLogger, DROPPED, type LogFields } from '../../src/privacy/logger';
+import { reporterRef } from '../../src/privacy/reporter-ref';
 
 // Distinctive fixture values. None is secret-shaped in this source (the
 // commit gate's secret-shape scan reads test files too): the token and the
@@ -194,6 +199,38 @@ describe("critical invariant 6: no Telegram id reaches a log line, an admin's in
     });
     expect(output).toContain('"errorClass":"Error"');
     expectNoneOf(output, [ADMIN_ID, '424242', 'pressed Approve']);
+  });
+});
+
+describe('critical invariant 6: the report-id field carries a report id and nothing else', () => {
+  it('drops a username-shaped value, such as an admin handle', () => {
+    const output = consoleOutput(() => {
+      consoleLogger.log('update.failed', { reportId: 'leaky_admin_handle' });
+    });
+    expect(output).toBe(`{"level":"info","event":"update.failed","reportId":"${DROPPED}"}`);
+    expectNoneOf(output, ['leaky_admin_handle', 'admin_handle']);
+  });
+
+  it('drops a hex-shaped value: a reporter reference, or a digest cut to the id length', async () => {
+    const reference = await reporterRef(ADMIN_ID, 'invariant-test-reference-key');
+    const digest = '0123456789abcdef0123';
+    const output = consoleOutput(() => {
+      consoleLogger.log('update.failed', { reportId: reference });
+      consoleLogger.log('update.failed', { reportId: digest });
+    });
+    expect(output.split('\n')).toEqual([
+      `{"level":"info","event":"update.failed","reportId":"${DROPPED}"}`,
+      `{"level":"info","event":"update.failed","reportId":"${DROPPED}"}`,
+    ]);
+    expectNoneOf(output, [reference, digest, reference.slice(0, 12)]);
+  });
+
+  it('keeps a report id of the shape the ids are drawn in', () => {
+    const reportId = randomId();
+    const output = consoleOutput(() => {
+      consoleLogger.log('update.failed', { reportId });
+    });
+    expect(output).toBe(`{"level":"info","event":"update.failed","reportId":"${reportId}"}`);
   });
 });
 

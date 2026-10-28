@@ -65,7 +65,7 @@ export type LogFields = {
   /** A Bot API `error_code`: an integer from 100 to 999. */
   readonly telegramErrorCode?: number;
   readonly apiMethod?: ApiMethod;
-  /** A report id: 1 to 64 characters from A-Z, a-z, 0-9, _ and -. */
+  /** A report id: exactly 20 lowercase letters a to z, the shape src/db/ids.ts draws. */
   readonly reportId?: string;
   /** Milliseconds, 0 or more, rounded to whole ms: exact below 10000, coarsened from 10000 ("12k"). */
   readonly durationMs?: number;
@@ -94,7 +94,9 @@ const ID_DIGITS = /[0-9]{5,}/;
 /** The smallest number with 5 digits: from here on, a number is logged only coarsened. */
 const ID_FLOOR = 10_000;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
-const REPORT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// Pinned to the id shape (src/db/ids.ts): anything else, a username, a
+// reporter reference or a hex digest included, is dropped.
+const REPORT_ID = /^[a-z]{20}$/;
 
 /**
  * Whether a string holds a bot-token shape, a URL (`://`) or a run of 5 or

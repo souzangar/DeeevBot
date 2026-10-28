@@ -12,8 +12,10 @@ timestamp: 2026-10-28T00:00:00Z
 For whoever works on the code; facts as of 2026-10-28. Phase 2 scaffolded the
 toolchain, and Phase 3 is adding the application modules: so far the core
 (`src/errors/`, `src/config/`, the redacting logger and the reporter reference
-in `src/privacy/`, `src/i18n/` and `src/clock.ts`), with no Telegram wiring
-yet, so the Worker entry is still empty. The decisions: the
+in `src/privacy/`, `src/i18n/` and `src/clock.ts`) and the storage (`src/db/`:
+the SQL port with its D1 and node:sqlite adapters, the Node migrations runner
+and the random ids; `migrations/0001_init.sql`, D1 being the only store), with
+no Telegram wiring yet, so the Worker entry is still empty. The decisions: the
 stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
 storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
 errors in [ADR 0005](../architecture/adr-0005-error-handling-convention.md),
@@ -96,18 +98,28 @@ the documented intentional bypass.
 | Tier | Files | Runs in | Rules |
 |---|---|---|---|
 | unit | `src/**/*.test.ts`, beside the module | plain node | no network; mock at the boundary (the Telegram API, storage, the clock) |
-| workers | `test/workers/**/*.test.ts` | the Workers runtime through `@cloudflare/vitest-plugin`, with the local D1 and Durable Object bindings from `wrangler.jsonc`; no Cloudflare account | for the Cloudflare adapters; pure logic stays in unit |
+| workers | `test/workers/**/*.test.ts` | the Workers runtime through `@cloudflare/vitest-plugin`, with the local D1 binding from `wrangler.jsonc`; no Cloudflare account | for the Cloudflare adapters; pure logic stays in unit |
 | invariants | `test/invariants/**/*.test.ts` | plain node | always run by the commit gate; one spec per stated "must not" |
 
 The three Vitest projects are defined in `vitest.config.ts`. The unit tier
-holds the tests beside each module under `src/`; the workers tier
-`test/workers/smoke.test.ts` (boots the Worker, expects 404); the invariants
-tier `test/invariants/config-redaction.test.ts` and
+holds the tests beside each module under `src/`, every SQL-level one on the
+node:sqlite adapter. The workers tier holds `test/workers/smoke.test.ts`
+(boots the Worker, expects 404), `test/workers/d1.test.ts` (applies
+`migrations/` to the local D1 with `applyD1Migrations`, from the
+`TEST_MIGRATIONS` binding `vitest.config.ts` reads, checks that D1 builds the
+same tables as node:sqlite, and drives the D1 adapter). The invariants tier
+holds
+`test/invariants/config-redaction.test.ts` and
 `test/invariants/logger-redaction.test.ts` (critical invariant 6: the
 configuration is unprintable, and no secret, report data or Telegram id
-reaches a log line). In-memory fakes of the ports live under `test/fakes/`
-(so far the clock and the logger, which is the real redacting logger over a
-recording sink). The duties, from CLAUDE.md's testing conventions:
+reaches a log line), `test/invariants/approval-record.test.ts` (rule 1: the
+approval record and the due query) and `test/invariants/storage-retention.test.ts`
+(rule 8: no member or reporter identity in the schema, every column with a
+classified fate named in the deletion schedule). In-memory fakes of the ports
+live under `test/fakes/` (the clock; the logger, which is the real redacting
+logger over a recording sink), and shared test code under `test/support/`: the
+schema describer and the expected D1 schema both tiers check.
+The duties, from CLAUDE.md's testing conventions:
 
 - every new logic file (service, repository, handler, util) gets a unit test,
   and every stated "must not" a regression test in the same change; refactor
@@ -131,7 +143,11 @@ every `.ts` file, with type information from `tsconfig.json`, and adds:
 - in `src/` outside `src/**/*.test.ts`, `no-restricted-imports` on `node:fs`,
   `node:fs/promises`, `fs`, `fs/promises`, `node:child_process` and
   `child_process`: the Workers runtime has no file system or processes, while
-  unit tests run under node and never reach the bundle.
+  unit tests run under node and never reach the bundle. One override lifts the
+  file-system part for the Node port's own files, `src/node.ts`,
+  `src/db/node-*.ts` and `src/db/migrate.ts` (the migrations runner reads
+  `migrations/*.sql`); the Worker never imports them, and child processes stay
+  forbidden there too.
 
 The kit's tooling (`.claude/`, `scripts/okf/`, `selftest/`, `selftest-okf/`)
 and generated output (`node_modules/`, `dist/`, `coverage/`, `.wrangler/`) are
@@ -164,25 +180,33 @@ Worker entry is wired in a later unit.
 | `WEBHOOK_SECRET` | 1 to 256 characters from A-Z, a-z, 0-9, `_` and `-` (Telegram's `secret_token` alphabet) | required |
 | `WEBHOOK_PATH_SEGMENT` | a URL path segment of A-Z, a-z, 0-9, `_` and `-` | required |
 | `ADMIN_IDS` | comma-separated numeric Telegram user ids, never usernames; at least one | required |
+| `KEYHOLDER_IDS` | comma-separated numeric Telegram user ids of the keyholders, never usernames; at least one; the same rules as `ADMIN_IDS`, and no id in both lists (a keyholder is never an admin). The keyholders receive the alerts and may run `/lockdown`, `/unlock` and `/retract` | required |
 | `REPORTER_REF_KEY` | a non-blank secret | required |
 | `ADMIN_CHAT_ID` | a non-zero integer chat id, negative for groups and channels | required |
-| `MEMBERSHIP_CHAT_ID` | a non-zero integer chat id, negative for groups and channels: the chat whose members may subscribe and get the members' intake limits | required |
-| `MIRROR_CHAT_ID` | optional; a non-zero integer chat id | none: no mirror chat |
-| `DAILY_RECIPIENT_BUDGET` | a positive integer | required, no default |
-| `BROADCAST_BATCH_SIZE` | an integer from 1 to 45 | 35 |
-| `BROADCAST_MESSAGES_PER_SECOND` | an integer from 1 to 25, the decided ceiling | 25 |
-| `APPROVAL_GRACE_MINUTES` | an integer from 1 to 60 | 5 |
-| `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses | 20000 |
+| `MEMBERSHIP_CHAT_ID` | a non-zero integer chat id, negative for groups and channels: the chat whose members get the members' intake limits | required |
+| `BROADCAST_CHAT_ID` | a negative integer chat id: the channel each approved report is posted into, once | required |
+| `ALLOWED_LINK_HOSTS` | comma-separated exact lowercase hostnames, each of a-z, 0-9, dots and hyphens, with no scheme, path or port: the only hosts a post may link to | `instagram.com,www.instagram.com,x.com,twitter.com,www.facebook.com,facebook.com,www.tiktok.com,tiktok.com,t.me` |
+| `LOCKDOWN` | `1` or nothing: the keyholder's override, which no Telegram command can clear | none: off |
+| `APPROVAL_GRACE_MINUTES` | an integer from 1 to 1440 | 30 |
+| `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses, all reports together | 20000 |
+| `MARKS_PER_REPORT` | an integer from 0 to 1000000: the cap on recorded "I reported it" presses for one report | 5000 |
 
 - An empty value counts as absent: a tunable left empty takes its default,
   and an empty required variable fails. A value of spaces only is not absent,
   and no variable accepts it. Variables the schema does not know are ignored.
 - Integers are canonical decimals: no leading zero, exponent or decimal point,
-  and a sign only as the `-` of a chat id. In `ADMIN_IDS` (critical invariant
-  2) spaces around an entry are ignored; an @handle, a username, an empty
-  entry (a doubled, leading or trailing comma), zero, a sign, a leading zero,
-  a decimal, an exponent, hexadecimal, another separator or an id beyond the
-  safe-integer range fails the load.
+  and a sign only as the `-` of a chat id. In `ADMIN_IDS` and `KEYHOLDER_IDS`
+  (critical invariant 2) spaces around an entry are ignored; an @handle, a
+  username, an empty entry (a doubled, leading or trailing comma), zero, a
+  sign, a leading zero, a decimal, an exponent, hexadecimal, another separator
+  or an id beyond the safe-integer range fails the load, and so does an id
+  that is in both lists, the error naming the two variables and no value.
+- In `ALLOWED_LINK_HOSTS` spaces around an entry are ignored; a scheme, a
+  path, a port, userinfo, a capital, a wildcard, a single label, a
+  dotted-quad address, an empty label or a label starting or ending with a
+  hyphen fails the load.
+- `LOCKDOWN` accepts `1` and nothing else; any other value fails the load
+  rather than being read as "off".
 - A failed load throws an `AppError` with the code `CONFIG_INVALID`
   (`src/errors/`), naming each offending variable with what it must hold in its
   message and listing the names in its `variables` field, never a value, and
@@ -193,8 +217,8 @@ Worker entry is wired in a later unit.
   and logging it leaks the token.
 
 Locally, copy `.dev.vars.example` to `.dev.vars` and fill in `.dev.vars`,
-never the example, which is committed with every secret and id empty and the
-four tunables at their defaults. `wrangler dev` reads `.dev.vars` next to
+never the example, which is committed with every secret and id empty, the
+tunables at their defaults and `LOCKDOWN` off. `wrangler dev` reads `.dev.vars` next to
 `wrangler.jsonc`, and the Vitest plugin reads it through wrangler's loader
 too; wrangler also reads `.dev.vars.<name>` under `--env <name>`, and `.env`
 files when no `.dev.vars*` file exists. All of them are gitignored, except the
@@ -208,22 +232,28 @@ and 2.1.
 
 | `wrangler.jsonc` | Setting |
 |---|---|
-| `main` | `src/worker.ts`: the HTTP handler, the cron handler and the `Broadcaster` Durable Object class, without logic until Phase 3 (every request is answered 404) |
+| `main` | `src/worker.ts`: the HTTP handler and the cron handler, without logic until Phase 3 (every request is answered 404) |
 | `compatibility_date` | 2026-10-28 (see below), with the `nodejs_compat` flag |
 | `send_metrics` | `false`: wrangler sends no usage metrics for this project, overriding each user's own telemetry setting (an explicit `WRANGLER_SEND_METRICS` in the environment still takes precedence); the owner's stance, not a rule-6 requirement |
 | `d1_databases` | binding `DB`, `database_name` `div-report`, an all-zero placeholder `database_id` (the real id is deployment configuration), `migrations_dir` `migrations/` at the repository root |
-| `durable_objects`, `migrations` | binding `BROADCASTER`, class `Broadcaster`, SQLite-backed through the migration tag `v1` |
-| `triggers` | one cron, `5 0 * * *`, for the nightly retention job (00:05 UTC, after the Free plan's daily caps reset); the runbook (section 3.3) budgets a second Cron Trigger for the stall detector, whose schedule is set when it lands in Phase 3 |
+| `triggers` | one cron, `5 0 * * *`, for the nightly retention job (00:05 UTC, after the Free plan's daily caps reset); the one-minute cron that drains the `jobs` table, and also replaces the stall detector, is added with the scheduling unit (U5; ADR 0004) |
 | `observability` | disabled: the platform's invocation logs are logs (critical invariant 6); turned on only deliberately (runbook, section 4) |
 | `vars` | empty: no secret and no deployment value lives in this file |
 
 `npm run migrate:local` applies `migrations/` to the local database under
-`.wrangler/`; the first migrations arrive with the data model in Phase 3.
+`.wrangler/`; `migrations/0001_init.sql` is the MVP schema
+([ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md)), and a
+later change adds a file rather than editing an applied one. On the Node port
+`src/db/migrate.ts` applies the same files, each once, recording them in
+`schema_migrations`.
 `npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its
-bindings (`env.BROADCASTER`, `env.DB`) with no Cloudflare account and no
-network access, and with `send_metrics` off it prints no telemetry notice.
-`.wrangler/`, which also holds the local D1 and Durable Object state, is
-gitignored. `wrangler dev` does not fire the cron trigger by itself; it
+one binding (`env.DB`) with no Cloudflare account and no network access, and
+with `send_metrics` off it prints no telemetry notice. `.wrangler/`, which also
+holds the local D1 state, is gitignored. There is no Durable Object. The
+`Broadcaster` class and its `v1` migration tag of Phase 2 were removed before
+any deployment (the `database_id` is still the placeholder), so no
+`deleted_classes` migration is needed; a Worker that had deployed them would
+need one. `wrangler dev` does not fire the cron trigger by itself; it
 prints the `curl` command (`/cdn-cgi/local/scheduled` on the dev server)
 that does.
 
@@ -246,14 +276,15 @@ the source of truth for the module map and the rules each module carries.
 | `*src/telegram/*` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | 2, 4 |
 | `*src/auth/*` | the allowlist gate, the membership check | 2, 4 |
 | `*src/review/*` | the report state machine, routing table, approval records, grace and cancel | 1, 3, 7 |
-| `*src/broadcast/*` | the broadcast engine, ledger, pacing, retraction, closure, budget | 1, 5 |
+| `*src/broadcast/*` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains | 1, 5 |
 | `*src/privacy/*` | HMAC references, log redaction, the retention job | 6, 8 |
 | `*src/config/*` | the zod schema and loaders | 2, 6 |
 | `*src/db/*` | the `SqlDb` port and its adapters | 8 |
 | `*migrations/*` | the D1 schema migrations | 8 |
-| `*src/worker.ts`, `*src/node.ts` | the Worker entry (HTTP, cron, the broadcaster Durable Object) and the Node port's entry, when it lands | none listed |
+| `*src/platforms/*` | URL parsing, per-platform instruction keys and the link policy (the exact hosts a post may link to) | 4 |
+| `*src/worker.ts`, `*src/node.ts` | the Worker entry (HTTP, cron) and the Node port's entry, when it lands | none listed |
 
-`src/errors/`, `src/i18n/` and `src/platforms/` are deliberately not critical.
+`src/errors/` and `src/i18n/` are deliberately not critical.
 Every file on a critical path carries the comment line `// @critical-path`
 (TypeScript) or `-- @critical-path` (SQL) near its top, as `src/worker.ts`
 and `src/config/schema.ts` do. `selftest/critical-globs-completeness.sh`
@@ -301,4 +332,10 @@ Workers Vitest pool package, its six high-severity audit findings and the
   favour of `exports` from `cloudflare:workers` (`exports.default.fetch()`);
   the smoke test still uses `SELF.fetch`.
 - `@types/node` 26 on a Node 22 runtime can type-check APIs that Node 22
-  lacks; that matters only for the unit tests and the future Node port.
+  lacks; that matters only for the unit tests and the Node port. For
+  `node:sqlite`, `src/db/node-sqlite.ts` uses only what Node 22 has
+  (`DatabaseSync`, `prepare`, `exec`, `isTransaction`).
+- `node:sqlite` is experimental in Node 22 and prints an `ExperimentalWarning`
+  when it loads. `vitest.config.ts` passes `--disable-warning=ExperimentalWarning`
+  to the unit and invariants tiers, which hides every experimental warning
+  there; the Node port will print it once at start.

@@ -22,9 +22,13 @@ confirmed. Phase 2 scaffolded the toolchain and filled the kit's slots
 (setup: `doc/guides/developer-setup.md`). Phase 3 lands the MVP in units
 reviewed against the plan recorded in
 `doc/audits/2026-10-28-planning-review.md`; the core modules (errors,
-configuration, the redacting logger, i18n, the clock) exist; storage,
-Telegram wiring, intake, review, the broadcaster and the Node port
-follow.
+configuration, the redacting logger, i18n, the clock) and the storage
+(the SQL port with its D1 and node:sqlite adapters, the D1 migrations)
+exist; Telegram wiring, intake, review, the single post with its jobs
+and the Node port follow. On 2026-10-28 the owner narrowed the scope: no
+direct-message broadcasts and no member or reporter identity in storage;
+an approved report is posted once into a configured group or channel
+(ADR 0004, ADR 0006).
 
 ## Commands
 
@@ -35,7 +39,7 @@ npm run lint                      # eslint . (typescript-eslint, type-checked)
 npm run build                     # typecheck + lint (the gate's build step)
 npm test                          # unit + workers projects (the gate's test step)
 npm run test:unit                 # plain node, *.test.ts beside the module; no network, no infra
-npm run test:workers              # Workers runtime via @cloudflare/vitest-plugin; local D1 + Durable Object, no account
+npm run test:workers              # Workers runtime via @cloudflare/vitest-plugin; local D1, no account
 npm run test:invariants           # always-run "must never happen" specs (the gate runs them last)
 npm run dev                       # wrangler dev; local secrets in .dev.vars (template .dev.vars.example)
 npm run dry-run                   # bundle the Worker into .wrangler/dry-run, offline, no account
@@ -52,27 +56,27 @@ node scripts/okf/build-index.mjs  # regenerate doc indexes after adding/moving/r
 ## Architecture
 
 Cloudflare Workers (Free plan) with a Node port as the fallback; TypeScript
-strict ESM, grammY, zod, D1 plus one broadcaster Durable Object (ADRs 0001,
-0002, 0004 under `doc/architecture/`). The Worker entry is `src/worker.ts`
-(HTTP handler, cron handler, the `Broadcaster` Durable Object class); the
-Node port's entry, `src/node.ts`, comes later. Module map
+strict ESM, grammY, zod, D1 as the only store (ADRs 0001, 0002, 0004 under
+`doc/architecture/`). The Worker entry is `src/worker.ts` (HTTP handler,
+cron handler); the Node port's entry, `src/node.ts`, comes later. Module map
 (`doc/architecture/adr-0006-data-model-and-module-layout.md`); the
 modules land unit by unit, `src/errors/`, `src/config/`, `src/privacy/`
-(logger and reporter reference), `src/i18n/` and `src/clock.ts` first:
+(logger and reporter reference), `src/i18n/` and `src/clock.ts` first,
+then `src/db/` and `migrations/`:
 
 | Module | Holds | Critical path (rules) |
 |---|---|---|
 | `src/telegram/` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | yes (2, 4) |
 | `src/auth/` | the allowlist gate, the membership check | yes (2, 4) |
 | `src/review/` | report state machine, categories and routing table, approval records, grace and cancel | yes (1, 3, 7) |
-| `src/broadcast/` | engine, delivery ledger, pacing, retraction, closure, budget | yes (1, 5) |
+| `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains | yes (1, 5) |
 | `src/privacy/` | HMAC references, the redacting logger, the retention job | yes (6, 8) |
 | `src/config/` | the zod schema and loaders | yes (2, 6) |
-| `src/db/` | the `SqlDb` port and its adapters | yes (8) |
-| `migrations/` | D1 SQL migrations (wrangler's `migrations_dir`) | yes (8) |
+| `src/db/` | the `SqlDb` port and its adapters | yes (1, 8) |
+| `migrations/` | D1 SQL migrations (wrangler's `migrations_dir`) | yes (1, 8) |
 | `src/errors/` | `AppError` and the catalog | no |
 | `src/i18n/` | the `fa` and `en` catalogs | no |
-| `src/platforms/` | URL parsing, per-platform instruction keys | no |
+| `src/platforms/` | URL parsing, per-platform instruction keys | yes (4) |
 
 Critical paths are the globs in `.claude/devil/critical-globs.conf`
 (`src/worker.ts` and `src/node.ts` included). Anchor convention: every file
@@ -100,21 +104,23 @@ glob in the same change.
 ## Critical invariants
 
 <!-- sync:catastrophic-invariants -->
-1. No message about a report reaches the broadcast audience (subscribers
-   as such, or the mirror chat) without a recorded approval. Every
-   broadcast, retraction notice or closure notice about a report derives
-   from that report's approval record (the approving admin's numeric id,
-   timestamp and start time); the report broadcast itself is sent only
-   while the report is in the approved or broadcasting state and never
-   before the approval record's start time; no code path leads from intake
-   to any such message without that record.
+1. No message about a report reaches the channel without a recorded
+   approval. Every post, retraction edit or closure edit about a report
+   derives from that report's approval record (the approving admin's
+   numeric id, timestamp and start time); the post itself is made only
+   while the report is in the approved or posting state and never before
+   the approval record's start time; no code path leads from intake to
+   any such message without that record.
 2. Admin authority is decided server-side, on authentic updates. Admin
    status comes from the configured allowlist of numeric Telegram user ids
    (never usernames, which are reassignable), re-checked at every admin
    action; an update is acted on only if it provably came from Telegram
    (a webhook request carrying the configured secret token, or an update
    fetched by long polling); nothing the client sends (chat type, name,
-   callback payload, forwarded message) ever grants authority.
+   callback payload, forwarded message) ever grants authority; while the
+   lockdown switch is set, by a keyholder's command or by the deployment's
+   override, no admin action, intake, press or post is performed and
+   alerts go to the keyholders.
 3. Nobody is exposed by a broadcast's text. A broadcast carries only the
    reviewed links the category's routing allows and admin-authored text.
    The reporter's identity (id, username, name), the reporter's comment,
@@ -129,16 +135,21 @@ glob in the same change.
    previews disabled; URLs and comments are stored and shown as escaped
    plain text, never executed or auto-followed; the review view presents
    metadata (URL, platform, category, comment) with link previews disabled.
-   How an admin verifies non-CSAM content before approving belongs to the
-   review runbook, not to the bot.
-5. Direct-message broadcasts are consensual and idempotent. Only users who
-   explicitly opted in and have not opted out receive broadcasts by direct
-   message; a user who blocked the bot is unsubscribed; a resumed broadcast
-   never re-sends to a subscriber the delivery ledger records as delivered,
-   delivery progress and the next step are committed together after every
-   batch, and only the runner holding a broadcast's lease advances it, so a
-   retry after a partial failure resumes from the ledger and can repeat at
-   most one batch.
+   Every link the bot sends to the channel, to a reporter or to a
+   keyholder is parsed, https-only, free of userinfo, port, query and
+   fragment, and its exact hostname is on the configured allowlist of the
+   target platforms' own domains or on the code's fixed list of platform
+   help and hotline hosts, with platform redirectors and
+   Telegram invite, start and Mini App links rejected and admin-authored
+   text checked for links, domains, mentions and phone numbers; the bot
+   has no Mini App and no inline mode. How an admin verifies non-CSAM
+   content before approving belongs to the review runbook, not to the bot.
+5. Posts go only to the configured channel. An approved report is posted
+   once to the configured channel (joining it is the consent, leaving it
+   the opt-out); the bot sends a direct message only as a reply to a
+   user's own message in their own chat or as an alert to a configured
+   keyholder; no list of members or subscribers exists anywhere in the
+   bot's storage.
 6. Secrets and sensitive data stay out of code, VCS, logs, and telemetry.
    The bot token, the webhook secret, the reporter-reference key, database
    credentials and the admin allowlist come from the deployment's secret
@@ -155,12 +166,15 @@ glob in the same change.
    the review runbook, through the admin's routing card; its link is never
    sent to the user base or to any chat other than the admin review venue,
    and its review never requires opening the content.
-8. Reports leave only counts behind. The reporter's Telegram id is replaced
-   by a keyed reference once the decision notice is delivered or abandoned;
-   at closure a report's links, comment, broadcast text, delivery ledger
-   and per-user records are deleted, and only the aggregate row (category,
-   platform, day-level dates, outcome, counts, keyed link hash) remains;
-   every stored personal field has a deletion path covered by a test.
+8. No plaintext Telegram id of a reporter or member is ever stored (the
+   allowlisted admins' and keyholders' own ids excepted, both deployment
+   configuration), and reports leave only counts behind: intake state is
+   keyed by the keyed reporter reference; at closure a report's links,
+   comment, texts and per-report records are deleted and only the aggregate
+   row (category, platform, day-level dates, outcome, counts, keyed link
+   hash) remains; every stored personal field has a deletion path covered
+   by a test, and the emergency wipe leaves only the aggregate rows in the
+   live database.
 <!-- /sync:catastrophic-invariants -->
 
 This marked block lives, verbatim, in THREE places (deliberate redundancy —
@@ -175,7 +189,8 @@ these rules apply.
 
 ## Error handling
 
-Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`):
+Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`),
+amended the same day for the single-post model:
 
 - **Error surface shape.** Every error leaves the system as ONE shape: a
   typed `AppError` (`code`, an internal `message` that never contains
@@ -184,24 +199,30 @@ Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`):
   error-boundary middleware maps an `AppError` to a localised reply;
   anything else gets a generic reply and a log line naming the error class
   only (never the update payload, never a `GrammyError` payload); the
-  webhook handler acknowledges Telegram with 200 after handling so Telegram
-  does not redeliver.
+  Worker answers Telegram with 200 as soon as the update is handed to
+  `bot.handleUpdate` under `waitUntil`, so Telegram never redelivers
+  because of a bug and every handler is idempotent per update.
 - **Where codes live.** New error codes are registered in ONE place,
   `src/errors/catalog.ts`, never inline at the throw site; each code maps
   to an i18n key, and user-facing text comes from that catalog.
-- **Telegram API errors are classified, not guessed.** 429 persists
-  progress and reschedules the broadcast step for now + `retry_after` (no
-  in-invocation retry burst); 403 "bot was blocked by the user", 400 "chat
-  not found" and "user is deactivated" unsubscribe the user and are not
-  errors; 5xx and network errors retry with bounded backoff, then are
-  recorded as a failed delivery.
+- **Telegram API errors are classified, not guessed.** Only unambiguous
+  failures are retried: a 429 on a job send reverts the post claim,
+  reschedules the job for now + `retry_after` and sets the global pause
+  every job send honours; a 400 or 403 on a job send (no post rights,
+  chat not found) reverts the claim, sets `needs_attention` and alerts. A
+  timeout, a network error or a 5xx on a send is AMBIGUOUS (Telegram may
+  have accepted it) and is never retried blindly: the report stays
+  `posting` without a message id, the keyholders are alerted, and a human
+  runs `/attach` or `/repost` after checking the channel. A 403 "bot was
+  blocked by the user" or a 400 "chat not found" on a reply is logged by
+  class and ignored (there is no subscriber to remove).
 - **What is never swallowed.** No empty `catch`, no log-and-continue on a
-  failure that changes state; the broadcast records failures per recipient
-  and never aborts the batch; a storage failure (including a daily-cap
-  error) stops the broadcast in a resumable state, reschedules the step for
-  00:05 UTC plus jitter, and alerts the admin chat once. Every code path
-  that maps an error has a unit test; "the boundary never leaks a URL or an
-  id" is a regression test with a real `GrammyError`.
+  failure that changes state; a job failure is recorded on its job and
+  never aborts the tick; a storage failure, a daily-cap error included,
+  stops the tick WITHOUT writing (the next tick after the 00:00 UTC reset
+  resumes from the committed state) and alerts the keyholders once. Every
+  code path that maps an error has a unit test; "the boundary never leaks
+  a URL or an id" is a regression test with a real `GrammyError`.
 
 ## Testing conventions
 
@@ -212,8 +233,8 @@ Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`):
 - Three Vitest projects (`vitest.config.ts`): **unit** is `*.test.ts`
   beside the module under `src/`, plain node, no network, mocks at the
   boundary; **workers** is `test/workers/*.test.ts`, run in the Workers
-  runtime by `@cloudflare/vitest-plugin` with the local D1 and
-  Durable Object bindings, for the Cloudflare adapters only; **invariants**
+  runtime by `@cloudflare/vitest-plugin` with the local D1 binding, for
+  the Cloudflare adapters only; **invariants**
   is `test/invariants/*.test.ts`, the always-run specs the commit gate runs
   on every commit, one per stated "must not". Fixture values are never
   secret-shaped (the secret-shape scan reads test files too). No coverage

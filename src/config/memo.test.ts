@@ -13,17 +13,17 @@ const VARIABLES = {
   WEBHOOK_SECRET: 'unit-test-webhook-secret',
   WEBHOOK_PATH_SEGMENT: 'unit-test-path-segment',
   ADMIN_IDS: '1001,1002',
+  KEYHOLDER_IDS: '2001',
   REPORTER_REF_KEY: 'unit-test-reporter-ref-key',
   ADMIN_CHAT_ID: '-1001234567890',
   MEMBERSHIP_CHAT_ID: '-1009876543210',
-  DAILY_RECIPIENT_BUDGET: '20000',
+  BROADCAST_CHAT_ID: '-1005555555555',
 } as const;
 
 /** A Workers-shaped env: the variables beside binding objects. */
 const workerEnv = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   ...VARIABLES,
   DB: { prepare: () => undefined },
-  BROADCASTER: { idFromName: () => undefined },
   ...overrides,
 });
 
@@ -33,7 +33,6 @@ describe('configFor', () => {
     expect(config.botUsername).toBe('unit_test_bot');
     expect(config.membershipChatId).toBe(-1009876543210);
     expect(Object.keys(config)).not.toContain('DB');
-    expect(Object.keys(config)).not.toContain('BROADCASTER');
     expect(JSON.stringify(config)).toBe(JSON.stringify(CONFIG_REDACTED));
   });
 
@@ -56,7 +55,7 @@ describe('configFor', () => {
 
   it('ignores a non-string value, even under a known name', () => {
     // A JSON number from wrangler `vars`; this deployment keeps `vars` empty.
-    expect(configFor(workerEnv({ BROADCAST_BATCH_SIZE: 40 })).broadcastBatchSize).toBe(35);
+    expect(configFor(workerEnv({ MARKS_PER_REPORT: 40 })).marksPerReport).toBe(5000);
     expect(() => configFor(workerEnv({ BOT_ID: 1000001 }))).toThrow(AppError);
   });
 

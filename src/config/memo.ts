@@ -1,11 +1,11 @@
 // @critical-path
 // The per-isolate configuration memo (critical invariants 2 and 6; the MVP
 // plan's "the parsed configuration is memoised per isolate"). The Worker's
-// `env` carries the bindings (D1, the broadcaster's namespace) beside the
-// variables and secrets; configFor(env) passes only its string-valued
-// properties to loadConfig() and keeps the result for as long as that same
-// `env` object is alive, so an isolate parses its configuration once per
-// `env` object instead of once per update.
+// `env` carries the bindings (the D1 database) beside the variables and
+// secrets; configFor(env) passes only its string-valued properties to
+// loadConfig() and keeps the result for as long as that same `env` object
+// is alive, so an isolate parses its configuration once per `env` object
+// instead of once per update.
 //
 // The memo is keyed by object identity in a WeakMap: a different `env`
 // object is parsed afresh, a mutation of a memoised `env` is not seen, and

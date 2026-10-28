@@ -61,6 +61,25 @@ export default defineConfig(
     },
   },
   {
+    // The Node port's file-system readers (the MVP plan, section 2, "Node
+    // port"): the migrations runner reads migrations/*.sql, the node:sqlite
+    // adapters and the Node entry open the database file. The Worker
+    // (src/worker.ts) never imports them; child processes stay forbidden.
+    files: ['src/node.ts', 'src/db/node-*.ts', 'src/db/migrate.ts'],
+    ignores: ['src/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['node:child_process', 'child_process'].map((name) => ({
+            name,
+            message: 'The application never starts a process.',
+          })),
+        },
+      ],
+    },
+  },
+  {
     // The redacting logger is the ONE file allowed to write to the console
     // (critical invariant 6, ADR 0005), and only through console.log and
     // console.error; no-console stays an error everywhere else, and

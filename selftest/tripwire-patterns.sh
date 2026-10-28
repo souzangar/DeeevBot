@@ -86,7 +86,9 @@ grep -q 'critical-path tripwire' "$tmp/stderr.$console_case" && grep -q 'rule 6'
 check 0 src/telegram/member.ts 'const m = await bot.api.getChatMember(groupId, userId);'
 check 0 src/telegram/stub.ts 'const res = await stub.fetch(request);'
 check 0 src/telegram/handler.test.ts 'console.log(update);'
-check 0 src/platforms/parse.ts 'console.log(update);'
+check 0 src/i18n/parse.ts 'console.log(update);'
+# src/platforms/ holds the link policy (rule 4): a critical path.
+check 2 src/platforms/links.ts 'console.log(update);'
 
 echo "tripwire-patterns: $pass ok, $fail failed"
 [ "$fail" -eq 0 ]

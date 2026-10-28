@@ -39,8 +39,11 @@ report data to a third-party service.
 - zod 4: one schema validates the configuration read from Workers secrets
   or the environment.
 - npm as the package manager.
-- Node 22 for the port; its SQLite driver is `node:sqlite` (experimental
-  warning accepted) or `better-sqlite3`, decided in the MVP plan.
+- Node 22 for the port; its SQLite driver is `node:sqlite`, built into
+  Node, so there is no native build to install or audit; its
+  ExperimentalWarning is accepted (the test runner silences it).
+  `better-sqlite3` is dropped. The same driver runs every SQL-level test,
+  the invariants tier's included (`src/db/node-sqlite.ts`).
 - i18n catalogs for `fa` and `en`; user-facing text is looked up by key
   ([ADR 0005](./adr-0005-error-handling-convention.md)).
 - No AI services.
@@ -49,15 +52,20 @@ Versions are as looked up on 2026-10-28.
 
 ## Consequences
 
-- Pure logic (the report state machine, the routing table, the broadcast
-  `step()`, the error catalog) is tested under plain node; only the
-  Cloudflare adapters need the Workers Vitest plugin.
+- Pure logic (the report state machine, the routing table, the error
+  catalog) is tested under plain node; only the Cloudflare adapters need
+  the Workers Vitest plugin.
 - One pin constrains upgrades: TypeScript stays below 6.1 until
   typescript-eslint moves. The plugin accepts vitest 4.1 or 5, and the
   repo pins 4.1.12.
-- The SQLite driver for the port is an open item of the MVP plan; both
-  candidates sit behind the same `SqlDb` port
-  ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)).
+- The port's SQLite driver sits behind the same `SqlDb` port as D1
+  ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)), and the
+  adapters refuse the statement shapes D1 refuses (a parameter count that
+  differs from the placeholders, a second statement, more than 100
+  parameters), which node:sqlite would otherwise accept silently; the
+  workers tier runs the schema on D1 itself. The driver is still marked
+  experimental in Node 22: an API change in a later Node line lands in
+  `src/db/node-sqlite.ts` alone.
 - No AI service means no model-assisted categorisation or translation
   touches report data; the Persian and English copy is written by people.
 
@@ -79,3 +87,6 @@ Accepted 2026-10-28.
 Amended 2026-10-28 (Phase 2): the Workers Vitest integration moved to
 `@cloudflare/vitest-plugin` 1.4.9, the successor of the deprecated pool
 package, and the compatibility-date rule was recorded.
+
+Amended 2026-10-28 (Phase 3, unit U1b): the Node port's SQLite driver is
+`node:sqlite`; `better-sqlite3` is dropped.

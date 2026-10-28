@@ -2,7 +2,7 @@
 // redaction assertions live in test/invariants/config-redaction.test.ts.
 import { describe, expect, it } from 'vitest';
 import { AppError } from '../errors/app-error';
-import { loadConfig } from './schema';
+import { DEFAULT_LINK_HOSTS, loadConfig } from './schema';
 
 // Fixture values are deliberately not secret-shaped: the commit gate's
 // secret-shape scan covers test files too.
@@ -13,10 +13,11 @@ const VALID = {
   WEBHOOK_SECRET: 'unit-test-webhook-secret',
   WEBHOOK_PATH_SEGMENT: 'unit-test-path-segment',
   ADMIN_IDS: '1001,1002',
+  KEYHOLDER_IDS: '2001',
   REPORTER_REF_KEY: 'unit-test-reporter-ref-key',
   ADMIN_CHAT_ID: '-1001234567890',
   MEMBERSHIP_CHAT_ID: '-1009876543210',
-  DAILY_RECIPIENT_BUDGET: '20000',
+  BROADCAST_CHAT_ID: '-1005555555555',
 } as const;
 
 type Overrides = Record<string, string | undefined>;
@@ -44,36 +45,62 @@ describe('loadConfig', () => {
     expect(config.webhookPathSegment).toBe(VALID.WEBHOOK_PATH_SEGMENT);
     expect(config.reporterRefKey).toBe(VALID.REPORTER_REF_KEY);
     expect(config.adminIds).toEqual([1001, 1002]);
+    expect(config.keyholderIds).toEqual([2001]);
     expect(config.adminChatId).toBe(-1001234567890);
     expect(config.membershipChatId).toBe(-1009876543210);
-    expect(config.mirrorChatId).toBeUndefined();
-    expect(config.dailyRecipientBudget).toBe(20000);
-    expect(config.broadcastBatchSize).toBe(35);
-    expect(config.broadcastMessagesPerSecond).toBe(25);
-    expect(config.approvalGraceMinutes).toBe(5);
+    expect(config.broadcastChatId).toBe(-1005555555555);
+    expect(config.allowedLinkHosts).toEqual([
+      'instagram.com',
+      'www.instagram.com',
+      'x.com',
+      'twitter.com',
+      'www.facebook.com',
+      'facebook.com',
+      'www.tiktok.com',
+      'tiktok.com',
+      't.me',
+    ]);
+    expect(config.lockdown).toBe(false);
+    expect(config.approvalGraceMinutes).toBe(30);
     expect(config.marksPerDay).toBe(20000);
+    expect(config.marksPerReport).toBe(5000);
   });
 
-  it('ignores variables it does not know', () => {
-    const config = load({ PATH: '/usr/bin', UNRELATED: 'x' });
-    expect(Object.keys(config)).not.toContain('PATH');
-    expect(Object.keys(config)).not.toContain('UNRELATED');
+  it('ignores variables it does not know, the removed direct-message ones included', () => {
+    const config = load({
+      PATH: '/usr/bin',
+      UNRELATED: 'x',
+      MIRROR_CHAT_ID: '-100333',
+      DAILY_RECIPIENT_BUDGET: '20000',
+      BROADCAST_BATCH_SIZE: 'not even a number',
+      BROADCAST_MESSAGES_PER_SECOND: '99',
+    });
+    for (const key of ['PATH', 'UNRELATED', 'mirrorChatId', 'dailyRecipientBudget', 'broadcastBatchSize']) {
+      expect(Object.keys(config)).not.toContain(key);
+    }
   });
 
-  it('returns a frozen object with a frozen admin list', () => {
+  it('returns a frozen object with frozen lists', () => {
     const config = load();
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.adminIds)).toBe(true);
+    expect(Object.isFrozen(config.keyholderIds)).toBe(true);
+    expect(Object.isFrozen(config.allowedLinkHosts)).toBe(true);
   });
 
-  describe('ADMIN_IDS (critical invariant 2: numeric ids only, never usernames)', () => {
+  // Each list is checked with the other set to an id none of its cases use,
+  // since the two must never share one.
+  describe.each([
+    ['ADMIN_IDS', 'adminIds', { KEYHOLDER_IDS: '3001' }],
+    ['KEYHOLDER_IDS', 'keyholderIds', { ADMIN_IDS: '3001' }],
+  ] as const)('%s (critical invariant 2: numeric ids only, never usernames)', (name, key, other) => {
     it.each([
       ['a single id', '1001', [1001]],
       ['several ids', '1001,1002,1003', [1001, 1002, 1003]],
       ['spaces around entries', ' 1001 , 1002 ', [1001, 1002]],
       ['the largest safe integer', '9007199254740991', [9007199254740991]],
     ])('accepts %s', (_label, value, expected) => {
-      expect(load({ ADMIN_IDS: value }).adminIds).toEqual(expected);
+      expect(load({ ...other, [name]: value })[key]).toEqual(expected);
     });
 
     it.each([
@@ -96,17 +123,45 @@ describe('loadConfig', () => {
       ['a different separator', '1001;1002'],
       ['spaces instead of commas', '1001 1002'],
     ])('rejects %s', (_label, value) => {
-      expect(rejectedVariables({ ADMIN_IDS: value })).toEqual(['ADMIN_IDS']);
+      expect(rejectedVariables({ ...other, [name]: value })).toEqual([name]);
     });
 
-    it('rejects a missing or empty allowlist', () => {
-      expect(rejectedVariables({ ADMIN_IDS: undefined })).toEqual(['ADMIN_IDS']);
-      expect(rejectedVariables({ ADMIN_IDS: '' })).toEqual(['ADMIN_IDS']);
+    it('rejects a missing or empty list', () => {
+      expect(rejectedVariables({ ...other, [name]: undefined })).toEqual([name]);
+      expect(rejectedVariables({ ...other, [name]: '' })).toEqual([name]);
+    });
+  });
+
+  describe('the keyholders and the admins (a keyholder is never an admin)', () => {
+    it('loads two lists that share no id', () => {
+      const config = load({ ADMIN_IDS: '1001,1002', KEYHOLDER_IDS: '2001,2002' });
+      expect(config.adminIds).toEqual([1001, 1002]);
+      expect(config.keyholderIds).toEqual([2001, 2002]);
+    });
+
+    it.each([
+      ['the same single id', '1001', '1001'],
+      ['one shared id among others', '1001,1002,1003', '2001,1003'],
+      ['a shared id written with spaces', '1001, 1002', ' 1002 '],
+    ])('refuses %s, naming both variables and no value', (_label, admins, keyholders) => {
+      let caught: unknown;
+      try {
+        load({ ADMIN_IDS: admins, KEYHOLDER_IDS: keyholders });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(AppError);
+      const error = caught as AppError;
+      expect(error.code).toBe('CONFIG_INVALID');
+      expect(error.variables).toEqual(['ADMIN_IDS', 'KEYHOLDER_IDS']);
+      expect(error.message).toContain('ADMIN_IDS and KEYHOLDER_IDS must not share an id');
+      for (const id of ['1001', '1002', '1003', '2001']) expect(error.message).not.toContain(id);
+      expect(error.cause).toBeUndefined();
     });
   });
 
   describe('chat ids', () => {
-    it('accepts negative and positive ids', () => {
+    it('accepts negative and positive ids for the venue and the membership chat', () => {
       expect(load({ ADMIN_CHAT_ID: '-100555' }).adminChatId).toBe(-100555);
       expect(load({ MEMBERSHIP_CHAT_ID: '777' }).membershipChatId).toBe(777);
     });
@@ -122,12 +177,21 @@ describe('loadConfig', () => {
     ])('rejects %s', (_label, value) => {
       expect(rejectedVariables({ ADMIN_CHAT_ID: value })).toEqual(['ADMIN_CHAT_ID']);
       expect(rejectedVariables({ MEMBERSHIP_CHAT_ID: value })).toEqual(['MEMBERSHIP_CHAT_ID']);
-      expect(rejectedVariables({ MIRROR_CHAT_ID: value })).toEqual(['MIRROR_CHAT_ID']);
+      expect(rejectedVariables({ BROADCAST_CHAT_ID: value })).toEqual(['BROADCAST_CHAT_ID']);
     });
 
-    it('requires the admin venue and the membership chat', () => {
+    it('requires the admin venue, the membership chat and the broadcast channel', () => {
       expect(rejectedVariables({ ADMIN_CHAT_ID: undefined })).toEqual(['ADMIN_CHAT_ID']);
       expect(rejectedVariables({ MEMBERSHIP_CHAT_ID: '' })).toEqual(['MEMBERSHIP_CHAT_ID']);
+      expect(rejectedVariables({ BROADCAST_CHAT_ID: undefined })).toEqual(['BROADCAST_CHAT_ID']);
+    });
+
+    it("takes only a negative id for the broadcast channel, a channel's", () => {
+      expect(load({ BROADCAST_CHAT_ID: '-1' }).broadcastChatId).toBe(-1);
+      expect(load({ BROADCAST_CHAT_ID: '-9007199254740991' }).broadcastChatId).toBe(-9007199254740991);
+      for (const value of ['1', '1005555555555', '-9007199254740992']) {
+        expect(rejectedVariables({ BROADCAST_CHAT_ID: value })).toEqual(['BROADCAST_CHAT_ID']);
+      }
     });
 
     it('no longer reads the pre-rename NGO_GROUP_ID', () => {
@@ -135,20 +199,70 @@ describe('loadConfig', () => {
         'MEMBERSHIP_CHAT_ID',
       ]);
     });
+  });
 
-    it('treats the mirror chat as optional', () => {
-      expect(load({ MIRROR_CHAT_ID: undefined }).mirrorChatId).toBeUndefined();
-      expect(load({ MIRROR_CHAT_ID: '' }).mirrorChatId).toBeUndefined();
-      expect(load({ MIRROR_CHAT_ID: '-100333' }).mirrorChatId).toBe(-100333);
+  describe('ALLOWED_LINK_HOSTS', () => {
+    it('defaults to the platforms\' own hosts, each of which the rules accept', () => {
+      expect(load({ ALLOWED_LINK_HOSTS: undefined }).allowedLinkHosts).toEqual([...DEFAULT_LINK_HOSTS]);
+      expect(load({ ALLOWED_LINK_HOSTS: '' }).allowedLinkHosts).toEqual([...DEFAULT_LINK_HOSTS]);
+      expect(load({ ALLOWED_LINK_HOSTS: DEFAULT_LINK_HOSTS.join(',') }).allowedLinkHosts).toEqual([
+        ...DEFAULT_LINK_HOSTS,
+      ]);
+    });
+
+    it.each([
+      ['one host', 'instagram.com', ['instagram.com']],
+      ['several hosts', 'x.com,t.me', ['x.com', 't.me']],
+      ['spaces around entries', ' x.com , t.me ', ['x.com', 't.me']],
+      ['a deeper subdomain', 'm.facebook.com', ['m.facebook.com']],
+      ['hyphens and digits inside labels', 'a-1.b2.example', ['a-1.b2.example']],
+      ['a punycode label', 'xn--mgbh0fb.example', ['xn--mgbh0fb.example']],
+    ])('accepts %s', (_label, value, expected) => {
+      expect(load({ ALLOWED_LINK_HOSTS: value }).allowedLinkHosts).toEqual(expected);
+    });
+
+    it.each([
+      ['a scheme', 'https://instagram.com'],
+      ['a path', 'instagram.com/someone'],
+      ['a port', 'instagram.com:443'],
+      ['userinfo', 'user@instagram.com'],
+      ['a query', 'instagram.com?x=1'],
+      ['capitals', 'Instagram.com'],
+      ['a wildcard', '*.instagram.com'],
+      ['an underscore', 'in_stagram.com'],
+      ['a single label', 'localhost'],
+      ['a dotted-quad address', '93.184.216.34'],
+      ['a leading dot', '.instagram.com'],
+      ['a trailing dot', 'instagram.com.'],
+      ['an empty label', 'insta..gram.com'],
+      ['a label starting with a hyphen', '-x.com'],
+      ['a label ending with a hyphen', 'x-.com'],
+      ['a label of 64 characters', `${'a'.repeat(64)}.com`],
+      ['an empty entry', 'x.com,,t.me'],
+      ['a trailing comma', 'x.com,'],
+      ['blank', ' '],
+    ])('rejects %s', (_label, value) => {
+      expect(rejectedVariables({ ALLOWED_LINK_HOSTS: value })).toEqual(['ALLOWED_LINK_HOSTS']);
+    });
+  });
+
+  describe('LOCKDOWN', () => {
+    it('is off when absent or empty, and on for 1', () => {
+      expect(load({ LOCKDOWN: undefined }).lockdown).toBe(false);
+      expect(load({ LOCKDOWN: '' }).lockdown).toBe(false);
+      expect(load({ LOCKDOWN: '1' }).lockdown).toBe(true);
+    });
+
+    it.each(['0', 'true', 'yes', 'on', ' 1', '1 ', '01', '2'])('rejects %j: 1 is the only value', (value) => {
+      expect(rejectedVariables({ LOCKDOWN: value })).toEqual(['LOCKDOWN']);
     });
   });
 
   describe('numeric bounds', () => {
     it.each([
-      ['BROADCAST_BATCH_SIZE', 'broadcastBatchSize', 1, 45],
-      ['BROADCAST_MESSAGES_PER_SECOND', 'broadcastMessagesPerSecond', 1, 25],
-      ['APPROVAL_GRACE_MINUTES', 'approvalGraceMinutes', 1, 60],
+      ['APPROVAL_GRACE_MINUTES', 'approvalGraceMinutes', 1, 1440],
       ['MARKS_PER_DAY', 'marksPerDay', 0, 1_000_000],
+      ['MARKS_PER_REPORT', 'marksPerReport', 0, 1_000_000],
     ] as const)('%s accepts %i to %i and nothing outside', (name, key, min, max) => {
       expect(load({ [name]: String(min) })[key]).toBe(min);
       expect(load({ [name]: String(max) })[key]).toBe(max);
@@ -158,33 +272,10 @@ describe('loadConfig', () => {
     });
 
     it('takes the default when a tunable is left blank', () => {
-      const config = load({
-        BROADCAST_BATCH_SIZE: '',
-        BROADCAST_MESSAGES_PER_SECOND: '',
-        APPROVAL_GRACE_MINUTES: '',
-        MARKS_PER_DAY: '',
-      });
-      expect(config.broadcastBatchSize).toBe(35);
-      expect(config.broadcastMessagesPerSecond).toBe(25);
-      expect(config.approvalGraceMinutes).toBe(5);
+      const config = load({ APPROVAL_GRACE_MINUTES: '', MARKS_PER_DAY: '', MARKS_PER_REPORT: '' });
+      expect(config.approvalGraceMinutes).toBe(30);
       expect(config.marksPerDay).toBe(20000);
-    });
-
-    it('caps the pacing at the decided 25 messages per second, below Telegram\'s "about 30"', () => {
-      for (const value of ['26', '30']) {
-        expect(rejectedVariables({ BROADCAST_MESSAGES_PER_SECOND: value })).toEqual([
-          'BROADCAST_MESSAGES_PER_SECOND',
-        ]);
-      }
-    });
-
-    it('requires a positive daily recipient budget', () => {
-      expect(load({ DAILY_RECIPIENT_BUDGET: '1' }).dailyRecipientBudget).toBe(1);
-      for (const value of [undefined, '', '0', '-5', '1.5', 'unlimited']) {
-        expect(rejectedVariables({ DAILY_RECIPIENT_BUDGET: value })).toEqual([
-          'DAILY_RECIPIENT_BUDGET',
-        ]);
-      }
+      expect(config.marksPerReport).toBe(5000);
     });
   });
 
@@ -236,7 +327,7 @@ describe('loadConfig', () => {
     it('names every failing variable, sorted, with what it must hold', () => {
       let caught: unknown;
       try {
-        load({ BOT_TOKEN: undefined, ADMIN_IDS: '@someadmin', BROADCAST_BATCH_SIZE: '99' });
+        load({ BOT_TOKEN: undefined, ADMIN_IDS: '@someadmin', APPROVAL_GRACE_MINUTES: '1441' });
       } catch (error) {
         caught = error;
       }
@@ -246,10 +337,10 @@ describe('loadConfig', () => {
       expect(error.code).toBe('CONFIG_INVALID');
       expect(error.retryable).toBe(false);
       expect(error.userMessageKey).toBe('alert.config_invalid');
-      expect(error.variables).toEqual(['ADMIN_IDS', 'BOT_TOKEN', 'BROADCAST_BATCH_SIZE']);
+      expect(error.variables).toEqual(['ADMIN_IDS', 'APPROVAL_GRACE_MINUTES', 'BOT_TOKEN']);
       expect(error.message).toContain('ADMIN_IDS must be comma-separated numeric Telegram user ids');
       expect(error.message).toContain('BOT_TOKEN must be a non-blank secret');
-      expect(error.message).toContain('BROADCAST_BATCH_SIZE must be an integer from 1 to 45');
+      expect(error.message).toContain('APPROVAL_GRACE_MINUTES must be an integer from 1 to 1440');
     });
   });
 });

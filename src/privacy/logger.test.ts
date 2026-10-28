@@ -23,6 +23,9 @@ import {
 // secret-shape scan reads test files): the token shape is assembled here.
 const TOKEN_SHAPED = ['12345678', 'x'.repeat(35)].join(':');
 
+/** A report id of the one shape the logger keeps (src/db/ids.ts): 20 lowercase letters. */
+const REPORT_ID = 'qwertyuiopasdfghjklz';
+
 /** The one record a single call emits. */
 const recordOf = (log: (logger: Logger) => void): Record<string, unknown> => {
   const recorder = recordingLogger();
@@ -40,11 +43,11 @@ const fieldsOf = (fields: unknown) =>
 describe('the line', () => {
   it('is one JSON object: level, event, then the fields in allow-list order', () => {
     const { logger, lines } = recordingLogger();
-    logger.log('update.failed', { attempts: 2, reportId: 'rpt_abc', errorClass: 'TypeError' });
+    logger.log('update.failed', { attempts: 2, reportId: REPORT_ID, errorClass: 'TypeError' });
     expect(lines).toEqual([
       {
         level: 'info',
-        line: '{"level":"info","event":"update.failed","errorClass":"TypeError","reportId":"rpt_abc","attempts":2}',
+        line: `{"level":"info","event":"update.failed","errorClass":"TypeError","reportId":"${REPORT_ID}","attempts":2}`,
       },
     ]);
   });
@@ -55,7 +58,7 @@ describe('the line', () => {
       errorCode: 'TELEGRAM_TRANSIENT',
       telegramErrorCode: 502,
       apiMethod: 'sendMessage',
-      reportId: 'Rpt-0_a',
+      reportId: REPORT_ID,
       durationMs: 1234,
       count: 0,
       sent: 35,
@@ -100,7 +103,7 @@ describe('looksSensitive', () => {
 
   it.each([
     ['a class name', 'GrammyError'],
-    ['a report id', 'rpt_AbC-9'],
+    ['a report id', REPORT_ID],
     ['four digits', 'v1234'],
     ['a catalog code', 'TELEGRAM_RATE_LIMITED'],
   ])('passes %s', (_label, value) => {
@@ -156,15 +159,19 @@ describe('the drop rules', () => {
     ['a URL', 'https://example.org/x'],
     ['a space', 'rpt abc'],
     ['a colon', 'rpt:abc'],
-    ['65 characters', 'r'.repeat(65)],
+    ['19 letters', REPORT_ID.slice(1)],
+    ['21 letters', `${REPORT_ID}a`],
+    ['a capital', `Q${REPORT_ID.slice(1)}`],
+    ['a digit', `${REPORT_ID.slice(1)}7`],
+    ['an underscore', `${REPORT_ID.slice(1)}_`],
+    ['a hyphen', `${REPORT_ID.slice(1)}-`],
     ['nothing', ''],
   ])('drops a report id with %s', (_label, reportId) => {
     expect(fieldsOf({ reportId }).reportId).toBe(DROPPED);
   });
 
-  it('keeps a report id of 64 characters with a 4-digit run', () => {
-    const reportId = `${'r'.repeat(60)}1234`;
-    expect(fieldsOf({ reportId }).reportId).toBe(reportId);
+  it('keeps a report id of exactly 20 lowercase letters', () => {
+    expect(fieldsOf({ reportId: REPORT_ID }).reportId).toBe(REPORT_ID);
   });
 
   it.each([
@@ -241,11 +248,11 @@ describe('the drop rules', () => {
   it.each([
     ['a boolean', true],
     ['an object', { url: 'https://example.org/' }],
-    ['an array', ['rpt_abc']],
-    ['a function', () => 'rpt_abc'],
+    ['an array', [REPORT_ID]],
+    ['a function', () => REPORT_ID],
     ['null', null],
     ['a bigint', 5n],
-    ['a symbol', Symbol('rpt_abc')],
+    ['a symbol', Symbol(REPORT_ID)],
   ])('drops %s in any field (past the types)', (_label, value) => {
     const record = fieldsOf({ reportId: value, count: value });
     expect(record.reportId).toBe(DROPPED);
@@ -271,9 +278,9 @@ describe('the drop rules', () => {
   it('leaves out a field the allow-list does not name, without its name, and counts it', () => {
     const recorder = recordingLogger();
     const forbidden = 'chat_id_field';
-    recorder.logger.log('update.failed', { reportId: 'rpt_abc', [forbidden]: 1, [Symbol('s')]: 2 } as LogFields);
+    recorder.logger.log('update.failed', { reportId: REPORT_ID, [forbidden]: 1, [Symbol('s')]: 2 } as LogFields);
     expect(recorder.records()).toEqual([
-      { level: 'info', event: 'update.failed', reportId: 'rpt_abc', unknownFields: 2 },
+      { level: 'info', event: 'update.failed', reportId: REPORT_ID, unknownFields: 2 },
     ]);
     expect(recorder.text()).not.toContain(forbidden);
   });
@@ -288,12 +295,12 @@ describe('the drop rules', () => {
   });
 
   it('reads own properties only, never inherited ones', () => {
-    const fields: unknown = Object.create({ reportId: 'rpt_inherited' });
+    const fields: unknown = Object.create({ reportId: REPORT_ID });
     expect(fieldsOf(fields)).toEqual({ level: 'info', event: 'update.failed' });
   });
 
   it('treats fields that are not an object as none (past the types)', () => {
-    for (const fields of [null, 'rpt_abc', 42]) {
+    for (const fields of [null, REPORT_ID, 42]) {
       expect(fieldsOf(fields)).toEqual({ level: 'info', event: 'update.failed' });
     }
   });
@@ -367,11 +374,11 @@ describe('logError', () => {
   });
 
   it("keeps the caller's fields beside the error's, and the error's win a clash", () => {
-    expect(errorRecord(new TypeError('x'), { reportId: 'rpt_abc', errorClass: 'Forged' })).toEqual({
+    expect(errorRecord(new TypeError('x'), { reportId: REPORT_ID, errorClass: 'Forged' })).toEqual({
       level: 'error',
       event: 'update.failed',
       errorClass: 'TypeError',
-      reportId: 'rpt_abc',
+      reportId: REPORT_ID,
     });
   });
 });

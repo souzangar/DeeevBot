@@ -36,33 +36,33 @@ number and record the date.
 | Meter (Free plan) | Value | Source | Note for div-report |
 |---|---|---|---|
 | Workers requests per day | 100,000 | Workers limits | every webhook update and callback press is one; the bot is never a group admin, which would deliver every group message |
-| Durable Object requests per day | 100,000 (separate meter) | DO pricing and limits | broadcast steps as alarms, about 1,430 per 50k broadcast, plus one per "I reported it" press |
-| Durable Object duration per day | 13,000 GB-s | DO pricing and limits | a broadcaster resident for a one-hour 50k run is about 460 GB-s |
-| Subrequests per invocation | 50 (D1 queries count; DO storage calls do not) | Workers limits | batch of 35 sends plus D1 reads plus margin; verify by measurement |
-| CPU per invocation | Workers 10 ms; DO 30 s (no Free distinction stated for the DO figure) | Workers limits; DO pricing and limits | batch work runs in the DO |
-| DO alarm invocation duration | 15 min | DO pricing and limits | a batch takes about 2 s |
-| Simultaneous outgoing connections | 6 | Workers limits | pace sends; 25 msg/s target |
-| D1 rows written per day | 100,000 (indexes and deletes count) | D1 pricing | D1 holds subscribers, reports, approvals, stats only |
-| DO SQLite rows written per day | 100,000 (separate meter; each setAlarm = 1) | DO pricing and limits | the ledger and the marks live in the broadcaster |
-| D1 rows read per day | 5,000,000 | D1 pricing | about 50k per broadcast |
-| DO SQLite rows read per day | 5,000,000 | DO pricing and limits | about 50k per broadcast |
+| Durable Object requests per day | 100,000 (separate meter) | DO pricing and limits | not used: there is no Durable Object (ADR 0004) |
+| Durable Object duration per day | 13,000 GB-s | DO pricing and limits | not used |
+| Subrequests per invocation | 50 (D1 queries count) | Workers limits | a cron run drains a few jobs, each one Bot API call and a few D1 queries |
+| CPU per invocation | Workers 10 ms; DO 30 s (no Free distinction stated for the DO figure) | Workers limits; DO pricing and limits | everything runs in the Worker; the per-update work is measured by the deployed probe |
+| DO alarm invocation duration | 15 min | DO pricing and limits | not used |
+| Simultaneous outgoing connections | 6 | Workers limits | one post or edit per job; no pacing |
+| D1 rows written per day | 100,000 (indexes and deletes count) | D1 pricing | D1 is the only store and holds nothing per member: a few dozen rows per report, one per press |
+| DO SQLite rows written per day | 100,000 (separate meter; each setAlarm = 1) | DO pricing and limits | not used |
+| D1 rows read per day | 5,000,000 | D1 pricing | the minute cron reads the due jobs through an index, a few rows a run |
+| DO SQLite rows read per day | 5,000,000 | DO pricing and limits | not used |
 | D1 database size | 500 MB | D1 pricing | minimisation keeps it tiny |
-| DO storage per object | 10 GB (an FAQ entry still says 1 GB on Free) | DO pricing and limits | minimisation keeps it tiny |
-| Cron Triggers per account | 5 | Workers limits | nightly retention job, stall detector |
+| DO storage per object | 10 GB (an FAQ entry still says 1 GB on Free) | DO pricing and limits | not used |
+| Cron Triggers per account | 5 | Workers limits | three planned: the one-minute job cron (which also replaces the stall detector), the nightly retention job and the monthly snapshot |
 | Queues (Free) | 10,000 ops/day | Queues pricing | not used |
 
 ## Over-limit behaviour
 
 On the Free plan an operation over a daily cap fails until 00:00 UTC. The
-design response (persist, reschedule for 00:05 UTC plus jitter, alert the
-admin chat once, stall-detector cron, per-day recipient budget) is in
-ADR 0001 and ADR 0004. The Paid plan (minimum 5 USD/month) removes the
-caps if the NGO ever has a payment path.
+design response is in ADR 0001 and ADR 0004: a cron run that meets a cap
+error stops without writing, the next minute's run picks the due work up
+again once the reset has passed, and the admin chat is alerted once. The
+Paid plan (minimum 5 USD/month) removes the caps if the NGO ever has a
+payment path.
 
 ## Open measurements
 
-- The subrequest and CPU cost of a 35-send batch inside a DO alarm on the
-  Free plan.
-- Whether a DO storage write and `setAlarm` commit atomically.
+- The CPU of the per-update work on the webhook path (configuration memo,
+  HMAC, grammY parse, render), by a deployed probe.
 - Whether Workers invocation logs record request headers (relevant to the
   webhook secret, not to a meter).

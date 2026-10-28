@@ -44,21 +44,23 @@ Duplicated here because breaking them is unrecoverable; the full rules in
 CLAUDE.md still apply.
 
 <!-- sync:catastrophic-invariants -->
-1. No message about a report reaches the broadcast audience (subscribers
-   as such, or the mirror chat) without a recorded approval. Every
-   broadcast, retraction notice or closure notice about a report derives
-   from that report's approval record (the approving admin's numeric id,
-   timestamp and start time); the report broadcast itself is sent only
-   while the report is in the approved or broadcasting state and never
-   before the approval record's start time; no code path leads from intake
-   to any such message without that record.
+1. No message about a report reaches the channel without a recorded
+   approval. Every post, retraction edit or closure edit about a report
+   derives from that report's approval record (the approving admin's
+   numeric id, timestamp and start time); the post itself is made only
+   while the report is in the approved or posting state and never before
+   the approval record's start time; no code path leads from intake to
+   any such message without that record.
 2. Admin authority is decided server-side, on authentic updates. Admin
    status comes from the configured allowlist of numeric Telegram user ids
    (never usernames, which are reassignable), re-checked at every admin
    action; an update is acted on only if it provably came from Telegram
    (a webhook request carrying the configured secret token, or an update
    fetched by long polling); nothing the client sends (chat type, name,
-   callback payload, forwarded message) ever grants authority.
+   callback payload, forwarded message) ever grants authority; while the
+   lockdown switch is set, by a keyholder's command or by the deployment's
+   override, no admin action, intake, press or post is performed and
+   alerts go to the keyholders.
 3. Nobody is exposed by a broadcast's text. A broadcast carries only the
    reviewed links the category's routing allows and admin-authored text.
    The reporter's identity (id, username, name), the reporter's comment,
@@ -73,16 +75,21 @@ CLAUDE.md still apply.
    previews disabled; URLs and comments are stored and shown as escaped
    plain text, never executed or auto-followed; the review view presents
    metadata (URL, platform, category, comment) with link previews disabled.
-   How an admin verifies non-CSAM content before approving belongs to the
-   review runbook, not to the bot.
-5. Direct-message broadcasts are consensual and idempotent. Only users who
-   explicitly opted in and have not opted out receive broadcasts by direct
-   message; a user who blocked the bot is unsubscribed; a resumed broadcast
-   never re-sends to a subscriber the delivery ledger records as delivered,
-   delivery progress and the next step are committed together after every
-   batch, and only the runner holding a broadcast's lease advances it, so a
-   retry after a partial failure resumes from the ledger and can repeat at
-   most one batch.
+   Every link the bot sends to the channel, to a reporter or to a
+   keyholder is parsed, https-only, free of userinfo, port, query and
+   fragment, and its exact hostname is on the configured allowlist of the
+   target platforms' own domains or on the code's fixed list of platform
+   help and hotline hosts, with platform redirectors and
+   Telegram invite, start and Mini App links rejected and admin-authored
+   text checked for links, domains, mentions and phone numbers; the bot
+   has no Mini App and no inline mode. How an admin verifies non-CSAM
+   content before approving belongs to the review runbook, not to the bot.
+5. Posts go only to the configured channel. An approved report is posted
+   once to the configured channel (joining it is the consent, leaving it
+   the opt-out); the bot sends a direct message only as a reply to a
+   user's own message in their own chat or as an alert to a configured
+   keyholder; no list of members or subscribers exists anywhere in the
+   bot's storage.
 6. Secrets and sensitive data stay out of code, VCS, logs, and telemetry.
    The bot token, the webhook secret, the reporter-reference key, database
    credentials and the admin allowlist come from the deployment's secret
@@ -99,10 +106,13 @@ CLAUDE.md still apply.
    the review runbook, through the admin's routing card; its link is never
    sent to the user base or to any chat other than the admin review venue,
    and its review never requires opening the content.
-8. Reports leave only counts behind. The reporter's Telegram id is replaced
-   by a keyed reference once the decision notice is delivered or abandoned;
-   at closure a report's links, comment, broadcast text, delivery ledger
-   and per-user records are deleted, and only the aggregate row (category,
-   platform, day-level dates, outcome, counts, keyed link hash) remains;
-   every stored personal field has a deletion path covered by a test.
+8. No plaintext Telegram id of a reporter or member is ever stored (the
+   allowlisted admins' and keyholders' own ids excepted, both deployment
+   configuration), and reports leave only counts behind: intake state is
+   keyed by the keyed reporter reference; at closure a report's links,
+   comment, texts and per-report records are deleted and only the aggregate
+   row (category, platform, day-level dates, outcome, counts, keyed link
+   hash) remains; every stored personal field has a deletion path covered
+   by a test, and the emergency wipe leaves only the aggregate rows in the
+   live database.
 <!-- /sync:catastrophic-invariants -->

@@ -18,10 +18,13 @@
   // No usage telemetry from the toolchain either: the owner's stance, not rule 6.
   "send_metrics": false,
 
-  // ADR 0004 (storage and the delivery ledger): D1 behind the SqlDb port
-  // holds subscribers, reports, approvals, reporter_stats and stats; plain
-  // SQL migrations live in migrations/. The all-zero database_id is a
-  // placeholder: the real id is deployment configuration.
+  // ADR 0004 (storage, scheduling and the single post): D1 behind the SqlDb
+  // port is the only store, holding drafts, reports, approvals,
+  // admin_prompts, reporter_stats, counters, stats, jobs and meta
+  // (ADR 0006); there is no Durable Object. The plain SQL migrations in
+  // migrations/ are applied by `npm run migrate:local` locally and by
+  // `wrangler d1 migrations apply` on Cloudflare. The all-zero database_id
+  // is a placeholder: the real id is deployment configuration.
   "d1_databases": [
     {
       "binding": "DB",
@@ -31,20 +34,10 @@
     }
   ],
 
-  // ADR 0004 (and ADR 0001's Free-plan meters): one broadcaster Durable
-  // Object whose alarms drive the broadcast step(); its SQLite storage
-  // holds the delivery ledger and the "I reported it" marks.
-  "durable_objects": {
-    "bindings": [{ "name": "BROADCASTER", "class_name": "Broadcaster" }]
-  },
-
-  // ADR 0004: the broadcaster is a SQLite-backed Durable Object class.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Broadcaster"] }],
-
   // ADR 0001 and ADR 0004: the nightly retention job, at 00:05 UTC, after the
-  // Free plan's daily caps reset at 00:00 UTC. The operations runbook
-  // (section 3.3) budgets a second Cron Trigger for the stall detector; its
-  // schedule is set when it lands in Phase 3.
+  // Free plan's daily caps reset at 00:00 UTC. The one-minute cron that
+  // drains the jobs table, and also replaces the stall detector, is added
+  // with the scheduling unit (U5).
   "triggers": { "crons": ["5 0 * * *"] },
 
   // Critical invariant 6: the platform's invocation logs are logs. Workers

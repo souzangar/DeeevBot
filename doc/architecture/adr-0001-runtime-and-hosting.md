@@ -42,36 +42,56 @@ Free-plan values from developers.cloudflare.com (Workers limits updated
 | Meter (Free plan) | Value | Design consequence |
 |---|---|---|
 | Workers requests per day | 100,000 | every webhook update and callback press is one; burnable by anyone who messages the bot (accepted risk, the Paid plan is the fix); an admin bot in a group receives every group message, so the bot is never a group admin |
-| Durable Object requests per day | 100,000 (separate meter) | broadcast steps are DO alarms: about 1,430 per 50k broadcast, plus one per "I reported it" press; a webhook flood does not stall a running broadcast |
-| Durable Object duration per day | 13,000 GB-s | a broadcaster resident for a one-hour 50k run is about 460 GB-s; scales with pacing |
-| Subrequests per invocation | 50 (D1 queries count; DO storage calls do not) | batch = 35 sends + D1 reads of subscribers + margin; verify by measurement |
-| CPU per invocation | Workers 10 ms; DO 30 s | batch work runs in the DO; measure 35 grammY sends anyway |
-| DO alarm invocation duration | 15 min | a batch takes about 2 s |
-| Simultaneous outgoing connections | 6 | pace sends; 25 msg/s target |
-| D1 rows written per day | 100,000 (indexes and deletes count) | D1 holds subscribers, reports, approvals, stats only |
-| DO SQLite rows written per day | 100,000 (separate meter; each setAlarm = 1) | ledger (cursor, batch pairs, counters) and "I reported it" marks live in the broadcaster DO |
-| D1 / DO rows read per day | 5,000,000 each | about 50k per broadcast |
+| Durable Object requests per day | 100,000 (separate meter) | not used: there is no Durable Object ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)) |
+| Durable Object duration per day | 13,000 GB-s | not used |
+| Subrequests per invocation | 50 (D1 queries count) | a cron run drains a few jobs, each one Bot API call and a few D1 queries; a webhook update makes a few calls |
+| CPU per invocation | Workers 10 ms | every invocation is a Worker one; the per-update work is measured by the deployed probe |
+| DO alarm invocation duration | 15 min | not used |
+| Simultaneous outgoing connections | 6 | one post or edit per job; no pacing, a report being posted once |
+| D1 rows written per day | 100,000 (indexes and deletes count) | D1 is the only store and holds nothing per member: a report costs a few dozen rows over its lifecycle, a press one (capacity below) |
+| DO SQLite rows written per day | 100,000 (separate meter; each setAlarm = 1) | not used |
+| D1 / DO rows read per day | 5,000,000 each | D1: the minute cron reads the due jobs through an index, a few rows a run; DO not used |
 | D1 database size / DO storage | 500 MB / 10 GB per object (an FAQ entry still says 1 GB on Free) | minimisation keeps both tiny |
-| Cron Triggers per account | 5 | nightly retention job, stall detector |
+| Cron Triggers per account | 5 | three planned: the one-minute job cron (which also replaces the stall detector), the nightly retention job and the monthly snapshot |
 | Queues (Free) | 10,000 ops/day | not used |
 
 ### Over-limit behaviour
 
 On Free, an operation over a daily cap fails until 00:00 UTC. Defined
-behaviour: on a cap error the broadcaster persists its progress,
-reschedules for 00:05 UTC plus jitter and alerts the admin chat once; a
-stall-detector cron re-alerts; a configured per-day recipient budget is
-checked before a broadcast starts and shown on the approval card.
-Realistic capacity on Free at 50k subscribers: a few report lifecycles per
-day with heavy engagement. The Paid plan (minimum 5 USD/month) removes the
-caps if the NGO ever has a payment path.
+behaviour ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md), the cap
+contract): a cron run that meets a cap error stops without writing, the
+next minute's run picks the due work up again once the reset has passed,
+and the admin chat is alerted once.
+
+Capacity on Free: each approved report is posted once, into the broadcast
+chat, so a report costs a few dozen D1 rows over its whole lifecycle
+whatever the audience; each "I reported it" press writes two D1 rows (the
+report's count and the day's), capped by `MARKS_PER_REPORT` (5,000 per
+report by default) and `MARKS_PER_DAY` (20,000 by default), so presses
+take at most two fifths of the 100,000 D1 rows written per day. The Workers request meter is
+the one an audience can exhaust (every press and every update is a
+request). The Paid plan (minimum 5 USD/month) removes the caps if the NGO
+ever has a payment path.
+
+### Threat model: seizure
+
+The design assumes the deployment can be seized, compelled or breached:
+the Cloudflare account, its D1 database and the Node port's SQLite file.
+So the bot stores no member or reporter identity. There is no subscriber
+list; a reporter is known only by an HMAC reference whose key never
+leaves the deployment's secret store; a press is a count, not a list of
+who pressed; reporters get no decision message, so nothing needs a way back
+to them; and a report's links and texts are deleted at closure. What a
+seizure yields is the reports still open, the admins' numeric ids on
+their decisions, and the aggregate counts. The product-level threat
+model is [Threat model: seizure](../product/threat-model-seizure.md).
 
 ## Consequences
 
-- The broadcast engine is a pure `step()` driven by one Durable Object
-  with alarms on Cloudflare and by a loop on Node; the delivery ledger
-  lives in the DO's SQLite storage, D1 holds only subscribers, reports,
-  approvals and stats ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)).
+- Scheduling is a one-minute Cron Trigger draining a jobs table in D1, the
+  only store, on Cloudflare, and an in-process timer running the same
+  function on Node; an approved report is posted once into the broadcast
+  chat ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)).
 - The webhook path carries a random segment so scanner traffic stays off
   the daily request budget ([ADR 0003](./adr-0003-update-transport-and-admin-authority.md)).
 - The bot is never an admin of the NGO group (request meter); membership
@@ -88,9 +108,9 @@ caps if the NGO ever has a payment path.
   recovery story may depend on a Cloudflare account that is already
   suspended. A yearly drill proves the port starts and receives updates
   ([operations and security](../guides/operations-and-security.md)).
-- Open measurements for the MVP plan: the subrequest and CPU cost of a
-  35-send batch in a DO alarm on Free, and the atomicity of a DO storage
-  write plus `setAlarm`.
+- Open measurement for the MVP plan: the CPU of the per-update work on
+  the webhook path (configuration memo, HMAC, grammY parse, render), by a
+  deployed probe.
 
 ## Alternatives considered
 
@@ -107,3 +127,9 @@ caps if the NGO ever has a payment path.
 ## Status
 
 Accepted 2026-10-28.
+
+Amended 2026-10-28 (Phase 3, unit U1b): the owner's scope change of the
+same day (no direct-message broadcasts, no member or reporter identity, a
+single post per approved report): the meters' design consequences without
+a Durable Object, the over-limit behaviour as ADR 0004's cap contract, the
+capacity statement simplified, and the threat model of a seizure.

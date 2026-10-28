@@ -52,7 +52,7 @@ export const ErrorCode = registry({
   TELEGRAM_TRANSIENT: { code: 'TELEGRAM_TRANSIENT', retryable: true },
   /** Any other refusal by the Bot API: recorded, not retried. */
   TELEGRAM_PERMANENT: { code: 'TELEGRAM_PERMANENT', retryable: false },
-  /** A storage operation failed (D1 or the broadcaster's storage). */
+  /** A storage operation failed (D1, or node:sqlite on the Node port). */
   STORAGE_FAILURE: { code: 'STORAGE_FAILURE', retryable: false },
   /** A Free-plan daily cap was hit: stop in a resumable state until the 00:00 UTC reset. */
   STORAGE_CAP_HIT: { code: 'STORAGE_CAP_HIT', retryable: false },

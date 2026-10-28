@@ -1,9 +1,9 @@
 // Always-run invariant spec, critical invariant 6: secrets never reach a log
 // or a chat. A loaded configuration must be unprintable in every form a
 // logger or an error reporter would use, and a configuration that fails to
-// load must never echo a supplied value (the admin allowlist is a secret
-// too). The commit gate runs this file on every commit
-// (`npm run test:invariants`).
+// load must never echo a supplied value (the admin and keyholder
+// allowlists, the broadcast channel and the link hosts included). The
+// commit gate runs this file on every commit (`npm run test:invariants`).
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_REDACTED, loadConfig } from '../../src/config/schema';
@@ -18,15 +18,33 @@ const ENV = {
   WEBHOOK_SECRET: 'invariant-webhook-secret-value',
   WEBHOOK_PATH_SEGMENT: 'invariant-path-segment-value',
   ADMIN_IDS: '424242001,424242002',
+  KEYHOLDER_IDS: '424242007,424242008',
   REPORTER_REF_KEY: 'invariant-reporter-ref-key-value',
   ADMIN_CHAT_ID: '-100424242003',
-  MIRROR_CHAT_ID: '-100424242004',
   MEMBERSHIP_CHAT_ID: '-100424242005',
-  DAILY_RECIPIENT_BUDGET: '424242',
+  BROADCAST_CHAT_ID: '-100424242004',
+  ALLOWED_LINK_HOSTS: 'invariant-link-host.example,www.invariant-link-host.example',
+  LOCKDOWN: '1',
+  MARKS_PER_DAY: '424243',
+  MARKS_PER_REPORT: '424244',
 } as const;
 
-/** Every supplied value, and each admin id on its own. */
-const SENSITIVE = [...Object.values(ENV), '424242001', '424242002'];
+/**
+ * The values a printed text must never contain: every supplied value of six
+ * characters or more, and each id and host on its own. LOCKDOWN's only
+ * value, "1", is too short to look for in a text; the locked-down
+ * configuration is covered by printing as the marker alone, and a rejected
+ * LOCKDOWN value by the failed-load cases.
+ */
+const distinctive = (values: readonly string[]): string[] => values.filter((value) => value.length >= 6);
+const SENSITIVE = [
+  ...distinctive(Object.values(ENV)),
+  '424242001',
+  '424242002',
+  '424242007',
+  '424242008',
+  'invariant-link-host.example',
+];
 
 const expectNoValueIn = (text: string): void => {
   for (const value of SENSITIVE) expect(text).not.toContain(value);
@@ -34,6 +52,15 @@ const expectNoValueIn = (text: string): void => {
 
 describe('critical invariant 6: the loaded configuration is unprintable', () => {
   const config = loadConfig(ENV);
+
+  it('holds every value it must never print, so the checks below are not vacuous', () => {
+    expect(config.adminIds).toEqual([424242001, 424242002]);
+    expect(config.keyholderIds).toEqual([424242007, 424242008]);
+    expect(config.broadcastChatId).toBe(-100424242004);
+    expect(config.allowedLinkHosts).toEqual(['invariant-link-host.example', 'www.invariant-link-host.example']);
+    expect(config.lockdown).toBe(true);
+    expect(config.marksPerReport).toBe(424244);
+  });
 
   it('JSON.stringify renders it as the redaction marker and nothing else', () => {
     expect(JSON.stringify(config)).toBe(JSON.stringify(CONFIG_REDACTED));
@@ -72,12 +99,17 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
 
   it.each([
     ['a username in the allowlist', { ...ENV, ADMIN_IDS: '424242001,@leaky_admin_handle' }],
-    ['an out-of-range tunable', { ...ENV, BROADCAST_BATCH_SIZE: '424242046' }],
+    ['a username among the keyholders', { ...ENV, KEYHOLDER_IDS: '424242007,@leaky_keyholder_handle' }],
+    ['a keyholder who is also an admin', { ...ENV, KEYHOLDER_IDS: '424242008,424242001' }],
+    ['a positive broadcast chat id', { ...ENV, BROADCAST_CHAT_ID: '424242099' }],
+    ['a link host with a scheme', { ...ENV, ALLOWED_LINK_HOSTS: 'https://leaky-link-host.example' }],
+    ['a lockdown value other than 1', { ...ENV, LOCKDOWN: 'leaky-lockdown-value' }],
+    ['an out-of-range tunable', { ...ENV, MARKS_PER_REPORT: '424242046' }],
     ['a webhook secret outside the alphabet', { ...ENV, WEBHOOK_SECRET: 'leaky secret value' }],
     ['a missing bot token', { ...ENV, BOT_TOKEN: undefined }],
   ])('%s', (_label, env) => {
     const error = failure(env);
-    const supplied = Object.values(env).filter((value): value is string => value !== undefined);
+    const supplied = distinctive(Object.values(env).filter((value): value is string => value !== undefined));
     for (const text of [error.message, String(error), inspect(error), JSON.stringify(error)]) {
       expectNoValueIn(text);
       for (const value of supplied) expect(text).not.toContain(value);

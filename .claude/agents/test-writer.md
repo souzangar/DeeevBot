@@ -20,7 +20,7 @@ Vitest 4, three projects in `vitest.config.ts` (full description:
 | Tier | Where | Command | Needs infra? |
 |------|-------|---------|--------------|
 | unit | `*.test.ts` beside the module under `src/` | `npm run test:unit` | No: plain node, no network; mock at the boundary (Telegram API, storage, clock) |
-| workers | `test/workers/*.test.ts` | `npm run test:workers` | Local only: the D1 and Durable Object bindings from `wrangler.jsonc` through `@cloudflare/vitest-plugin`; for the Cloudflare adapters, pure logic stays in unit |
+| workers | `test/workers/*.test.ts` | `npm run test:workers` | Local only: the D1 binding from `wrangler.jsonc` through `@cloudflare/vitest-plugin`; for the Cloudflare adapters, pure logic stays in unit |
 | invariants | `test/invariants/*.test.ts` | `npm run test:invariants` | No: plain node; always run by the commit gate; one spec per stated "must not" |
 
 `npm test` runs unit and workers; the commit gate runs `npm run build`,
