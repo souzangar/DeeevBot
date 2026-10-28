@@ -14,9 +14,12 @@ platform concerned (for example as child abuse, or as a private-data
 violation) and a recommended comment to attach to the report.
 
 The owner's brief, as stated on 2026-10-28, is `doc/product/project-brief.md`.
-Status: **pre-planning**. Stack, hosting, data model, and module layout are
-not decided; every EDIT-ME below is resolved during planning, in the same
-change as the decision it depends on.
+Status: **planned, no code yet** (2026-10-28). The ten open questions are
+decided in `doc/product/planning-decisions-2026-10-28.md`; the stack,
+hosting, transport, storage, error convention and module layout are ADRs
+under `doc/architecture/`; the eight invariants below are confirmed. The
+remaining EDIT-ME slots are filled when the toolchain is scaffolded (Phase
+2), in the same change as the commands they describe.
 
 ## Commands
 
@@ -52,37 +55,30 @@ brief's flow, pending planning — the open questions in
 
 ## Critical invariants
 
-EDIT-ME (planning): the rules below are a DRAFT — derived from the brief on
-2026-10-28 and amended after the install review — not yet confirmed by the
-owner; rule 7 deliberately narrows the brief's flow for one category and is
-the owner's call, with counsel. While this paragraph stands, devil.sh does
-not inject `.claude/devil/critical-invariants.md` and the commit gate flags
-it as placeholder (both only once `critical-globs.conf` has active globs);
-codex (via AGENTS.md) and the domain-auditor DO read the draft and enforce
-it, surfacing conflicts as planning decisions. Confirm, amend, or strike
-each rule in planning, then delete this paragraph in all three synced
-places in the same commit.
-
 <!-- sync:catastrophic-invariants -->
-1. No broadcast without a recorded approval. A broadcast (a message about a
-   report sent to subscribers) goes out only from a report in the approved
-   state, carrying the approving admin's id and timestamp; no code path
-   leads from intake to broadcast without that record.
+1. No message about a report reaches the broadcast audience (subscribers
+   as such, or the mirror chat) without a recorded approval. Every
+   broadcast, retraction notice or closure notice about a report derives
+   from that report's approval record (the approving admin's numeric id,
+   timestamp and start time); the report broadcast itself is sent only
+   while the report is in the approved or broadcasting state and never
+   before the approval record's start time; no code path leads from intake
+   to any such message without that record.
 2. Admin authority is decided server-side, on authentic updates. Admin
    status comes from the configured allowlist of numeric Telegram user ids
    (never usernames, which are reassignable), re-checked at every admin
    action; an update is acted on only if it provably came from Telegram
-   (webhook secret token verified, or long polling); nothing the client
-   sends (chat type, name, callback payload, forwarded message) ever grants
-   authority.
+   (a webhook request carrying the configured secret token, or an update
+   fetched by long polling); nothing the client sends (chat type, name,
+   callback payload, forwarded message) ever grants authority.
 3. Nobody is exposed by a broadcast's text. A broadcast carries only the
-   reviewed link and admin-authored text. The reporter's identity (id,
-   username, name), the reporter's comment, the approving admin's identity,
-   and personal data of the people involved never appear in the broadcast
-   text or in any message to other users; reporter details are visible only
-   to admins, only inside the review flow. Whether a private-data report's
-   link itself may be broadcast is a routing decision pending in planning
-   (see the brief's open questions).
+   reviewed links the category's routing allows and admin-authored text.
+   The reporter's identity (id, username, name), the reporter's comment,
+   the approving admin's identity, and personal data of the people involved
+   beyond what the allowed links themselves carry never appear in the
+   broadcast text or in any message to other users; the review flow shows
+   admins an opaque reporter reference, never the reporter's Telegram id,
+   username or name.
 4. Reported content is hostile data, never content. The bot never fetches,
    downloads, previews, stores, or re-hosts what is behind a reported link;
    every outgoing message that contains a reported URL is sent with link
@@ -91,26 +87,36 @@ places in the same commit.
    metadata (URL, platform, category, comment) with link previews disabled.
    How an admin verifies non-CSAM content before approving belongs to the
    review runbook, not to the bot.
-5. Broadcasts are consensual and idempotent. Only users who explicitly opted
-   in and have not opted out receive broadcasts; a user who blocked the bot
-   is unsubscribed; each approved report reaches each subscriber at most
-   once, and a retry after a partial failure resumes from the delivery
-   ledger instead of re-sending.
+5. Direct-message broadcasts are consensual and idempotent. Only users who
+   explicitly opted in and have not opted out receive broadcasts by direct
+   message; a user who blocked the bot is unsubscribed; a resumed broadcast
+   never re-sends to a subscriber the delivery ledger records as delivered,
+   delivery progress and the next step are committed together after every
+   batch, and only the runner holding a broadcast's lease advances it, so a
+   retry after a partial failure resumes from the ledger and can repeat at
+   most one batch.
 6. Secrets and sensitive data stay out of code, VCS, logs, and telemetry.
-   The bot token and database credentials come from the environment or a
-   gitignored file and are never committed, logged, or echoed to a chat
-   (secret-shape scan: `.claude/hooks/secret-shape-scan.sh`, a first step of
-   the commit gate); the admin allowlist is deployment config kept out of
-   VCS; reported URLs and reporter ids never go to logs, error trackers, or
-   third-party telemetry.
+   The bot token, the webhook secret, the reporter-reference key, database
+   credentials and the admin allowlist come from the deployment's secret
+   store or environment, never from VCS, and are never logged or echoed to
+   a chat (secret-shape scan: `.claude/hooks/secret-shape-scan.sh`, a first
+   step of the commit gate); reported URLs, comments, reporter ids and
+   subscriber ids never go to logs (the hosting platform's invocation logs
+   included), error trackers, telemetry, or any service other than the
+   Telegram Bot API and the deployment's own storage.
 7. Suspected child sexual abuse material is never re-broadcast. The routing
    input is the admin's categorisation at review; the reporter's label is a
    hint only. A report the admin categorises as suspected CSAM is routed
-   only to the platform's own report channel and the designated national
-   hotline; its link is never sent to the user base, and its review never
-   requires opening the content. (Narrows the brief's "send the links to all
-   users" for this one category; pending the owner's decision, with
-   counsel.)
+   only to the platform's own report channel and the hotlines listed in
+   the review runbook, through the admin's routing card; its link is never
+   sent to the user base or to any chat other than the admin review venue,
+   and its review never requires opening the content.
+8. Reports leave only counts behind. The reporter's Telegram id is replaced
+   by a keyed reference once the decision notice is delivered or abandoned;
+   at closure a report's links, comment, broadcast text, delivery ledger
+   and per-user records are deleted, and only the aggregate row (category,
+   platform, day-level dates, outcome, counts, keyed link hash) remains;
+   every stored personal field has a deletion path covered by a test.
 <!-- /sync:catastrophic-invariants -->
 
 This marked block lives, verbatim, in THREE places (deliberate redundancy —
@@ -125,22 +131,33 @@ these rules apply.
 
 ## Error handling
 
-EDIT-ME (planning): the project's error conventions. AGENTS.md and the
-critics' prompts (devil plan/diff, angel) judge work against
-"error-handling rules", so they must be written down here once the stack is
-chosen — keep the bullets that apply, replace the placeholders, delete the
-rest:
+Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`):
 
-- **Error surface shape.** Every error leaves the system in ONE shape
-  (EDIT-ME: a typed error class, an RFC 9457 problem document, an error
-  envelope with a stable `code` ...) — never an ad-hoc string or a raw
-  exception from a lower layer.
-- **Where codes live.** New error codes are registered in ONE place
-  (EDIT-ME: the catalog's path), never inline at the throw site; user-facing
-  text comes from that catalog.
+- **Error surface shape.** Every error leaves the system as ONE shape: a
+  typed `AppError` (`code`, an internal `message` that never contains
+  report data, optional `cause`, optional `userMessageKey`, `retryable`)
+  — never an ad-hoc string or a raw exception from a lower layer. A grammY
+  error-boundary middleware maps an `AppError` to a localised reply;
+  anything else gets a generic reply and a log line naming the error class
+  only (never the update payload, never a `GrammyError` payload); the
+  webhook handler acknowledges Telegram with 200 after handling so Telegram
+  does not redeliver.
+- **Where codes live.** New error codes are registered in ONE place,
+  `src/errors/catalog.ts`, never inline at the throw site; each code maps
+  to an i18n key, and user-facing text comes from that catalog.
+- **Telegram API errors are classified, not guessed.** 429 persists
+  progress and reschedules the broadcast step for now + `retry_after` (no
+  in-invocation retry burst); 403 "bot was blocked by the user", 400 "chat
+  not found" and "user is deactivated" unsubscribe the user and are not
+  errors; 5xx and network errors retry with bounded backoff, then are
+  recorded as a failed delivery.
 - **What is never swallowed.** No empty `catch`, no log-and-continue on a
-  failure that changes state; background jobs isolate failures per item (one
-  bad item must not kill the run) AND report each one.
+  failure that changes state; the broadcast records failures per recipient
+  and never aborts the batch; a storage failure (including a daily-cap
+  error) stops the broadcast in a resumable state, reschedules the step for
+  00:05 UTC plus jitter, and alerts the admin chat once. Every code path
+  that maps an error has a unit test; "the boundary never leaks a URL or an
+  id" is a regression test with a real `GrammyError`.
 
 ## Testing conventions
 

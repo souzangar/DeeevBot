@@ -185,3 +185,7 @@ secret-shape scan as a kit pattern.
   once the owner confirms.
 - No CI exists yet. The hooks are convenience; CI running the same
   `INVARIANT_CMD` chain is the authority.
+- Settled on 2026-10-28: the planning items in this list (the
+  error-handling convention, the stack-dependent EDIT-MEs, and the owner's
+  confirmation of the draft invariants) were decided in Phase 1 planning;
+  see [Planning decisions (2026-10-28)](../product/planning-decisions-2026-10-28.md).

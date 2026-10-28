@@ -52,8 +52,11 @@ harmful behaviour.
 ## Open questions for planning
 
 The owner expects "a lot more to add or make it robust". The install review
-(`doc/audits/2026-10-28-kit-install.md`) raised the questions below; none is
-decided, and the first two can change the broadcast flow itself.
+(`doc/audits/2026-10-28-kit-install.md`) raised the questions below. All ten
+were decided on 2026-10-28; the "Decided" line under each question points to
+the document that holds the decision, and
+[Planning decisions (2026-10-28)](./planning-decisions-2026-10-28.md) is the
+record.
 
 1. **Category routing for suspected child sexual abuse material: decide
    first, with counsel.** Re-sending such a link to every subscriber may
@@ -66,40 +69,82 @@ decided, and the first two can change the broadcast flow itself.
    invariant 7 proposes: never broadcast such links; one report to the
    platform plus the designated hotline; review on metadata only. The
    owner decides.
+   Decided 2026-10-28: rule 7 stands, adopted by the owner without counsel; a
+   report the admin categorises as suspected CSAM is routed to the platform
+   and the hotlines through the admin's routing card and never broadcast; see
+   [Report categories and routing](./report-categories-and-routing.md).
 2. **Routing for private-data reports.** For a doxxing report the post URL
    is itself the leaked data, so broadcasting it amplifies the leak. Decide
    whether the broadcast carries the specific post URL, only the account
    handle, or platform-form instructions without the link (draft
    invariant 3 covers the broadcast text only and leaves this open).
+   Decided 2026-10-28: account link by default, post URL by admin opt-in
+   recorded with the approval, account-only when the reporter is the affected
+   person, never the post URL for intimate images; see [Report categories and
+   routing](./report-categories-and-routing.md).
 3. **Verification standard, reporter abuse, and retraction.** What an admin
    must verify before approving a non-CSAM report, so that a malicious
    reporter cannot turn the user base against an innocent person; controls
    against repeat or false reporters (rate limits, reputation, blocking);
    and how a wrongly approved broadcast is retracted or corrected to
    subscribers.
+   Decided 2026-10-28: a runbook checklist for the admin, membership-based
+   limits, keyed-hash duplicate detection, a block list and rejection
+   throttle, first decision wins, edit-first retraction; see [Review and abuse
+   controls](./review-and-abuse-controls.md).
 4. **Consent and Telegram's rules.** Who receives broadcasts: explicit
    opt-in and a `/stop` command, automatic unsubscribe when Telegram
    reports that the bot was blocked, and the bulk-messaging limits in the
    Bot API terms (unsolicited bulk messages can get bots banned, taking
    the NGO's channel with them).
+   Decided 2026-10-28: explicit opt-in for members, /stop and block handling,
+   25 messages per second with a global 429 pause and a per-day budget, three
+   bulk message kinds, an optional mirror chat; see [Broadcast consent
+   policy](./broadcast-consent-policy.md).
 5. **Retention and minimisation.** How long resolved reports are kept, when
    the reporter's identity is severed from a report (proposal: at decision
    time), and the rule that reported URLs and reporter ids never reach
    logs or third-party telemetry (draft invariant 6).
+   Decided 2026-10-28: the reporter id becomes a keyed reference after the
+   decision notice, report data is deleted at closure, only an aggregate row
+   survives, nothing sensitive reaches logs or backups; see [Retention and
+   minimisation](./retention-and-minimisation.md).
 6. **The admin review runbook.** How admins verify content without the bot
    ever fetching it (an isolated browser, the platform's own view),
    including the path for a report labelled otherwise that looks like
    CSAM (never open; route per question 1), the platform report forms to
    use per category, and the legal basis for handling each category. A
    `runbook` doc under `doc/guides/`.
+   Decided 2026-10-28: two runbooks; see the [admin review
+   runbook](../guides/admin-review-runbook.md) and [operations and
+   security](../guides/operations-and-security.md).
 7. **Platform policies on coordinated reporting.** An identical recommended
    comment across hundreds of reports is a spam signal platforms discount;
    check each target platform's policy before writing the instructions
    under `doc/reference/`.
+   Decided 2026-10-28: one reference doc per platform from the research of
+   2026-10-28; the broadcast asks each member for one genuine report in their
+   own words, never a text to paste, and never promises removal; see [Planning
+   decisions](./planning-decisions-2026-10-28.md) (Q7) and the platform docs
+   under `doc/reference/`.
 8. **Update authenticity.** Webhook with a verified secret token, or long
    polling; the admin allowlist by numeric id only (draft invariant 2).
+   Decided 2026-10-28: a webhook with a verified secret token on Cloudflare,
+   long polling on a VPS, a numeric allowlist checked at every admin action;
+   see [ADR
+   0003](../architecture/adr-0003-update-transport-and-admin-authority.md).
 9. **Error-handling convention.** AGENTS.md and the devil prompts reference
    error-handling rules that CLAUDE.md does not define yet.
+   Decided 2026-10-28: one typed AppError, one code catalog, a boundary that
+   never leaks report data, Telegram errors classified; see [ADR
+   0005](../architecture/adr-0005-error-handling-convention.md).
 10. **Stack, hosting, data model, module layout**, and with them the
     EDIT-ME slots in CLAUDE.md, the commit gate's build and test commands,
     the tripwire patterns, and the critical globs.
+    Decided 2026-10-28: Cloudflare Workers Free with a Node fallback,
+    TypeScript and grammY, D1 plus a broadcaster Durable Object, the module
+    map and tripwire patterns; see [ADR
+    0001](../architecture/adr-0001-runtime-and-hosting.md), [ADR
+    0002](../architecture/adr-0002-language-and-framework.md), [ADR
+    0004](../architecture/adr-0004-storage-and-delivery-ledger.md) and [ADR
+    0006](../architecture/adr-0006-data-model-and-module-layout.md).

@@ -55,5 +55,9 @@ export default {
   // Pinned "Rules & Invariants" at the top of the root index. Entries are
   // docRoot-relative paths (preferred) or bare basenames (must be unique in
   // the bundle). A missing or ambiguous entry FAILS the build.
-  rulesAndInvariants: [],
+  rulesAndInvariants: [
+    'architecture/critical-invariants.md',
+    'product/retention-and-minimisation.md',
+    'product/broadcast-consent-policy.md',
+  ],
 };

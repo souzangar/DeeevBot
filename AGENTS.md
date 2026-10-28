@@ -11,7 +11,9 @@ members report social-media accounts and links that share private data,
 child abuse, bullying, and similar harm; admins review the reports, and
 approved ones are broadcast to the opted-in subscribers with per-platform
 reporting instructions and a recommended comment. The owner's brief is
-`doc/product/project-brief.md`. Status: pre-planning, stack undecided.
+`doc/product/project-brief.md`; the decisions of 2026-10-28 are in
+`doc/product/planning-decisions-2026-10-28.md` and the ADRs under
+`doc/architecture/`. Status: planned, no code yet.
 
 ## Codex-specific notes
 
@@ -39,34 +41,30 @@ reporting instructions and a recommended comment. The owner's brief is
 Duplicated here because breaking them is unrecoverable; the full rules in
 CLAUDE.md still apply.
 
-EDIT-ME (planning): DRAFT — derived from the owner's brief on 2026-10-28 and
-amended after the install review — not yet confirmed by the owner; rule 7
-narrows the brief's flow for one category and is the owner's call. Enforce
-the rules as stated; where a plan argues one of them away with evidence,
-surface it as a planning decision rather than a violation. This paragraph
-is deleted once the owner confirms the list, in the same commit as
-CLAUDE.md and `.claude/devil/critical-invariants.md`.
-
 <!-- sync:catastrophic-invariants -->
-1. No broadcast without a recorded approval. A broadcast (a message about a
-   report sent to subscribers) goes out only from a report in the approved
-   state, carrying the approving admin's id and timestamp; no code path
-   leads from intake to broadcast without that record.
+1. No message about a report reaches the broadcast audience (subscribers
+   as such, or the mirror chat) without a recorded approval. Every
+   broadcast, retraction notice or closure notice about a report derives
+   from that report's approval record (the approving admin's numeric id,
+   timestamp and start time); the report broadcast itself is sent only
+   while the report is in the approved or broadcasting state and never
+   before the approval record's start time; no code path leads from intake
+   to any such message without that record.
 2. Admin authority is decided server-side, on authentic updates. Admin
    status comes from the configured allowlist of numeric Telegram user ids
    (never usernames, which are reassignable), re-checked at every admin
    action; an update is acted on only if it provably came from Telegram
-   (webhook secret token verified, or long polling); nothing the client
-   sends (chat type, name, callback payload, forwarded message) ever grants
-   authority.
+   (a webhook request carrying the configured secret token, or an update
+   fetched by long polling); nothing the client sends (chat type, name,
+   callback payload, forwarded message) ever grants authority.
 3. Nobody is exposed by a broadcast's text. A broadcast carries only the
-   reviewed link and admin-authored text. The reporter's identity (id,
-   username, name), the reporter's comment, the approving admin's identity,
-   and personal data of the people involved never appear in the broadcast
-   text or in any message to other users; reporter details are visible only
-   to admins, only inside the review flow. Whether a private-data report's
-   link itself may be broadcast is a routing decision pending in planning
-   (see the brief's open questions).
+   reviewed links the category's routing allows and admin-authored text.
+   The reporter's identity (id, username, name), the reporter's comment,
+   the approving admin's identity, and personal data of the people involved
+   beyond what the allowed links themselves carry never appear in the
+   broadcast text or in any message to other users; the review flow shows
+   admins an opaque reporter reference, never the reporter's Telegram id,
+   username or name.
 4. Reported content is hostile data, never content. The bot never fetches,
    downloads, previews, stores, or re-hosts what is behind a reported link;
    every outgoing message that contains a reported URL is sent with link
@@ -75,24 +73,34 @@ CLAUDE.md and `.claude/devil/critical-invariants.md`.
    metadata (URL, platform, category, comment) with link previews disabled.
    How an admin verifies non-CSAM content before approving belongs to the
    review runbook, not to the bot.
-5. Broadcasts are consensual and idempotent. Only users who explicitly opted
-   in and have not opted out receive broadcasts; a user who blocked the bot
-   is unsubscribed; each approved report reaches each subscriber at most
-   once, and a retry after a partial failure resumes from the delivery
-   ledger instead of re-sending.
+5. Direct-message broadcasts are consensual and idempotent. Only users who
+   explicitly opted in and have not opted out receive broadcasts by direct
+   message; a user who blocked the bot is unsubscribed; a resumed broadcast
+   never re-sends to a subscriber the delivery ledger records as delivered,
+   delivery progress and the next step are committed together after every
+   batch, and only the runner holding a broadcast's lease advances it, so a
+   retry after a partial failure resumes from the ledger and can repeat at
+   most one batch.
 6. Secrets and sensitive data stay out of code, VCS, logs, and telemetry.
-   The bot token and database credentials come from the environment or a
-   gitignored file and are never committed, logged, or echoed to a chat
-   (secret-shape scan: `.claude/hooks/secret-shape-scan.sh`, a first step of
-   the commit gate); the admin allowlist is deployment config kept out of
-   VCS; reported URLs and reporter ids never go to logs, error trackers, or
-   third-party telemetry.
+   The bot token, the webhook secret, the reporter-reference key, database
+   credentials and the admin allowlist come from the deployment's secret
+   store or environment, never from VCS, and are never logged or echoed to
+   a chat (secret-shape scan: `.claude/hooks/secret-shape-scan.sh`, a first
+   step of the commit gate); reported URLs, comments, reporter ids and
+   subscriber ids never go to logs (the hosting platform's invocation logs
+   included), error trackers, telemetry, or any service other than the
+   Telegram Bot API and the deployment's own storage.
 7. Suspected child sexual abuse material is never re-broadcast. The routing
    input is the admin's categorisation at review; the reporter's label is a
    hint only. A report the admin categorises as suspected CSAM is routed
-   only to the platform's own report channel and the designated national
-   hotline; its link is never sent to the user base, and its review never
-   requires opening the content. (Narrows the brief's "send the links to all
-   users" for this one category; pending the owner's decision, with
-   counsel.)
+   only to the platform's own report channel and the hotlines listed in
+   the review runbook, through the admin's routing card; its link is never
+   sent to the user base or to any chat other than the admin review venue,
+   and its review never requires opening the content.
+8. Reports leave only counts behind. The reporter's Telegram id is replaced
+   by a keyed reference once the decision notice is delivered or abandoned;
+   at closure a report's links, comment, broadcast text, delivery ledger
+   and per-user records are deleted, and only the aggregate row (category,
+   platform, day-level dates, outcome, counts, keyed link hash) remains;
+   every stored personal field has a deletion path covered by a test.
 <!-- /sync:catastrophic-invariants -->
