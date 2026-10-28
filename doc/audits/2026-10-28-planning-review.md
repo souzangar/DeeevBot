@@ -1,7 +1,7 @@
 ---
 type: audit
 title: "Planning review (2026-10-28)"
-description: "The angel's two review rounds on the Phase 1 decision brief (objections, suggestions and dispositions, the owner's answers, the research note's unverified items) and the Phase 3 MVP plan review: four angel rounds and the codex devil's 21 objections with their dispositions, the devil's unverified scope, and the open items carried into the units."
+description: "The angel's two review rounds on the Phase 1 decision brief (objections, suggestions and dispositions, the owner's answers, the research note's unverified items); the Phase 3 MVP plan review (four angel rounds and the codex devil's 21 objections with their dispositions, the devil's unverified scope, the open items carried into the units); and the scope reduction review of the same evening: the owner's threat statement and answers, the angel's rounds 5 to 7, the devil's 14 objections on R9 with their dispositions, closure at R11."
 status: active
 tags: [audit, planning, review, angel, devil]
 timestamp: 2026-10-28T00:00:00Z
@@ -377,3 +377,180 @@ Quoted from the critique:
   wrangler.jsonc and the operations runbook). The research note's
   unverified items (1), (2) and (5) are not addressed by the plan brief
   and stay open.
+- Found while building U1b, each for the unit named. On 2026-10-28,
+  during U1b, the owner narrowed the scope: no direct-message broadcasts,
+  no member or reporter identity in storage, an approved report posted
+  once into `BROADCAST_CHAT_ID`, retraction and closure editing that post,
+  "I reported it" a counter, no decision message to reporters. The
+  broadcaster Durable Object, its ledger and its bucketed marks were built
+  and removed the same day, which retired the findings about them (the
+  per-press read cost of the daily mark cap, the alarm rule, the batch
+  step's row writes). What still stands:
+  - the owner, in the three synced copies at once: rule 5 still governs
+    direct-message broadcasts and rule 8 the reporter id's replacement
+    after the decision notice; neither exists any more. CLAUDE.md's
+    "Error handling" (a cap error "reschedules for 00:05 UTC plus jitter")
+    and the module map's rules column follow them;
+  - the product docs (the consent policy, the lifecycle, review and abuse
+    controls), the runbooks and the threat model are being rewritten to
+    the single-post model; until then they still describe subscriptions,
+    the fan-out and the decision notices. The configuration moved to it in
+    U1b's final pass (plan revision 8): `BROADCAST_CHAT_ID`,
+    `KEYHOLDER_IDS`, `ALLOWED_LINK_HOSTS`, `LOCKDOWN` and
+    `MARKS_PER_REPORT` added, the four direct-message variables removed,
+    the grace period 30 minutes;
+  - U2, U5: a press writes two D1 rows (the report's count and the day's
+    in `counters`), capped by `MARKS_PER_REPORT` and `MARKS_PER_DAY`;
+  - U5: the joined due query (approved, un-voided, `starts_at` reached)
+    is driven by the planner from `reports_by_status`; `approvals_due`
+    serves only approvals-side reads, so U5 confirms it or a later
+    migration drops it;
+  - U5, U6: the statuses are `posting` while the post is being made and
+    `posted` once it is (renamed in U1b's final pass, plan revision 8);
+    the lifecycle doc takes the names in its rewrite;
+  - U6: the finalized report row (its personal fields nulled,
+    `data_deleted_at` set) is deleted by the retention job, so that only
+    the aggregate row then holds the report id, as rule 8's test expects;
+  - U3: `drafts.draft_key`, `reporter_ref` and `link_hash` are 64
+    lowercase hex characters (HMAC-SHA-256), which the schema enforces.
+
+## Scope reduction review (2026-10-28, evening)
+
+Scope: the MVP plan brief from its revision R7, the scope reduction the
+owner decided after stating the seizure threat, to revision R11 (marker
+PLAN-R11, closed). The design of R1 to R6 above (a direct-message fan-out
+with a Durable Object ledger) was removed. The dispositions below are the
+brief's own record (its section 9); the devil's objections are summarised
+from the lead sentence of each and their dispositions quoted from the
+brief's "Devil round on R9" block. The product-level result is
+[Threat model: seizure](../product/threat-model-seizure.md); the
+decisions are listed in
+[Planning decisions](../product/planning-decisions-2026-10-28.md) ("Scope
+reduction after the seizure threat").
+
+### The owner's threat statement and answers
+
+Verbatim: "imagine a situation where the admins get arrested because of
+they are defending human rights and then use this platform to target or
+identify users and their real IP. I only know with telegram inline bot
+chats or telegram serverless server it's possible. or maybe having some
+proxy in between. but still if they have access the account, they still
+can change anything."
+
+The answers the same evening: approved reports go to a channel or group
+only, with no direct-message list, then (after round 5 showed that a
+group's member list is readable by any member) a channel owned by the
+keyholder; no decision message to reporters; outcomes by editing the post,
+with counts only; a keyholder outside the country, "not yet, but I can
+arrange it"; the grace period 30 minutes.
+
+### Process
+
+Revision R7 reduced the scope. Three angel rounds on the Claude lane and
+one codex devil run followed. Angel round 5, on R7: ten objections and
+three suggestions, all conceded, with two owner answers folded (the
+channel, the 30-minute grace), giving R8. Round 6, on R8: six
+sentence-level objections, all conceded, giving R9. Then ONE codex devil
+plan run, on R9 (`DEVIL_RUN: mode=plan base=n/a critical=0 escalate=1
+effort=xhigh model=gpt-6-astra`; `DEVIL_SESSION:
+01a1842f-15eb-79c2-a351-da72f37591fb`; brief sha256
+`2eb32c7c223aff2d317e21cdeea634319f5e9d1c169acf7f2ceb1210a3cbf802`;
+`DEVIL_QUOTA: 7d[used=4% left=96% resets=2026-11-04 02:10] reading-age=0h`).
+Verdict FIX-FIRST ("The seizure protections are overstated, and posting,
+lockdown and finalization have concrete paths to premature sends or
+irretractable harmful posts"), 14 objections, all conceded with a fix in
+the text, giving R10. The devil re-ran the premise's capability searches
+and found them incomplete: rendering helpers already existed in
+`src/i18n/html.ts`, the `SqlDb` contract permits multi-write transactions
+only through `batch`, and the "no hits" searches find API names in
+`src/privacy/logger.ts`, as labels rather than implementations. Angel
+round 7, on R10: one major and four minor objections, all conceded,
+giving R11. Closure was declared by disposition completeness at R11
+(every objection conceded and folded, none rebutted, no verdict awaited).
+
+### The angel's rounds 5, 6 and 7
+
+Round 5 (ten objections, three suggestions; all conceded; on R7):
+
+1. a keyholder-owned channel, the bot its only posting administrator, the
+   admins never chat administrators, hidden members on in the NGO group
+   (the owner: yes);
+2. the exact-host link policy, the Telegram path rules, the redirector
+   list, the admin free-text validator, the "view only" line; rule 4
+   states the mechanism;
+3. Time Travel named; the wipe defends against the seized admins;
+   `wrangler d1 delete` as the second step; the retention doc corrected;
+4. the conditional claim of a post job; ambiguous failures never re-sent;
+   the two tests;
+5. lockdown covers intake and presses; `/lockdown` from `KEYHOLDER_IDS`
+   in D1 plus the secret override; alerts to keyholders;
+6. reporter messages deleted on receipt, `message_ids` dropped, the
+   acknowledgement self-deletes, the reference's brute-force caveat and
+   the admin-id exception stated in the threat model;
+7. two writes per press stated, `MARKS_PER_REPORT`, the advisory label;
+8. the CSAM-label acknowledgement with hotline links at intake; dead
+   configuration removed; `my_chat_member` dropped;
+9. the rule texts amended (the brief's section 10);
+10. the owner: the grace period is 30 minutes.
+
+Suggestions: S1 the schema scan in U1b; S2 alerts name the keyholder
+path; S3 the "view only" line in both locales with a render test.
+
+Round 6 (six sentence-level objections; all conceded; on R8):
+
+1. `TRUSTED_HELP_HOSTS` fixed in code beside the configured target
+   allowlist, both covered by the render scan; rule 4 amended;
+2. the hotline links as a second persistent message; the
+   acknowledgement's self-delete bounded by the handler's start; the draft
+   write before the message deletion;
+3. `/open` and `/stats` for keyholders under lockdown;
+4. keyholders `/start` once at go-live; failed alerts retried;
+5. the lockdown alert once; retention runs under lockdown and on
+   `/lockdown`;
+6. the wording items: "live database", "the channel" in rule 1, the rule
+   7 test, the acceptance sentence, the button removed at closure too,
+   keyholders are not admins.
+
+Round 7 (one major, four minors; all conceded; on R10):
+
+1. `/attach` verified through `editMessageReplyMarkup` and this report's
+   callback data, `post_message_id` unique, authority stated for
+   `/attach` and `/repost` in and out of lockdown, `/repost` admitted only
+   without a message id;
+2. lockdown wording: retraction edit jobs only; the keyholder buttons work
+   under lockdown;
+3. the keyholder notice edited to the outcome without links; a Lockdown
+   button beside Cancel;
+4. the claim binds a random `approval_id`, `halted` and `paused_until`; a
+   `posting` row with its job present is in progress;
+5. the pause not moot; terminal-by-edit scoped to posted reports; rule 4
+   covers keyholder messages; the wipe a minute after lockdown.
+
+### The devil's 14 objections and their dispositions
+
+| # | Objection (the critique's lead sentence) | Disposition (the brief's "Devil round on R9" block) |
+|---|---|---|
+| 1 | Seized approvers still control a phishing surface: free instructions pass the URL, mention and phone checks, and the grace period supplies neither independent approval nor notification | conceded: no custom instructions; the comment bounded (300 characters) and labelled; the fixed warning line; every keyholder notified with a Cancel for the grace; the residual stated in the threat model |
+| 2 | Reconciliation can permanently discard an unfinished retraction: the terminal status was written before the edit, then finalized | conceded: the `closing` and `retracting` states; the terminal status only by the edit's success; reconciliation never finalizes an unaddressed post |
+| 3 | The specified claim can bypass a fresh approval's grace period: a stale tick claims `approved` after a Cancel and re-approval (reproduced against the schema) | conceded: the claim statement binds the approval and the start; the interleaving test (a random `approval_id`, from round 7) |
+| 4 | Lockdown is a precondition check, not the promised execution barrier: a tick can pass its check before `/lockdown` and send after; intake can write after the wipe | conceded: the claim binds the lockdown state; the in-flight residual stated; the wipe after lockdown (a minute after, from round 7) |
+| 5 | "Post again" defeats the unconditional at-most-once rule and leaves an unmanageable first copy | conceded: `/attach` and `/repost` replace "Post again" |
+| 6 | Role separation explicitly permits its own bypass: an id in both lists could run `/unlock` | conceded: the schema refuses an admin and keyholder overlap |
+| 7 | HMAC references do not make the retained reports anonymous: comment, URLs and the affected flag can identify the reporter by content | conceded: content versus metadata stated; comment guidance, bound, nulled at the decision |
+| 8 | Hidden group membership does not protect participants visible in chat history | conceded: the group's history stated as outside the bot's control; the owner decides the group's future |
+| 9 | The deletion guarantees have no failure-recovery path, and card deletion inherits the false "at any age" premise | conceded: deletion before the reply with a retry and a fallback; the 48-hour limit applied to cards |
+| 10 | The emergency SQL wipe can fail precisely when an attacker exhausts storage quotas | conceded: the quota-exhausted incident path (the `LOCKDOWN` secret and `wrangler d1 delete`) |
+| 11 | The universal outgoing-link rule contradicts supported intake and review: "other" reports with any host could not reach review | conceded: rule 4 scoped to the channel and reporters (and keyholders, from round 7); the card shows any URL as code |
+| 12 | Rejecting `?startapp=` does not establish the claimed Mini App exclusion: query-free `t.me/<bot>/<short_name>` launches Mini Apps | conceded: Telegram targets rendered as code text, never links; the accepted intake grammar |
+| 13 | 429 recovery is missing a state transition, and the shared pause is wrongly declared moot | conceded: the 429 revert of the claim; the pause honoured by every job send |
+| 14 | Section 10 does not amend all the binding contracts it breaks: rule 1's states, the error rules' retry mandate, `src/platforms/` outside the critical globs | conceded: rule 1's states; the Error handling section amended (U8 reconciles CLAUDE.md); `src/platforms/` a critical glob |
+
+### The devil's unverified scope
+
+Quoted from the critique:
+
+> UNVERIFIED: Live Telegram permissions and client behavior, deployed
+> Worker timing and quota recovery, database-deletion guarantees, and
+> U2–U8 implementation tests; those require deployment or unimplemented
+> code. The working tree changed during inspection, so this is not
+> certification of an immutable revision.

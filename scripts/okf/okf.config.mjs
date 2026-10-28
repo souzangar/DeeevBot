@@ -57,6 +57,7 @@ export default {
   // the bundle). A missing or ambiguous entry FAILS the build.
   rulesAndInvariants: [
     'architecture/critical-invariants.md',
+    'product/threat-model-seizure.md',
     'product/retention-and-minimisation.md',
     'product/broadcast-consent-policy.md',
   ],

@@ -12,13 +12,14 @@ Open Knowledge Format v0.1 bundle. Every concept doc carries YAML frontmatter (`
 
 Binding rules — read before touching the relevant code path.
 
-- [Critical invariants](./architecture/critical-invariants.md) — The eight catastrophic invariants explained: each rule by title, why it exists, and the regression test that pins it; the verbatim block lives in CLAUDE.md, synced to AGENTS.md and the devil's invariants file.
-- [Retention and minimisation](./product/retention-and-minimisation.md) — What the bot stores about reports, reporters and subscribers, for how long, which deletion path removes each field, what survives as an aggregate row, and what never reaches logs or backups.
-- [Broadcast consent policy](./product/broadcast-consent-policy.md) — Who may receive a direct-message broadcast and on what terms: explicit opt-in, /stop and block handling, pacing and the per-day budget, the three bulk message kinds, and the mirror chat.
+- [Critical invariants](./architecture/critical-invariants.md) — The eight catastrophic invariants explained: each rule by title, why it exists, and the regression test that pins it, after the amendment of rules 1, 2, 4, 5 and 8 for the seizure threat; the verbatim block lives in CLAUDE.md, synced to AGENTS.md and the devil's invariants file.
+- [Threat model: seizure of the admins](./product/threat-model-seizure.md) — The owner's seizure scenario of 2026-10-28 in their own words, what each seized asset yields and what stops the rest, and the binding controls that follow: no stored identities, a keyholder-owned channel, the link policy, the two-layer lockdown, the emergency wipe, the keyholder role and the 30-minute grace; what stays outside the bot's control; what blocks go-live.
+- [Retention and minimisation](./product/retention-and-minimisation.md) — What the bot stores about reports and reporters (no plaintext Telegram id of any member or reporter: a keyed reference and counts), for how long, which deletion path removes each field, what survives as an aggregate row, the chat hygiene on every side, D1's 30-day Time Travel history and the emergency wipe, and what never reaches logs or backups.
+- [Broadcast consent policy](./product/broadcast-consent-policy.md) — Where an approved report goes and on what terms: one post into the keyholder-owned channel, joining it as the consent and leaving as the opt-out; retraction and closure as edits of that post; the I-reported-it counter with its two caps and its advisory label; no direct message to anyone except a reply in their own chat or a keyholder alert; the Bot Developer Terms; the tests.
 
 ## Domains
 
-- [product/](./product/index.md) — What the bot does: the brief, user flows, report lifecycle, moderation policy. _(7)_
+- [product/](./product/index.md) — What the bot does: the brief, user flows, report lifecycle, moderation policy. _(8)_
 - [architecture/](./architecture/index.md) — System design, data model, and decision records. _(7)_
 - [guides/](./guides/index.md) — How-to guides and runbooks: operating the bot, admin procedures. _(3)_
 - [reference/](./reference/index.md) — External contracts and lookup material: Telegram Bot API notes, per-platform reporting instructions. _(10)_

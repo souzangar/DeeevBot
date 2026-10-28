@@ -1,7 +1,7 @@
 ---
 type: spec
 title: "Planning decisions (2026-10-28)"
-description: "The owner's Phase 1 inputs verbatim, the decision on each of the brief's ten open questions with a pointer to the doc that holds the detail, and the confirmation and amendment of the catastrophic invariants."
+description: "The owner's Phase 1 inputs verbatim, the decision on each of the brief's ten open questions with a pointer to the doc that holds the detail, the scope reduction of the same evening after the owner stated the seizure threat (their words and answers, and which docs hold each decision), and the confirmation and amendment of the catastrophic invariants."
 status: active
 tags: [product, planning, decisions]
 timestamp: 2026-10-28T00:00:00Z
@@ -17,6 +17,9 @@ seven draft invariants. The review that shaped revision 2 of the decisions
 (the angel's twelve round-1 objections and twelve suggestions, and the
 seven round-2 objections, each with its disposition) is in the audit
 [Planning review (2026-10-28)](../audits/2026-10-28-planning-review.md).
+The same evening the owner stated the seizure threat and reduced the
+scope; the dated section "Scope reduction after the seizure threat" below
+records it, and supersedes what it names in the entries above it.
 
 Three facts frame every decision below:
 
@@ -115,25 +118,36 @@ queues behind a running broadcast and completes within the hour. Detail:
 
 ### Q4. Consent and Telegram's rules
 
-Explicit opt-in for members of the NGO group, /stop, unsubscription on a
-reported block or on the 403/400 send errors, at most 25 direct messages
-per second, a global pause on 429, a per-day recipient budget, exactly
-three bulk message kinds (closure outcomes go only to pressers who are
-still subscribed at send time), and an optional mirror chat whose readers
-leave no ids unless they press "I reported it" and who receive every
-broadcast twice if they also subscribe. Detail:
+Decided in Phase 1 as an explicit opt-in with a direct-message fan-out
+and an optional mirror chat; superseded the same evening (the scope
+reduction below). The decision now: an approved report is posted once
+into a channel owned by the keyholder (`BROADCAST_CHAT_ID`); joining the
+channel is the consent and leaving it the opt-out; there is no
+subscription, no subscriber list and no direct-message broadcast;
+retraction and closure edit the post; "I reported it" is a counter with a
+per-day and a per-report cap, labelled advisory; the bot sends a direct
+message only as a reply in a user's own chat or as an alert to a
+keyholder; the only bulk message kind is the post with its edits (Bot
+Developer Terms 5.2). Detail:
 [Broadcast consent policy](./broadcast-consent-policy.md).
 
 ### Q5. Retention and minimisation
 
-The owner's policy made concrete: the reporter's Telegram id is replaced by
-a keyed reference once the decision notice is delivered or abandoned;
-report data is deleted at closure (admin outcome or 90 days after the
-broadcast); rejected reports go after 30 days; routed CSAM reports lose URL
-and comment at routing; only an aggregate row survives (a re-reported target's prior outcome is
-shown on the admin's card only, never to the reporter); logs never carry
-URLs, comments or ids; no per-user backups, ever. Detail:
-[Retention and minimisation](./retention-and-minimisation.md).
+The owner's policy made concrete, then tightened the same evening (the
+scope reduction below): no plaintext Telegram id of any member or
+reporter is ever stored (the allowlisted admins' and keyholders' own ids
+excepted); intake state is keyed by the keyed reporter reference computed
+from each update; reporters get no decision message, so nothing needs a
+way back to them; `comment` and `affected_person` are nulled at the
+decision; report data is deleted at closure (admin outcome, retraction,
+or expiry 90 days after the post), rejected and routed rows 30 days after
+the decision, pending rows 30 days after intake; routed CSAM reports lose
+URL, account URL and comment at routing; only an aggregate row survives
+(a re-reported target's prior outcome is shown on the admin's card only,
+never to the reporter); logs never carry URLs, comments or ids; no
+backups of our own, while D1's 30-day Time Travel history is named as the
+platform's, and the emergency wipe leaves only the aggregate rows.
+Detail: [Retention and minimisation](./retention-and-minimisation.md).
 
 ### Q6. Admin review runbook and operations guide
 
@@ -191,14 +205,97 @@ fallback, Telegram Serverless rejected for now with a named re-evaluation
 trigger ([ADR 0001](../architecture/adr-0001-runtime-and-hosting.md), meter
 table in [Cloudflare Free plan limits](../reference/cloudflare-free-plan-limits.md));
 TypeScript strict ESM, grammY, Vitest, wrangler, zod, npm, no AI services
-([ADR 0002](../architecture/adr-0002-language-and-framework.md)); D1 behind
-a SqlDb port plus a broadcaster Durable Object holding the delivery ledger
-([ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md));
-tables, statuses, module map, critical globs and tripwire patterns
+([ADR 0002](../architecture/adr-0002-language-and-framework.md)); D1 as
+the only store behind a SqlDb port, a jobs table drained by a one-minute
+cron, no Durable Object and no delivery ledger since the evening's scope
+reduction ([ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md));
+tables, statuses, module map, critical globs (`src/platforms/` among
+them) and tripwire patterns
 ([ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md)).
-Review model: single approval with a 5-minute grace period (Cancel returns
-the report to pending and voids the approval), first decision wins; the
+Review model: single approval with a 30-minute grace period (Cancel, on
+the card or on a keyholder's notice, returns the report to pending and
+voids the approval), first decision wins, the post claimed by one
+conditional update binding the approval and the lockdown state; the
 state machine is in [Report lifecycle](./report-lifecycle.md).
+
+## Scope reduction after the seizure threat (2026-10-28, evening)
+
+During unit U1b, after the Phase 1 decisions above were recorded, the
+owner stated the threat the product must survive, verbatim:
+
+"imagine a situation where the admins get arrested because of they are
+defending human rights and then use this platform to target or identify
+users and their real IP. I only know with telegram inline bot chats or
+telegram serverless server it's possible. or maybe having some proxy in
+between. but still if they have access the account, they still can change
+anything."
+
+The owner's answers the same evening:
+
+- Where approved reports go: a channel or group only, with no
+  direct-message list; once a group's member list was shown to be
+  readable by any member, a channel owned by the keyholder.
+- No decision message to reporters.
+- Outcomes by editing the post, with counts only.
+- A keyholder outside the country: "not yet, but I can arrange it".
+- The approval grace period: 30 minutes (the Phase 1 input of 5 minutes
+  is superseded).
+
+The decisions that follow, each held by the doc named:
+
+- The threat model itself, the attacker's capabilities and the controls:
+  [Threat model: seizure](./threat-model-seizure.md), a binding rule
+  pinned in the root index.
+- No direct-message broadcast, no subscription, no subscriber list; one
+  post per approved report into the channel; retraction and closure edit
+  it; "I reported it" is a counter with two caps:
+  [Broadcast consent policy](./broadcast-consent-policy.md) (supersedes Q4
+  as first decided).
+- No plaintext Telegram id of any member or reporter in storage; drafts
+  keyed by the reporter reference; `comment` and `affected_person` nulled
+  at the decision; the emergency wipe; D1 Time Travel named:
+  [Retention and minimisation](./retention-and-minimisation.md) (tightens
+  Q5).
+- The statuses `posting`, `posted`, `closing` and `retracting`; the post
+  claimed by one conditional update binding the approval and the lockdown
+  state; ambiguous failures never re-sent, a verified `/attach` and
+  `/repost` instead of a blind re-post; no reporter notices; each reporter
+  message deleted on receipt: [Report lifecycle](./report-lifecycle.md)
+  (supersedes the retraction and notice sentences of Q3 and Q5).
+- The link policy (exact hosts, https only, no userinfo, port, query or
+  fragment, redirectors rejected, Telegram targets as code text, the fixed
+  `TRUSTED_HELP_HOSTS` list, no Mini App, no inline mode), no
+  admin-written instructions for "other", the hotline message at intake
+  for a CSAM label:
+  [Report categories and routing](./report-categories-and-routing.md).
+- The admin free-text validator and the 300-character recommended comment
+  under the fixed warning line, the lockdown's effect on intake and
+  review, review cards deleted within 48 hours (the "at any age" claim
+  withdrawn): [Review and abuse controls](./review-and-abuse-controls.md)
+  and the [admin review runbook](../guides/admin-review-runbook.md)
+  (amends Q3 and Q6).
+- The keyholder role (`KEYHOLDER_IDS`, never overlapping `ADMIN_IDS`),
+  the two lockdown layers, keyholder alerts with a Cancel and a Lockdown
+  button at every approval, the channel setup, the single cron, the wipe
+  and `wrangler d1 delete`, the quota-exhausted path:
+  [ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md),
+  [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
+  [ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md) and
+  the [operations and security runbook](../guides/operations-and-security.md)
+  (amends Q6, Q8 and Q10).
+- Ambiguous versus unambiguous Telegram failures, no retry of a timeout,
+  a network error or a 5xx on a send, no 00:05 UTC reschedule:
+  [ADR 0005](../architecture/adr-0005-error-handling-convention.md)
+  (amends Q9).
+- Catastrophic invariants 1, 2, 4, 5 and 8 amended: the section below.
+
+The design built for the Phase 1 decisions (a direct-message fan-out with
+a Durable Object delivery ledger, in unit U1b) was removed the same day.
+The critic rounds that took the reduced design from its first revision to
+closure (the angel's rounds 5, 6 and 7, the codex devil's second run,
+every objection conceded) are recorded in the
+[planning review](../audits/2026-10-28-planning-review.md) ("Scope
+reduction review").
 
 ## The catastrophic invariants
 
@@ -249,13 +346,57 @@ the audit):
   remains; every stored personal field has a deletion path covered by a
   test.
 
+The same evening, after the seizure threat, the owner amended rules 1, 2,
+4, 5 and 8 again; the texts are in the three synced copies, and
+[Threat model: seizure](./threat-model-seizure.md) holds the reasons:
+
+- Rule 1 names the channel as the broadcast audience and the states
+  `approved` or `posting`: no message about a report reaches the channel
+  without the approval record, and the post is sent only while the report
+  is approved or posting and never before the record's start time.
+- Rule 2 adds the lockdown: while the lockdown switch is set, by a
+  keyholder's command or by the deployment's override, no admin action,
+  intake, press or post is performed and alerts go to the keyholders.
+- Rule 4 adds the link policy: every link the bot sends to the channel,
+  to a reporter or to a keyholder is parsed, https-only, free of userinfo,
+  port, query and fragment, and its exact hostname is on the configured
+  allowlist of the target platforms' own domains, or on the code's fixed
+  list of platform help and hotline hosts, with platform redirectors and
+  Telegram invite, start and Mini App links rejected and admin-authored
+  text checked for links, domains, mentions and phone numbers; the bot
+  has no Mini App and no inline mode.
+- Rule 5 becomes "Posts go only to the configured channel": an approved
+  report is posted once to the configured channel (joining it is the
+  consent, leaving it the opt-out); the bot sends a direct message only
+  as a reply to a user's own message in their own chat or as an alert to
+  a configured keyholder; no list of members or subscribers exists
+  anywhere in the bot's storage.
+- Rule 8 becomes "No plaintext Telegram id of a reporter or member is
+  ever stored (the allowlisted admins' and keyholders' own ids excepted,
+  both deployment configuration), and reports leave only counts behind":
+  intake state is keyed by the keyed reporter reference; at closure a
+  report's links, comment, texts and per-report records are deleted and
+  only the aggregate row remains; every stored personal field has a
+  deletion path covered by a test, and the emergency wipe leaves only the
+  aggregate rows in the live database.
+- Rules 3, 6 and 7 are unchanged.
+
 ## Open items carried into the MVP plan
 
-- Measure on the Free plan: the subrequest and CPU cost of a 35-send batch
-  inside a Durable Object alarm, and the atomicity of a DO storage write
-  plus `setAlarm`.
+- Measure on the Free plan: the per-update CPU of the webhook path
+  (configuration memo, HMAC, grammY parse, render), by a deployed probe
+  once, recorded in
+  [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md); the
+  Durable Object measurements of the first plan are moot.
 - Whether Workers invocation logs record request headers, which would put
   the webhook secret in a log if observability is enabled.
 - The research note's unverified items (Telegram's live report option
   tree, moderator handling of forwarded posts, NGO escalation routes),
   listed in the [planning review](../audits/2026-10-28-planning-review.md).
+- The owner's: a keyholder outside the country ("not yet, but I can
+  arrange it"), which blocks go-live; the future of the existing NGO
+  group, whose history exposes its authors whatever the member setting
+  (for example a channel with a comments group under auto-delete); the
+  go-live probes (the bot posts into the channel as its only posting
+  administrator; `getChatMember` answers for a plain-member bot in the
+  group, else `MEMBERSHIP_CHAT_ID` becomes the channel).

@@ -1,122 +1,127 @@
 ---
 type: rule
 title: "Broadcast consent policy"
-description: "Who may receive a direct-message broadcast and on what terms: explicit opt-in, /stop and block handling, pacing and the per-day budget, the three bulk message kinds, and the mirror chat."
+description: "Where an approved report goes and on what terms: one post into the keyholder-owned channel, joining it as the consent and leaving as the opt-out; retraction and closure as edits of that post; the I-reported-it counter with its two caps and its advisory label; no direct message to anyone except a reply in their own chat or a keyholder alert; the Bot Developer Terms; the tests."
 status: active
-tags: [product, rule, consent, broadcast, telegram]
+tags: [product, rule, consent, broadcast, channel, telegram]
 timestamp: 2026-10-28T00:00:00Z
 ---
 
 # Broadcast consent policy
 
-Binding rule for every message the bot sends to more than one person. It
-is the product side of catastrophic invariant 5 (direct-message broadcasts
-are consensual and idempotent) and invariant 1 (no message about a report
-reaches the broadcast audience without a recorded approval); decided on
-2026-10-28, Q4 in [Planning decisions](./planning-decisions-2026-10-28.md).
-The Telegram facts it rests on are collected in
+Binding rule for every message the bot sends about a report to anyone but
+the admins. It is the product side of catastrophic invariant 5 ("Posts go
+only to the configured channel") and of invariant 1 (no message about a
+report reaches the channel without a recorded approval). Decided on
+2026-10-28, first as Q4 of
+[Planning decisions](./planning-decisions-2026-10-28.md), then reduced
+the same evening after the owner stated the seizure threat
+([Threat model: seizure](./threat-model-seizure.md)): there is no
+direct-message broadcast, no subscription and no subscriber list. The
+Telegram facts it rests on are in
 [Telegram Bot API notes](../reference/telegram-bot-api-notes.md).
 
-## Opt-in
+## The channel
 
-- `/start` explains the bot and offers "Subscribe" (a button or
-  `/subscribe`). Subscription is available to members of the NGO group;
-  non-members may report but get no direct-message subscription (see
-  [Review and abuse controls](./review-and-abuse-controls.md)).
-- Nothing is sent to anyone who did not subscribe, except replies to their
-  own messages.
-- Membership is checked at subscription and at intake and cached per user.
-  Leaving the group does not end a subscription; only `/stop` or a block
-  does.
-- A subscriber row holds the chat id, locale, `subscribed_at` and
-  `member_checked_at`, nothing else.
+- Every approved report is posted once into the configured broadcast
+  chat, `BROADCAST_CHAT_ID`. It is a channel (a negative chat id) owned by
+  the keyholder; the bot is its only posting administrator and the human
+  admins are never its administrators. A channel hides its subscribers
+  from non-administrators, which a group never does; that is why the
+  owner's first answer, a channel or group, became a channel.
+- Joining the channel is the consent. Leaving it is the opt-out. The bot
+  keeps no list of who is in it and learns nothing when someone joins or
+  leaves: there is no subscriber table, no `my_chat_member` handling and
+  no per-user record of any kind.
+- Membership of the NGO's group plays no part here; it only sets a
+  reporter's intake limits
+  ([Review and abuse controls](./review-and-abuse-controls.md)).
 
-## Opt-out and blocks
+## One post per approved report
 
-- `/stop` unsubscribes at once, with one confirmation.
-- The bot subscribes to `my_chat_member` updates and unsubscribes a user
-  the moment Telegram reports the block.
-- A 403 "bot was blocked by the user", a 400 "chat not found" or a "user
-  is deactivated" response to any send also unsubscribes the user; these
-  are not errors (see
-  [ADR 0005](../architecture/adr-0005-error-handling-convention.md)).
-- Unsubscribing deletes the subscriber row; each deletion path has a test.
+- The post is sent by the one-minute cron after the approval's grace
+  period, only from a report in the `approved` state with an un-voided
+  approval row whose `starts_at` has come, and at most once: the post job
+  claims the report by one conditional update that binds the current
+  approval (its random `approval_id`), the lockdown switch, `/halt` and
+  the global 429 pause in the same statement, so a stale tick, a Cancel
+  followed by a re-approval, or a lockdown set after the eligibility read
+  all claim nothing ([Report lifecycle](./report-lifecycle.md),
+  [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md)).
+- The post is bilingual (Persian first, then English) and carries only
+  the links the category's routing allows, each checked against the link
+  policy and rendered as code with previews disabled, the platform's
+  fixed instruction block with its fixed warning line, the admin's
+  recommended comment under its fixed heading, and the "I reported it"
+  button ([Report categories and routing](./report-categories-and-routing.md)).
+- Retraction and closure never send a new message: each edits the post in
+  place (retraction replaces the text with the correction and removes the
+  button; closure appends the outcome line and removes the button), and
+  expiry 90 days after posting runs the closure edit with the outcome
+  `expired`. The only messages the channel ever receives about a report
+  are its post and the edits of that post.
+- Nothing is sent to the channel under lockdown or `/halt`
+  ([Threat model: seizure](./threat-model-seizure.md)); a 429 on any job
+  send sets `meta.paused_until`, which every job send honours.
+
+## "I reported it"
+
+Each post carries an "I reported it" button. A press answers the callback
+and increments the report's `presses` and the day's `counters` row (two
+D1 writes) while the report is `posted`, the day's total is under
+`MARKS_PER_DAY` (20,000 by default) and the report's total is under
+`MARKS_PER_REPORT` (5,000 by default); beyond either cap the button still
+answers and nothing is written. Nothing about the presser is stored, so
+presses count presses, not people: one account can inflate a report to
+its cap, and `/stats` labels the figure advisory. A keyed filter would
+stop inflation but would be a membership oracle for the key holder; it is
+not a default and would be an owner decision. The count survives in the
+aggregate row.
+
+## No direct messages
+
+The bot sends a direct message only:
+
+- as a reply to a user's own message, in that user's own chat: the
+  intake conversation, its one self-deleting acknowledgement, the hotline
+  links sent for a "sexual content involving a minor" label, and command
+  replies;
+- as an alert to a configured keyholder (`KEYHOLDER_IDS`): the approval
+  notice with its Cancel and Lockdown buttons, the lockdown alert, the
+  reconciliation alerts.
+
+No decision message goes to a reporter, no closure or retraction message
+to anyone, no message to a member who did not write to the bot. The
+acknowledgement tells the reporter that outcomes appear in the channel.
+Links in a keyholder's messages pass the same link policy as the post.
 
 ## Webhook registration
 
-The webhook is registered with `allowed_updates` set to `message`,
-`callback_query` and `my_chat_member`, a low `max_connections`, and
+The webhook is registered with `allowed_updates` set to `message` and
+`callback_query` only, a low `max_connections`, and
 `drop_pending_updates` on re-registration; the authenticity check is in
 [ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md).
 
-## Pacing and the daily budget
+## Telegram's Bot Developer Terms
 
-- Direct-message broadcasts run at no more than 25 messages per second in
-  total. Telegram documents the bulk limit as "about 30" messages per
-  second, with 429 errors beyond it.
-- A 429 `retry_after` pauses the whole broadcast: the step is rescheduled
-  for now plus `retry_after`, with no in-invocation retry burst.
-- A configured per-day recipient budget is never exceeded. It is checked
-  before a broadcast starts and shown on the approval card. When the
-  hosting platform's own daily cap is hit instead, the broadcaster
-  persists, reschedules for 00:05 UTC plus jitter and alerts the admin chat
-  once (see [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md)).
-- One broadcast runs at a time; retraction and closure notices queue
-  behind it, so a retraction completes within the hour, not at once.
-
-## The three bulk message kinds
-
-1. Approved reports: the broadcast itself, sent only from a report in the
-   approved or broadcasting state and never before the approval record's
-   start time.
-2. Retractions: the correction text, applied by editing each delivered
-   message in place (deleted instead where the message is younger than 48
-   hours).
-3. Closure outcomes: sent by direct message only to users who pressed "I
-   reported it" on that report and are still subscribed at send time,
-   checked against the subscribers table, so a mark left behind by `/stop`
-   never produces a message. A press made from the mirror chat earns no
-   direct message; the outcome reaches the mirror chat through the edited
-   post.
-
-Adding a bulk message kind is a product decision and, per Telegram's Bot
-Developer Terms 5.2 on "significant changes pertaining to the operational
-scope", requires informing users with an opt-out.
-
-### "I reported it"
-
-Each broadcast carries an "I reported it" button. A press stores a mark
-(report id, chat id, source, day) in the broadcaster's storage, counts
-towards the report's aggregate "reported" figure, and, for a subscriber,
-opts the presser into that report's closure outcome. Marks are recorded
-only while the report is open and up to a configured daily cap
-(`MARKS_PER_DAY`, 20,000 by default on the Free plan, whose row-write
-meter they share with the delivery ledger); beyond the cap the button
-still answers and nothing is written. Marks are deleted at closure with
-the rest of the report's data.
-
-## Mirror chat
-
-When a mirror chat id is configured (the NGO's existing group, or a
-channel), each approved broadcast is posted there first: one message, no
-pacing, no per-recipient ledger. Joining the chat is the consent, and the
-bot stores no ids for its readers unless they press "I reported it". The
-direct-message fan-out to subscribers follows. The mirror post's message
-id is stored so that retraction and closure edit it.
-
-- Recommended on; off by default until a chat id is configured.
-- Members who are in the mirror chat and also subscribed receive every
-  broadcast twice; subscribing is the opt-in to the direct-message copy.
-- In the NGO group the bot stays a plain member in privacy mode, never an
-  admin (an admin bot receives every group message); a mirror channel is
-  one the bot administers.
+The only bulk message kind is the post of an approved report, with its
+edits. Adding a bulk message kind, or any direct-message broadcast, is a
+product decision and, per Telegram's Bot Developer Terms 5.2 on
+"significant changes pertaining to the operational scope", requires
+informing users with an opt-out.
 
 ## Tests this rule requires
 
-- `/stop`, a `my_chat_member` block, and the 403/400 send responses each
-  delete the subscriber row (one test per path).
-- A closure outcome is never sent to a chat id that is not in the
-  subscribers table at send time, even when a mark exists.
-- A resumed broadcast never re-sends to a chat id the ledger records as
-  delivered (the idempotency half of invariant 5, tested in the broadcast
-  engine).
+- The only message to the channel per report is the post plus its edits;
+  retraction and closure edit and never send a new message to the
+  channel.
+- No direct message is sent to anyone but as a reply in their own chat or
+  as an alert to a keyholder id (the fake Bot API records every send's
+  chat id).
+- Two ticks racing on one due job post once; a Cancel followed by a
+  re-approval leaves a stale job nothing to claim; a locked-down tick
+  sends nothing.
+- A press after closure, past `MARKS_PER_DAY` or past `MARKS_PER_REPORT`
+  writes nothing and still answers the callback.
+- No table holds a subscriber, ledger or per-presser row (the schema scan
+  in `test/invariants/storage-retention.test.ts`).
