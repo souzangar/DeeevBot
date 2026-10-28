@@ -72,8 +72,9 @@ it. Requirements:
 | Webhook `secret_token` | same | same; re-issued whenever the token is re-issued |
 | Reporter-reference HMAC key | same; never exported; the only thing that could re-identify a reporter reference | VCS, logs, exports, backups; note that changing it severs every existing counter and block from its reference |
 | `ADMIN_IDS` | same (deployment configuration kept out of VCS) | VCS |
-| Chat ids: the admin review venue, the membership chat, the mirror chat (optional) | deployment configuration validated by the zod schema | VCS |
-| Per-day recipient budget, retention days (90 by default), the grace period (5 minutes) | deployment configuration validated by the zod schema | |
+| Chat ids: the admin review venue (`ADMIN_CHAT_ID`), the membership chat (`MEMBERSHIP_CHAT_ID`), the mirror chat (`MIRROR_CHAT_ID`, optional) | deployment configuration validated by the zod schema | VCS |
+| The bot's numeric id and username (`BOT_ID`, `BOT_USERNAME`), which spare every update a `getMe` call; set again if the bot is ever re-created | deployment configuration validated by the zod schema | |
+| Per-day recipient budget, retention days (90 by default), the grace period (5 minutes), the daily cap on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 by default) | deployment configuration validated by the zod schema | |
 | Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file | copied into any backup containing per-user tables |
 
 The commit gate's secret-shape scan (`.claude/hooks/secret-shape-scan.sh`)

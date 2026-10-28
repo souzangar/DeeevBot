@@ -14,14 +14,17 @@ platform concerned (for example as child abuse, or as a private-data
 violation) and a recommended comment to attach to the report.
 
 The owner's brief, as stated on 2026-10-28, is `doc/product/project-brief.md`.
-Status: **toolchain scaffolded, no application logic yet** (2026-10-28).
-The ten open questions are decided in
-`doc/product/planning-decisions-2026-10-28.md`; the stack, hosting,
-transport, storage, error convention and module layout are ADRs under
-`doc/architecture/`; the eight invariants below are confirmed. Phase 2
-scaffolded the toolchain and filled the kit's slots for it (setup:
-`doc/guides/developer-setup.md`); the application modules arrive in
-Phase 3.
+Status: **MVP in progress, unit by unit** (2026-10-28). The ten open
+questions are decided in `doc/product/planning-decisions-2026-10-28.md`;
+the stack, hosting, transport, storage, error convention and module
+layout are ADRs under `doc/architecture/`; the eight invariants below are
+confirmed. Phase 2 scaffolded the toolchain and filled the kit's slots
+(setup: `doc/guides/developer-setup.md`). Phase 3 lands the MVP in units
+reviewed against the plan recorded in
+`doc/audits/2026-10-28-planning-review.md`; the core modules (errors,
+configuration, the redacting logger, i18n, the clock) exist; storage,
+Telegram wiring, intake, review, the broadcaster and the Node port
+follow.
 
 ## Commands
 
@@ -53,8 +56,9 @@ strict ESM, grammY, zod, D1 plus one broadcaster Durable Object (ADRs 0001,
 0002, 0004 under `doc/architecture/`). The Worker entry is `src/worker.ts`
 (HTTP handler, cron handler, the `Broadcaster` Durable Object class); the
 Node port's entry, `src/node.ts`, comes later. Module map
-(`doc/architecture/adr-0006-data-model-and-module-layout.md`); only
-`src/worker.ts` and `src/config/` exist so far:
+(`doc/architecture/adr-0006-data-model-and-module-layout.md`); the
+modules land unit by unit, `src/errors/`, `src/config/`, `src/privacy/`
+(logger and reporter reference), `src/i18n/` and `src/clock.ts` first:
 
 | Module | Holds | Critical path (rules) |
 |---|---|---|

@@ -86,10 +86,14 @@ scope", requires informing users with an opt-out.
 ### "I reported it"
 
 Each broadcast carries an "I reported it" button. A press stores a mark
-(report id, chat id, time) in the broadcaster's storage, counts towards
-the report's aggregate "reported" figure, and, for a subscriber, opts the
-presser into that report's closure outcome. Marks are deleted at closure
-with the rest of the report's data.
+(report id, chat id, source, day) in the broadcaster's storage, counts
+towards the report's aggregate "reported" figure, and, for a subscriber,
+opts the presser into that report's closure outcome. Marks are recorded
+only while the report is open and up to a configured daily cap
+(`MARKS_PER_DAY`, 20,000 by default on the Free plan, whose row-write
+meter they share with the delivery ledger); beyond the cap the button
+still answers and nothing is written. Marks are deleted at closure with
+the rest of the report's data.
 
 ## Mirror chat
 

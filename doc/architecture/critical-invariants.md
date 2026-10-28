@@ -118,7 +118,12 @@ The secret-shape scan exists today. Phase 2 added the first two seeds:
 configuration is unprintable, and a failed load never echoes a value) and
 the `ADMIN_IDS` rejection cases in `src/config/schema.test.ts` (rule 2: the
 configuration schema rejects a username or an @handle in `ADMIN_IDS`, one
-of the tests rule 2's paragraph names). The remaining tests are written in
+of the tests rule 2's paragraph names). Unit U1a added
+`test/invariants/logger-redaction.test.ts` (rule 6: the production logger
+drops a reported URL, a comment, a chat id and a token-shaped URL from a
+real `GrammyError` and an `HttpError`, keeps no Telegram id of anyone,
+admins included, and no file under `src/` except the logger touches the
+console). The remaining tests are written in
 the same change as the module that implements each rule, under the module
 map in ADR 0006; a rule whose test is still missing is listed in that
 change's commit body.

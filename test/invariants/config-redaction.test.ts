@@ -6,19 +6,22 @@
 // (`npm run test:invariants`).
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { CONFIG_REDACTED, ConfigError, loadConfig } from '../../src/config/schema';
+import { CONFIG_REDACTED, loadConfig } from '../../src/config/schema';
+import { AppError } from '../../src/errors/app-error';
 
 // Distinctive fixture values, deliberately not secret-shaped (the commit
 // gate's secret-shape scan covers this file too).
 const ENV = {
   BOT_TOKEN: 'invariant-bot-token-value',
+  BOT_ID: '424242006',
+  BOT_USERNAME: 'invariant_bot_username_value',
   WEBHOOK_SECRET: 'invariant-webhook-secret-value',
   WEBHOOK_PATH_SEGMENT: 'invariant-path-segment-value',
   ADMIN_IDS: '424242001,424242002',
   REPORTER_REF_KEY: 'invariant-reporter-ref-key-value',
   ADMIN_CHAT_ID: '-100424242003',
   MIRROR_CHAT_ID: '-100424242004',
-  NGO_GROUP_ID: '-100424242005',
+  MEMBERSHIP_CHAT_ID: '-100424242005',
   DAILY_RECIPIENT_BUDGET: '424242',
 } as const;
 
@@ -57,11 +60,11 @@ describe('critical invariant 6: the loaded configuration is unprintable', () => 
 });
 
 describe('critical invariant 6: a failed load never echoes a value', () => {
-  const failure = (env: Record<string, string | undefined>): ConfigError => {
+  const failure = (env: Record<string, string | undefined>): AppError => {
     try {
       loadConfig(env);
     } catch (error) {
-      if (error instanceof ConfigError) return error;
+      if (error instanceof AppError && error.code === 'CONFIG_INVALID') return error;
       throw error;
     }
     throw new Error('expected loadConfig to reject the configuration');

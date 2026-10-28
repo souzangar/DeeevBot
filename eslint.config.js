@@ -34,7 +34,7 @@ export default defineConfig(
     },
     rules: {
       // Critical invariant 6: nothing is logged except through the redacting
-      // logger (src/privacy/, Phase 3).
+      // logger, src/privacy/logger.ts (the one exception, below).
       'no-console': 'error',
       eqeqeq: ['error', 'always'],
       '@typescript-eslint/no-floating-promises': 'error',
@@ -58,6 +58,17 @@ export default defineConfig(
           ].map(workerHasNo),
         },
       ],
+    },
+  },
+  {
+    // The redacting logger is the ONE file allowed to write to the console
+    // (critical invariant 6, ADR 0005), and only through console.log and
+    // console.error; no-console stays an error everywhere else, and
+    // test/invariants/logger-redaction.test.ts fails if another file under
+    // src/ touches the console.
+    files: ['src/privacy/logger.ts'],
+    rules: {
+      'no-console': ['error', { allow: ['log', 'error'] }],
     },
   },
 );

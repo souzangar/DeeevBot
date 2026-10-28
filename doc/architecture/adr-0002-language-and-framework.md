@@ -21,7 +21,11 @@ report data to a third-party service.
 
 - TypeScript 5.9.x, strict, ESM (typescript-eslint supports TypeScript
   below 6.1).
-- grammY 1.46: `webhookCallback` on Workers, long polling on Node.
+- grammY 1.46: on Workers the entry parses the update itself and runs
+  `bot.handleUpdate` under `executionCtx.waitUntil` (grammY's
+  `webhookCallback` is not used: its wrapper resolves while the handling
+  task runs detached, so nothing could be registered with the runtime);
+  on Node, long polling.
 - Vitest 4.1 with `@cloudflare/vitest-plugin` 1.4.9 (the successor of
   Cloudflare's deprecated Workers Vitest pool package; peer `vitest ^4.1`
   or `^5`) for the adapters; plain node for pure logic.

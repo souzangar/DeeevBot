@@ -10,8 +10,10 @@ timestamp: 2026-10-28T00:00:00Z
 # Developer setup
 
 For whoever works on the code; facts as of 2026-10-28. Phase 2 scaffolded the
-toolchain: the only application code is the configuration schema and an empty
-Worker entry; the application modules arrive in Phase 3. The decisions: the
+toolchain, and Phase 3 is adding the application modules: so far the core
+(`src/errors/`, `src/config/`, the redacting logger and the reporter reference
+in `src/privacy/`, `src/i18n/` and `src/clock.ts`), with no Telegram wiring
+yet, so the Worker entry is still empty. The decisions: the
 stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
 storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
 errors in [ADR 0005](../architecture/adr-0005-error-handling-convention.md),
@@ -97,11 +99,15 @@ the documented intentional bypass.
 | workers | `test/workers/**/*.test.ts` | the Workers runtime through `@cloudflare/vitest-plugin`, with the local D1 and Durable Object bindings from `wrangler.jsonc`; no Cloudflare account | for the Cloudflare adapters; pure logic stays in unit |
 | invariants | `test/invariants/**/*.test.ts` | plain node | always run by the commit gate; one spec per stated "must not" |
 
-The three Vitest projects are defined in `vitest.config.ts`; so far each holds
-one file: `src/config/schema.test.ts` (the parsing cases),
-`test/workers/smoke.test.ts` (boots the Worker, expects 404) and the first
-invariant spec, `test/invariants/config-redaction.test.ts` (critical invariant
-6). The duties, from CLAUDE.md's testing conventions:
+The three Vitest projects are defined in `vitest.config.ts`. The unit tier
+holds the tests beside each module under `src/`; the workers tier
+`test/workers/smoke.test.ts` (boots the Worker, expects 404); the invariants
+tier `test/invariants/config-redaction.test.ts` and
+`test/invariants/logger-redaction.test.ts` (critical invariant 6: the
+configuration is unprintable, and no secret, report data or Telegram id
+reaches a log line). In-memory fakes of the ports live under `test/fakes/`
+(so far the clock and the logger, which is the real redacting logger over a
+recording sink). The duties, from CLAUDE.md's testing conventions:
 
 - every new logic file (service, repository, handler, util) gets a unit test,
   and every stated "must not" a regression test in the same change; refactor
@@ -117,7 +123,10 @@ invariant spec, `test/invariants/config-redaction.test.ts` (critical invariant
 every `.ts` file, with type information from `tsconfig.json`, and adds:
 
 - `no-console` as an error: nothing is logged except through the redacting
-  logger in `src/privacy/` (critical invariant 6), which arrives in Phase 3;
+  logger, `src/privacy/logger.ts` (critical invariant 6), the one file whose
+  override admits `console.log` and `console.error`;
+  `test/invariants/logger-redaction.test.ts` fails if any other file under
+  `src/` (tests aside) refers to the console;
 - `@typescript-eslint/no-floating-promises` as an error, and `eqeqeq`;
 - in `src/` outside `src/**/*.test.ts`, `no-restricted-imports` on `node:fs`,
   `node:fs/promises`, `fs`, `fs/promises`, `node:child_process` and
@@ -139,24 +148,31 @@ and `moduleResolution: Bundler`, relative imports carry no extension
 
 ## 6. Configuration and local secrets
 
-Code reads the deployment's variables only through `loadConfig(env)` in
-`src/config/schema.ts` (critical invariants 2 and 6); nothing calls it before
-Phase 3.
+Code reads the deployment's variables only through `configFor(env)` in
+`src/config/memo.ts`, which passes the string-valued properties of the
+Worker's `env` (its variables and secrets, never its bindings) to
+`loadConfig()` in `src/config/schema.ts` (critical invariants 2 and 6) and
+keeps the result for as long as that `env` object lives, so an isolate parses
+once per `env` object; a failed load is not kept. Nothing calls it yet: the
+Worker entry is wired in a later unit.
 
 | Variable | Must hold | Default |
 |---|---|---|
 | `BOT_TOKEN` | a non-blank secret | required |
+| `BOT_ID` | a positive integer: the bot's numeric Telegram id, which grammY's `botInfo` needs with `BOT_USERNAME`, so no update costs a `getMe` call | required |
+| `BOT_USERNAME` | the bot's username without the @: 5 to 32 characters from A-Z, a-z, 0-9 and `_` | required |
 | `WEBHOOK_SECRET` | 1 to 256 characters from A-Z, a-z, 0-9, `_` and `-` (Telegram's `secret_token` alphabet) | required |
 | `WEBHOOK_PATH_SEGMENT` | a URL path segment of A-Z, a-z, 0-9, `_` and `-` | required |
 | `ADMIN_IDS` | comma-separated numeric Telegram user ids, never usernames; at least one | required |
 | `REPORTER_REF_KEY` | a non-blank secret | required |
 | `ADMIN_CHAT_ID` | a non-zero integer chat id, negative for groups and channels | required |
-| `NGO_GROUP_ID` | a non-zero integer chat id, negative for groups and channels | required |
+| `MEMBERSHIP_CHAT_ID` | a non-zero integer chat id, negative for groups and channels: the chat whose members may subscribe and get the members' intake limits | required |
 | `MIRROR_CHAT_ID` | optional; a non-zero integer chat id | none: no mirror chat |
 | `DAILY_RECIPIENT_BUDGET` | a positive integer | required, no default |
 | `BROADCAST_BATCH_SIZE` | an integer from 1 to 45 | 35 |
-| `BROADCAST_MESSAGES_PER_SECOND` | an integer from 1 to 30 | 25 |
+| `BROADCAST_MESSAGES_PER_SECOND` | an integer from 1 to 25, the decided ceiling | 25 |
 | `APPROVAL_GRACE_MINUTES` | an integer from 1 to 60 | 5 |
+| `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses | 20000 |
 
 - An empty value counts as absent: a tunable left empty takes its default,
   and an empty required variable fails. A value of spaces only is not absent,
@@ -167,8 +183,10 @@ Phase 3.
   entry (a doubled, leading or trailing comma), zero, a sign, a leading zero,
   a decimal, an exponent, hexadecimal, another separator or an id beyond the
   safe-integer range fails the load.
-- A failed load throws `ConfigError`, naming each offending variable with what
-  it must hold, never a value, and carrying no cause. The loaded object is
+- A failed load throws an `AppError` with the code `CONFIG_INVALID`
+  (`src/errors/`), naming each offending variable with what it must hold in its
+  message and listing the names in its `variables` field, never a value, and
+  carrying no cause. The loaded object is
   frozen and unprintable: `JSON.stringify` and `util.inspect` render it, and
   any spread copy, as `[config redacted]` (critical invariant 6). That covers
   the object, not a field read from it: `config.botToken` is a plain string,
@@ -176,7 +194,7 @@ Phase 3.
 
 Locally, copy `.dev.vars.example` to `.dev.vars` and fill in `.dev.vars`,
 never the example, which is committed with every secret and id empty and the
-three tunables at their defaults. `wrangler dev` reads `.dev.vars` next to
+four tunables at their defaults. `wrangler dev` reads `.dev.vars` next to
 `wrangler.jsonc`, and the Vitest plugin reads it through wrangler's loader
 too; wrangler also reads `.dev.vars.<name>` under `--env <name>`, and `.env`
 files when no `.dev.vars*` file exists. All of them are gitignored, except the
@@ -258,7 +276,10 @@ HEAD, or the whole file when it is untracked, and flags:
 | `disable_web_page_preview`, `is_disabled: false` | 4 |
 
 On a hit it feeds a reminder of rules 3, 4 and 6 back to the model; the edit
-itself stays. It is an authoring-time heuristic, not a gate: the
+itself stays. One hit is sanctioned: the two console calls in
+`src/privacy/logger.ts`, the only console writer, whenever an edit adds them
+(and on every edit while that file is untracked, since the hook then scans it
+whole). It is an authoring-time heuristic, not a gate: the
 domain-auditor and the invariant tests are the gates. The pattern itself is
 pinned by `selftest/tripwire-patterns.sh` (run by `bash selftest/run-all.sh`),
 which checks that `BANNED_PATTERNS` compiles and drives the unmodified hook
