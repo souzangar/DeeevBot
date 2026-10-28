@@ -2,8 +2,9 @@
 // The reporter reference (critical invariants 6 and 8;
 // doc/product/retention-and-minimisation.md, "The reporter reference"): the
 // hex HMAC-SHA-256 of a reporter's numeric Telegram id, written in decimal,
-// under REPORTER_REF_KEY. It replaces the id once the decision notice is
-// delivered or abandoned, and drives rate limits, rejection counts and
+// under REPORTER_REF_KEY. No reporter's id is ever stored: the reference
+// stands in for it from the reporter's first update on, keys the intake
+// draft and the report, and drives the rate limits, rejection counts and
 // blocks without identifying anyone from the database alone. Only the key's
 // holder can re-identify a reference, so the key comes from the
 // configuration (`config.reporterRefKey`) on every call and is never stored,

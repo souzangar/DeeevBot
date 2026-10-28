@@ -323,6 +323,15 @@ is throttled to 1 report per day; blocks persist.
   off unless debugging.
 - Unknown errors produce a log line with the error class only, never the
   update payload.
+- The bot refuses to start with a `DEBUG` variable or secret, whatever its
+  value. Under `nodejs_compat` at the project's compatibility date the
+  runtime copies every variable and secret into `process.env` (observed
+  2026-10-28), and grammY's bundled `debug` package reads `DEBUG` there and
+  then writes its own lines to the console, outside the redacting logger
+  (method names and update ids, among others). So the configuration fails
+  with `CONFIG_INVALID` naming `DEBUG`, the Worker answers every request 500
+  (Telegram keeps the updates), and the fix is `wrangler secret delete
+  DEBUG`.
 
 ## 5. The single cron: jobs, reconciliation, retention, the snapshot
 

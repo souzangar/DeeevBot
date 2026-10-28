@@ -32,9 +32,18 @@ describe('ErrorCode, the catalog', () => {
     for (const [key, entry] of Object.entries(ErrorCode)) expect(entry.code).toBe(key);
   });
 
-  it('marks only the rate-limited and the transient Telegram failures retryable', () => {
+  it('marks only the rate-limited Telegram failure retryable', () => {
     const retryable = ENTRIES.filter((entry) => entry.retryable).map((entry) => entry.code);
-    expect(retryable.sort()).toEqual(['TELEGRAM_RATE_LIMITED', 'TELEGRAM_TRANSIENT']);
+    expect(retryable).toEqual(['TELEGRAM_RATE_LIMITED']);
+  });
+
+  it('marks only the transient Telegram failure ambiguous', () => {
+    const ambiguous = ENTRIES.filter((entry) => entry.ambiguous === true).map((entry) => entry.code);
+    expect(ambiguous).toEqual(['TELEGRAM_TRANSIENT']);
+  });
+
+  it('never marks an entry both retryable and ambiguous, so a timed-out send is never re-sent by a retry', () => {
+    for (const entry of ENTRIES) expect(entry.retryable && entry.ambiguous === true, entry.code).toBe(false);
   });
 
   it('gives a message key to the codes someone is told about, and none to the internal classes', () => {

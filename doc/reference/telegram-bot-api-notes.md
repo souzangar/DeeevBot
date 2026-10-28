@@ -49,9 +49,11 @@ From the Bot FAQ [H] https://core.telegram.org/bots/faq:
   all bots are able to broadcast up to 30 messages per second to their
   users."
 
-Project use: direct-message broadcasts run at no more than 25 messages per
-second in total, below the "about 30", and the whole broadcast pauses on
-a 429 (decision Q4).
+Project use: since the scope reduction of 2026-10-28 the bot sends no
+direct-message broadcast: one post per approved report goes to the channel,
+and a 429 on any job send pauses every job send
+([ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md)). The
+limits still bound the bot's replies, alerts and edits, which share them.
 
 ## 429 and retry_after
 
@@ -69,9 +71,12 @@ a 429 (decision Q4).
   (`telegram-bot-api/Query.cpp`) builds it as HTTP 429 with the description
   "Too Many Requests: retry after N" and `parameters: {"retry_after": N}`.
 
-Project use: on a 429 the broadcaster persists its progress and reschedules
-the step for now plus `retry_after`, with no in-invocation retry burst
-(decision Q9).
+Project use: a 429 is classified `TELEGRAM_RATE_LIMITED`, with Telegram's
+`retry_after` when it gives a usable one (`src/telegram/errors.ts`). On a
+job send it reverts the post's claim, reschedules the job for now plus
+`retry_after` and sets the global pause; nothing is retried inside the
+invocation (ADR 0004,
+[ADR 0005](../architecture/adr-0005-error-handling-convention.md)).
 
 ## 403 "bot was blocked by the user" and related texts
 
@@ -98,12 +103,16 @@ the step for now plus `retry_after`, with no in-invocation retry burst
   `fail_query(403, "Forbidden: user is deactivated", ...)` for a deleted
   user, which corroborates the text above.
 
-Project use: the bot subscribes to `my_chat_member` and unsubscribes a user
-the moment Telegram reports the block; a 403 "bot was blocked by the user",
-a 400 "chat not found" or a "user is deactivated" error on any send also
-unsubscribes, and none of these is treated as an error (decisions Q4, Q9).
-The regression test for the log boundary uses a real GrammyError, whose
-payload carries the outgoing text and chat id.
+Project use: there is no subscriber to remove, and the webhook does not
+receive `my_chat_member`. A 403 "bot was blocked by the user" is classified
+`TELEGRAM_BLOCKED`; a 403 "user is deactivated" and a 400 "chat not found" or
+"private chat not found" are `TELEGRAM_CHAT_GONE` (`src/telegram/errors.ts`,
+matching the code first, then these texts). On a reply each is logged by
+class and ignored; on a keyholder alert it is counted as failed, so
+reconciliation sends the alert again. A keyholder who never sent `/start`
+answers 403 "bot can't initiate conversation with a user", an ordinary
+`TELEGRAM_PERMANENT`. The regression test for the log boundary uses a real
+GrammyError, whose payload carries the outgoing text and chat id.
 
 ## Link previews
 
@@ -119,9 +128,11 @@ payload carries the outgoing text and chat id.
   longer appears on the current API page.
 
 Project use: every outgoing message that contains a reported URL is sent
-with `link_preview_options = {"is_disabled": true}` (critical invariant 4);
-the same applies to `editMessageText` when a retraction or closure edits a
-delivered message.
+with `link_preview_options = {"is_disabled": true}` (critical invariant 4).
+The one API transformer (`src/telegram/api.ts`) sets exactly that, with
+`parse_mode` HTML, on every `sendMessage` and `editMessageText`, a
+retraction's or a closure's edit of the post included, whatever the caller
+passed.
 
 ## Webhook secret token and delivery rules
 
@@ -164,15 +175,17 @@ delivered message.
 
 Project use: the Worker rejects any request whose
 `X-Telegram-Bot-Api-Secret-Token` header does not equal the configured
-secret (constant-time compare) before parsing the body; the webhook path
-carries a random segment to keep scanner traffic off the daily request
-budget, but the path is not itself the check; the handler answers 200
-after handling so Telegram does not redeliver (decisions Q8, Q9). The IP
-ranges are not used as the check (they can change; the secret is the
-contract). The webhook is registered with
-`allowed_updates = [message, callback_query, my_chat_member]`, a low
-`max_connections` and `drop_pending_updates` on every re-registration
-(decision Q4); the Node fallback calls `deleteWebhook` before it polls.
+secret (constant-time compare) before reading the body, with a 404 and an
+empty body; the webhook path carries a random segment to keep scanner
+traffic off the daily request budget, but the path is not itself the check;
+an authentic update is handed to the bot under `waitUntil` and answered 200
+at once, so Telegram does not redeliver (decisions Q8, Q9;
+`src/telegram/webhook.ts`). The IP ranges are not used as the check (they
+can change; the secret is the contract). The webhook is registered with
+`allowed_updates = [message, callback_query]`, a low `max_connections` and
+`drop_pending_updates` on every re-registration
+([ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md));
+the Node fallback calls `deleteWebhook` before it polls.
 
 ## Message deletion and editing
 
@@ -194,14 +207,13 @@ Verified 2026-10-28 from the downloaded Bot API page [H].
   contain an inline keyboard can only be edited within 48 hours from the
   time they were sent." The bot's own messages carry no stated age limit.
 
-Project use: review cards are deleted after the decision at any age
-because the review venue is a supergroup where the bot holds
-`can_delete_messages` (decision Q5); in the direct-message fallback venue
-a card older than 48 hours can no longer be deleted, hence auto-delete
-there. A retraction edits every delivered message in place to the
-correction text and deletes instead where the message is younger than 48
-hours; a closure edits delivered messages and the mirror post the same
-way, using the stored message ids (decision Q3).
+Project use: the 48-hour limit binds an administrator bot as well, so
+review cards and prompts are deleted within 48 hours of their message; a
+decision older than that edits the card to the outcome without links, and
+the venue's auto-delete covers the rest (the earlier "at any age" reading is
+withdrawn). Retraction and closure edit the channel post in place, by its
+stored message id; there is no direct-message delivery to edit or delete
+([Report lifecycle](../product/report-lifecycle.md)).
 
 ## getChatMember and the membership check
 
@@ -215,9 +227,11 @@ Project use: membership of the NGO's group is checked with
 administrator (an administrator bot receives every group message and
 burns the request meter). Because the page guarantees the method only for
 an administrator bot, the MVP verifies that it answers for a non-admin
-member bot; if it does not, membership is anchored on a channel the bot
-administers, naturally the mirror channel (decision Q3). Membership is
-checked at subscription and at intake and cached per user.
+member bot; if it does not, membership is anchored on the broadcast
+channel, which the bot administers (a change of `MEMBERSHIP_CHAT_ID`'s
+value). Membership is checked at intake only and never stored: the answer is
+cached in memory, per isolate, for ten minutes under the keyed reporter
+reference, and a failed call answers "not a member" (`src/auth/membership.ts`).
 
 Methods never called on reported targets: `forwardMessage`,
 `copyMessage`, `getChat` and `getFile` are tripwire patterns of Phase 2;
@@ -242,8 +256,8 @@ the bot never fetches what is behind a reported link (critical invariant
   use this feature, a bot must have at least 10,000 Stars on its balance."
   with no user-count condition. Which is current is unknown.
 
-Project use: none. The NGO has no payment path, and the free limit with
-pacing is the design.
+Project use: none. The NGO has no payment path, and one post per
+approved report needs no broadcast limit at all.
 
 ## Unverified
 

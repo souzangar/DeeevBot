@@ -2,8 +2,12 @@
 // or a chat. A loaded configuration must be unprintable in every form a
 // logger or an error reporter would use, and a configuration that fails to
 // load must never echo a supplied value (the admin and keyholder
-// allowlists, the broadcast channel and the link hosts included). The
-// commit gate runs this file on every commit (`npm run test:invariants`).
+// allowlists, the broadcast channel and the link hosts included). And an
+// environment that defines DEBUG is refused, whatever its value: grammY's
+// bundled `debug` package reads it from process.env, which the runtime fills
+// with every variable and secret under nodejs_compat, and would then write
+// its own lines to the console, past the redacting logger. The commit gate
+// runs this file on every commit (`npm run test:invariants`).
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_REDACTED, loadConfig } from '../../src/config/schema';
@@ -107,6 +111,7 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
     ['an out-of-range tunable', { ...ENV, MARKS_PER_REPORT: '424242046' }],
     ['a webhook secret outside the alphabet', { ...ENV, WEBHOOK_SECRET: 'leaky secret value' }],
     ['a missing bot token', { ...ENV, BOT_TOKEN: undefined }],
+    ['a DEBUG variable', { ...ENV, DEBUG: 'leaky-debug-value' }],
   ])('%s', (_label, env) => {
     const error = failure(env);
     const supplied = distinctive(Object.values(env).filter((value): value is string => value !== undefined));
@@ -116,4 +121,13 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
     }
     expect(error.cause).toBeUndefined();
   });
+
+  it.each(['grammy*', 'grammy:core', '*', 'leaky-debug-value', ''])(
+    "refuses DEBUG=%j: it would switch on grammY's own logging past the redacting logger",
+    (value) => {
+      const error = failure({ ...ENV, DEBUG: value });
+      expect(error.variables).toEqual(['DEBUG']);
+      expect(error.message).toContain("DEBUG would switch on grammY's own logging past the redacting logger");
+    },
+  );
 });

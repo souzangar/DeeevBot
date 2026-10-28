@@ -9,8 +9,10 @@ conflict with CLAUDE.md, CLAUDE.md wins.
 The repository is **div-report**: a Telegram bot through which an NGO's
 members report social-media accounts and links that share private data,
 child abuse, bullying, and similar harm; admins review the reports, and
-approved ones are broadcast to the opted-in subscribers with per-platform
-reporting instructions and a recommended comment. The owner's brief is
+approved ones are posted once into a channel the members join, with
+per-platform reporting instructions and the admin's recommended points;
+the bot stores no member or reporter identity and sends no direct-message
+broadcasts (`doc/product/threat-model-seizure.md`). The owner's brief is
 `doc/product/project-brief.md`; the decisions of 2026-10-28 are in
 `doc/product/planning-decisions-2026-10-28.md` and the ADRs under
 `doc/architecture/`. Status: MVP in progress, unit by unit (the module

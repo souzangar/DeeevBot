@@ -152,9 +152,9 @@ a pending report expires after 30 days (`expired`, outcome
 
 | Module | Holds |
 |---|---|
-| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit), bot composition and the error boundary, the webhook boundary with the secret check, render helpers, the intake, review, press and command handlers, the admin free-text validator, keyholder alerts |
+| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers, keyholder alerts |
 | `src/auth/` | `isAdmin`, `isKeyholder`, the membership check with the member definition, the two-layer lockdown check |
-| `src/review/` | categories and routing as data, the report state machine with its conditional updates, approval records, grace and cancel, the admin prompts |
+| `src/review/` | categories and routing as data, the report state machine with its conditional updates, approval records, grace and cancel, the admin prompts, the admin free-text validator |
 | `src/broadcast/` | the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render |
 | `src/privacy/` | HMAC references, log redaction, the retention job, the emergency wipe |
 | `src/config/` | the zod schema and loaders (a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap is refused) |
@@ -253,4 +253,6 @@ status without an un-voided approval, and `meta.value` bounded to an
 integer or a short text; then, from the plan's closure, the module map's
 final shape: `src/auth/` with `isKeyholder` and the lockdown check,
 `src/broadcast/` with `tick()` and reconciliation, `src/privacy/` with
-the emergency wipe, the entries and the clock.
+the emergency wipe, the entries and the clock; then, from unit U2, the admin
+free-text validator in `src/review/` (`src/review/text-policy.ts`), and
+`src/telegram/` with the port, the gates and the failure classification.

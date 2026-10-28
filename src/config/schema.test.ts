@@ -323,6 +323,36 @@ describe('loadConfig', () => {
     });
   });
 
+  describe('DEBUG (grammY would log past the redacting logger)', () => {
+    it.each([
+      ['a grammY pattern', 'grammy*'],
+      ['a wildcard', '*'],
+      ['any other value', 'unrelated-tool'],
+      ['the empty value', ''],
+    ])('refuses an environment that defines it, with %s', (_label, value) => {
+      expect(rejectedVariables({ DEBUG: value })).toEqual(['DEBUG']);
+    });
+
+    it('says why, beside every other failing variable, and echoes no value', () => {
+      let caught: unknown;
+      try {
+        load({ DEBUG: 'grammy:core,grammy:bot', BOT_ID: 'not-a-number' });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ code: 'CONFIG_INVALID', variables: ['BOT_ID', 'DEBUG'] });
+      const message = (caught as AppError).message;
+      expect(message).toContain("DEBUG must not be set: DEBUG would switch on grammY's own logging past the redacting logger");
+      expect(message).toContain('BOT_ID must be a positive integer');
+      expect(message).not.toContain('grammy:core');
+      expect(message).not.toContain('not-a-number');
+    });
+
+    it('loads when DEBUG is absent, or present only as undefined', () => {
+      expect(load({ DEBUG: undefined }).botId).toBe(1000001);
+    });
+  });
+
   describe('CONFIG_INVALID', () => {
     it('names every failing variable, sorted, with what it must hold', () => {
       let caught: unknown;

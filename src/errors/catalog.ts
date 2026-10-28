@@ -15,11 +15,19 @@ export interface CatalogEntry {
   /** The code itself; always equal to the entry's key (checked when this file compiles). */
   readonly code: string;
   /**
-   * Whether a later attempt may succeed. It schedules nothing by itself:
-   * the caller reschedules or backs off (ADR 0004 rejects in-invocation
-   * retry bursts).
+   * Whether the caller may try again on its own: only where the failure
+   * provably did nothing (Telegram's 429 refused the request), never for an
+   * `ambiguous` entry, which the catalog test pins. It schedules nothing by
+   * itself: the caller reschedules (ADR 0004 rejects in-invocation retry
+   * bursts).
    */
   readonly retryable: boolean;
+  /**
+   * Telegram may have accepted the request; never retried blindly. A send
+   * that timed out may already have posted, so it is resolved by a human
+   * (/attach or /repost), never by a job runner re-sending it.
+   */
+  readonly ambiguous?: boolean;
   /**
    * The i18n key for whoever is told about the error. Absent for a code no
    * one is shown as a reply; a boundary that receives such a code replies
@@ -39,17 +47,30 @@ export const ErrorCode = registry({
     retryable: false,
     userMessageKey: 'alert.config_invalid',
   },
-  /** Telegram answered 429: persist progress and reschedule for now plus `retry_after`. */
+  // The Bot API's failures, as src/telegram/errors.ts classifies them
+  // (doc/architecture/adr-0005-error-handling-convention.md).
+  /**
+   * Telegram answered 429: a job send reverts its claim and reschedules for
+   * now plus `retry_after`, setting the global pause; never retried in the
+   * invocation.
+   */
   TELEGRAM_RATE_LIMITED: { code: 'TELEGRAM_RATE_LIMITED', retryable: true },
   /**
-   * 403 "bot was blocked by the user": the unsubscribe class. Not an error
-   * to retry or to report; the user is unsubscribed.
+   * 403 "bot was blocked by the user". On a reply, logged by class and
+   * ignored: there is no subscriber to remove.
    */
   TELEGRAM_BLOCKED: { code: 'TELEGRAM_BLOCKED', retryable: false },
-  /** 400 "chat not found" or "user is deactivated": the chat is gone; the user is unsubscribed. */
+  /**
+   * 400 "chat not found" or "private chat not found", or 403 "user is
+   * deactivated": the chat is gone. On a reply, logged by class and ignored.
+   */
   TELEGRAM_CHAT_GONE: { code: 'TELEGRAM_CHAT_GONE', retryable: false },
-  /** A 5xx answer or a network failure: retried with bounded backoff, then a failed delivery. */
-  TELEGRAM_TRANSIENT: { code: 'TELEGRAM_TRANSIENT', retryable: true },
+  /**
+   * A 5xx answer, a timeout or a network failure: ambiguous, since Telegram
+   * may have accepted the request, and so not retryable: nothing keyed on
+   * `retryable` can re-send a timed-out post.
+   */
+  TELEGRAM_TRANSIENT: { code: 'TELEGRAM_TRANSIENT', retryable: false, ambiguous: true },
   /** Any other refusal by the Bot API: recorded, not retried. */
   TELEGRAM_PERMANENT: { code: 'TELEGRAM_PERMANENT', retryable: false },
   /** A storage operation failed (D1, or node:sqlite on the Node port). */

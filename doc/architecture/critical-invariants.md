@@ -190,7 +190,26 @@ belongs; a report takes its approval, prompts, jobs and merged rows with
 it), and pinned the logger's report-id shape (rule 6: a username or a hex
 digest in that field is dropped). Rules 1, 2, 4, 5 and 8 were amended on
 the evening of 2026-10-28 for the seizure threat; the three synced copies
-change in the same commit as this document. The remaining tests are
+change in the same commit as this document. Unit U2, the Telegram wiring,
+added four specs, each driving the composed bot over the fake Bot API
+(`test/fakes/bot-api.ts`): `test/invariants/webhook-authenticity.test.ts`
+(rule 2: a request off the webhook's path or without the secret is answered
+404 before its body is read, before any bot exists and before any Bot API
+call, and the compare is `timingSafeEqual` over SHA-256 digests),
+`test/invariants/lockdown.test.ts` (rule 2: under either lockdown layer an
+admin command and an admin button are refused, a press writes nothing,
+intake stores nothing and answers the neutral text, the venue gets no alert;
+only a keyholder's `/unlock` clears the switch, with one caller and one
+writer in the source; nothing clears the override; a non-keyholder's
+`/lockdown` gets an unknown command's answer),
+`test/invariants/outgoing-messages.test.ts` (rules 4 and 5: every send and
+edit has previews off and HTML parse mode, goes only to the chat of the
+update it answers or, for an alert, to the keyholders and the venue when not
+locked down; nothing is forwarded, copied, fetched or looked up; no inline
+mode, Mini App or subscription command in the source) and
+`test/invariants/handler-logs.test.ts` (rule 6: no log line of any handler,
+the boundary, the membership check or the alerts holds a URL, an id, a text
+or an update). The remaining tests are
 written in the same change as the module that implements each rule, under
 the module map in ADR 0006; a rule whose test is still missing is listed
 in that change's commit body.

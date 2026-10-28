@@ -1,7 +1,7 @@
 {
   "name": "div-report",
   "private": true,
-  "description": "Telegram bot for reviewed reports of harmful social-media links, broadcast to opted-in subscribers with per-platform reporting instructions.",
+  "description": "Telegram bot for reviewed reports of harmful social-media links, each approved one posted once to one channel with per-platform reporting instructions.",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"

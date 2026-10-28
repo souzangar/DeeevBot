@@ -4,7 +4,7 @@ import { AppError } from '../errors/app-error';
 import { en } from './en';
 import { fa } from './fa';
 import { telegramHtmlProblems } from './html';
-import { isLocale, LOCALES, resolveLocale, t, type Locale } from './index';
+import { isLocale, isPlainKey, LOCALES, resolveLocale, t, type Locale, type MessageKey, type PlainMessageKey } from './index';
 
 describe('resolveLocale', () => {
   it.each([
@@ -93,5 +93,34 @@ describe('t', () => {
     expect((caught as AppError).message).toBe(
       'alert.config_invalid was rendered without its {variables} parameter',
     );
+  });
+});
+
+describe('isPlainKey', () => {
+  it('is true for a key whose string has no placeholder, false for one that has', () => {
+    expect(isPlainKey('error.unexpected')).toBe(true);
+    expect(isPlainKey('press.thanks')).toBe(true);
+    expect(isPlainKey('alert.config_invalid')).toBe(false);
+  });
+
+  it('agrees with the catalog for every key', () => {
+    for (const key of Object.keys(en) as MessageKey[]) {
+      expect(isPlainKey(key), key).toBe(!/\{[A-Za-z_][A-Za-z0-9_]*\}/.test(en[key]));
+    }
+  });
+
+  it('is false for a key outside the catalog (past the types)', () => {
+    expect(isPlainKey('no.such.key' as MessageKey)).toBe(false);
+  });
+
+  it('narrows a key so t() takes it without parameters', () => {
+    const key: MessageKey = 'error.unauthorized';
+    if (isPlainKey(key)) {
+      const plain: PlainMessageKey = key;
+      expect(t('en', plain)).toBe(en['error.unauthorized']);
+    }
+    // @ts-expect-error: a key with a placeholder is not plain
+    const refused: PlainMessageKey = 'alert.config_invalid';
+    expect(refused).toBe('alert.config_invalid');
   });
 });

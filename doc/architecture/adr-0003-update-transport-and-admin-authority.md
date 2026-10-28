@@ -32,15 +32,23 @@ code deploy.
 Both transports, one rule.
 
 - Cloudflare: the webhook is registered with a `secret_token`. The
-  Worker's `fetch` checks the path, then compares the
-  `X-Telegram-Bot-Api-Secret-Token` header with the configured secret in
-  constant time (`timingSafeEqual` over SHA-256 digests) before any bot
-  object exists; an off-path or failed request gets a 404 with an empty
-  body. Then it parses the body, runs `bot.handleUpdate(update)` under
-  `executionCtx.waitUntil` with the error class logged on failure, and
-  answers 200 (no `webhookCallback`), so Telegram does not redeliver
+  Worker's `fetch` checks the path (a POST to the webhook's path, exactly),
+  then compares the `X-Telegram-Bot-Api-Secret-Token` header with the
+  configured secret in constant time (`timingSafeEqual` over SHA-256
+  digests) before any bot object exists and before the body is read; an
+  off-path or failed request gets a 404 with an empty body. Then it parses
+  the body, runs `bot.handleUpdate(update)` under `executionCtx.waitUntil`
+  with the error class logged on failure, and answers 200 (no
+  `webhookCallback`), so Telegram does not redeliver
   ([ADR 0005](./adr-0005-error-handling-convention.md)); handlers are
-  idempotent per update. The webhook path carries a random segment to
+  idempotent per update, the "I reported it" counter excepted (a
+  redelivered press counts again: telling it from a second press would take
+  a record per press, which nothing keeps). A body that is not an update is logged by class
+  and answered 200, never handed to the bot; a configuration that does not
+  load is logged by class and answered 500, with no bot and no body read, so
+  Telegram keeps the update until the deployment is fixed. The boundary is
+  `src/telegram/webhook.ts`, described for developers in the
+  [developer setup](../guides/developer-setup.md), section 7. The webhook path carries a random segment to
   keep scanner traffic off the daily request budget; the path is not
   itself the check. Registration uses `allowed_updates` of `message` and
   `callback_query` only, a low `max_connections`, and
@@ -48,18 +56,26 @@ Both transports, one rule.
 - VPS: long polling with `getUpdates`, no inbound port.
 - Admin authority: `ADMIN_IDS`, numeric Telegram user ids, come from the
   secret store, are parsed at startup by the configuration schema, and
-  are checked at every admin action through one `isAdmin(userId)` gate.
+  are checked at every admin action through one `isAdmin(userId)` gate,
+  against the update's own `from.id`.
   The admin chat id is a venue, never an authority; nothing the client
   sends (chat type, name, callback payload, forwarded message) ever
   grants authority; usernames are never consulted because they are
   reassignable. Admin commands are accepted in an admin's private chat
-  with the bot or in the venue, and refused under lockdown.
+  with the bot or in the venue, typed there (a forwarded message is never a
+  command), and refused under lockdown; from anyone else an admin command
+  is not a command at all and gets the answer an unknown command gets,
+  while a press of an admin button by an id outside `ADMIN_IDS` is refused.
+  Every command and button handler is registered behind the gates of
+  `src/telegram/guards.ts`.
 - Keyholder authority: `KEYHOLDER_IDS`, the numeric Telegram ids of the
   keyholders (at least one), checked through one `isKeyholder(userId)`
   gate. A keyholder may run `/lockdown`, `/unlock`, `/retract <id>`,
   `/attach <id> ...`, `/open` and `/stats`, and press the Cancel and
   Lockdown buttons on the approval notices; keyholder commands are
-  accepted only in the keyholder's private chat with the bot. A keyholder
+  accepted only in the keyholder's private chat with the bot, typed there,
+  and from anyone else `/lockdown` and `/unlock` are answered exactly as an
+  unknown command is, so nothing hints that they exist. A keyholder
   id is never also an admin id: the configuration schema refuses a load
   whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap, so no single seized
   account can both approve and unlock. Admins have no Cloudflare access
@@ -70,7 +86,11 @@ Both transports, one rule.
   admin; and the `LOCKDOWN` secret, which the keyholder sets with
   `wrangler secret put` (a secret change is itself a new deployment,
   global within about a minute, with no code deploy) and which no
-  Telegram command clears. Under either: intake answers a neutral
+  Telegram command clears; it is read before any query, so it locks the
+  bot when D1 refuses queries. `/lockdown` writes the switch with the time
+  it was set (a second `/lockdown` keeps the first time); `/unlock` clears
+  it together with the once-only alert marker, so the next lockdown alerts
+  again, and says so when the override still holds the bot locked. Under either: intake answers a neutral
   "temporarily unavailable" and stores nothing, presses are ignored,
   every admin action is refused, no post or edit job runs except a
   keyholder's retraction edit, and alerts go to the keyholders by direct
@@ -89,13 +109,16 @@ Both transports, one rule.
   (`getChatMember` on the update's user id, the bot as a plain member in
   privacy mode, never a group admin) only selects a reporter's intake
   limits ([Review and abuse controls](../product/review-and-abuse-controls.md));
-  its answer is never stored.
+  its answer is never stored: it is cached in memory, per isolate, for ten
+  minutes, under the keyed reporter reference and never the id, and a
+  failed call answers "not a member" without throwing.
 
 ## Consequences
 
-- `src/telegram/` owns the secret check and `src/auth/` the two
-  allowlist gates, the membership check and the lockdown check; all are
-  critical globs ([ADR 0006](./adr-0006-data-model-and-module-layout.md)).
+- `src/telegram/` owns the secret check and the gates commands and
+  buttons are registered behind, and `src/auth/` the two allowlist gates,
+  the membership check and the lockdown check; all are critical globs
+  ([ADR 0006](./adr-0006-data-model-and-module-layout.md)).
 - The webhook secret, the two allowlists and the `LOCKDOWN` secret are
   secrets under invariant 6: never in VCS, never logged, never echoed to
   a chat. Whether Workers invocation logs record request headers (which
@@ -118,7 +141,11 @@ startup and the schema refuses an id present in both; a keyholder command
 sent outside the keyholder's private chat is ignored; under lockdown
 every admin action is refused, intake stores nothing, presses are
 ignored, alerts reach keyholders only, and only a keyholder's `/unlock`
-clears `meta.lockdown`.
+clears `meta.lockdown`. They are `test/invariants/webhook-authenticity.test.ts`
+and `test/invariants/lockdown.test.ts`, with the unit tests beside
+`src/telegram/webhook.ts`, `src/telegram/guards.ts`, `src/auth/` and
+`src/config/schema.ts`, and the Worker's own boundary in the Workers
+runtime, `test/workers/webhook.test.ts`.
 
 ## Alternatives considered
 
@@ -144,3 +171,12 @@ Amended 2026-10-28 (evening, the seizure threat): `allowed_updates`
 reduced to `message` and `callback_query`; the keyholder allowlist and
 its commands; the two-layer lockdown; the exact shape of the webhook
 boundary.
+
+Amended 2026-10-28 (Phase 3, unit U2, the implementation): the boundary
+takes a POST only, never reads the body before both checks, answers a body
+that is not an update 200 without the bot and a configuration that does not
+load 500; a forwarded message is never a command, and a non-admin's admin
+command or a non-keyholder's keyholder command gets the unknown command's
+answer; `/unlock` also clears the once-only alert marker; the membership
+answer is cached in memory under the reporter reference; the gates live in
+`src/telegram/guards.ts`; the tests named.

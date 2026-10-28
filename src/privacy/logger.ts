@@ -16,7 +16,7 @@
 //   itself be data, and only counted in `unknownFields`;
 // - only own data properties are read, so no getter ever runs;
 // - every string is also dropped when it holds a bot-token shape, a URL
-//   (`://`) or a run of 5 or more digits: a Telegram id (a subscriber's, a
+//   (`://`) or a run of 5 or more digits: a Telegram id (a member's, a
 //   reporter's or an admin's) is such a run, whatever field it is passed in;
 // - no number of 5 or more digits is logged exactly either: a count or a
 //   duration of 10000 or more is coarsened to two significant digits and an
@@ -36,7 +36,21 @@ import { AppError } from '../errors/app-error';
 import { isErrorCode, type ErrorCode } from '../errors/catalog';
 
 /** The events a line may name. Each unit adds its own here. */
-export const LOG_EVENTS = ['config.invalid', 'update.failed'] as const;
+export const LOG_EVENTS = [
+  'config.invalid',
+  'update.failed',
+  // The webhook's body was not an update (src/telegram/webhook.ts).
+  'update.unreadable',
+  // A reply or a callback answer failed (src/telegram/respond.ts, the error boundary).
+  'reply.failed',
+  // A keyholder or venue alert failed (src/telegram/alerts.ts); retried by reconciliation.
+  'alert.failed',
+  // getChatMember failed for a reason other than "user not found" (src/auth/membership.ts).
+  'membership.failed',
+  // A keyholder set or lifted the lockdown switch (src/telegram/commands.ts).
+  'lockdown.set',
+  'lockdown.cleared',
+] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 
 /** The Bot API methods a line may name. */
@@ -48,6 +62,7 @@ export const API_METHODS = [
   'getChatMember',
   'sendMessage',
   'editMessageText',
+  'editMessageReplyMarkup',
   'deleteMessage',
   'answerCallbackQuery',
 ] as const;

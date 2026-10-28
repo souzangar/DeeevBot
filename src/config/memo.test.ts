@@ -59,6 +59,16 @@ describe('configFor', () => {
     expect(() => configFor(workerEnv({ BOT_ID: 1000001 }))).toThrow(AppError);
   });
 
+  it('passes DEBUG through to the loader, which refuses the env', () => {
+    let caught: unknown;
+    try {
+      configFor(workerEnv({ DEBUG: 'grammy*' }));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: 'CONFIG_INVALID', variables: ['DEBUG'] });
+  });
+
   it('throws CONFIG_INVALID for an invalid env, and does not memoise the failure', () => {
     const env = workerEnv({ BOT_ID: undefined });
     let caught: unknown;

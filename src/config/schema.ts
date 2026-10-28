@@ -14,7 +14,11 @@
 // - rule 6: the loaded object is not printable (JSON.stringify and
 //   util.inspect both render it as CONFIG_REDACTED), and a failed load throws
 //   an AppError CONFIG_INVALID that names the offending variables without
-//   echoing any value.
+//   echoing any value. An environment that defines DEBUG, with any value,
+//   the empty one included, is refused: grammY bundles the `debug` package,
+//   which reads process.env.DEBUG, and under nodejs_compat the runtime
+//   copies every variable and secret into process.env, so DEBUG would switch
+//   on grammY's own console lines, past the redacting logger.
 // The posts go to one channel, BROADCAST_CHAT_ID, and only to links on the
 // exact hosts of ALLOWED_LINK_HOSTS. LOCKDOWN is the keyholder's override
 // (`wrangler secret put LOCKDOWN` with the value 1), which no Telegram
@@ -164,6 +168,15 @@ const REQUIREMENTS: Readonly<Record<VariableName, string>> = {
 
 const isVariableName = (name: string): name is VariableName => Object.hasOwn(REQUIREMENTS, name);
 
+/** The variables an environment must not define at all, with why: any value is refused. */
+const FORBIDDEN: Readonly<Record<string, string>> = {
+  DEBUG: "DEBUG would switch on grammY's own logging past the redacting logger",
+};
+
+/** Why `name` must not be set, if it is one of FORBIDDEN. */
+const forbiddenBecause = (name: string): string | undefined =>
+  Object.hasOwn(FORBIDDEN, name) ? FORBIDDEN[name] : undefined;
+
 /** The error for an id in both ADMIN_IDS and KEYHOLDER_IDS: both names, no value. */
 const sharedId = (): AppError =>
   new AppError(
@@ -209,9 +222,11 @@ export interface Config {
  * this module.
  */
 const configInvalid = (variables: readonly string[]): AppError => {
-  const details = variables.map((name) =>
-    isVariableName(name) ? `${name} must be ${REQUIREMENTS[name]}` : name,
-  );
+  const details = variables.map((name) => {
+    if (isVariableName(name)) return `${name} must be ${REQUIREMENTS[name]}`;
+    const because = forbiddenBecause(name);
+    return because === undefined ? name : `${name} must not be set: ${because}`;
+  });
   return new AppError('CONFIG_INVALID', `invalid configuration: ${details.join('; ')}`, {
     variables,
   });
@@ -221,19 +236,26 @@ const configInvalid = (variables: readonly string[]): AppError => {
  * Validates the deployment's variables and returns the frozen, unprintable
  * configuration. An empty value counts as absent, so an optional variable
  * left blank in .dev.vars takes its default. Throws an AppError
- * CONFIG_INVALID whose `variables` lists the offending names, sorted; a
- * configuration whose ADMIN_IDS and KEYHOLDER_IDS share an id is refused
- * the same way, naming both.
+ * CONFIG_INVALID whose `variables` lists the offending names, sorted; an
+ * environment that defines DEBUG, with any value, the empty one included,
+ * is refused the same way, naming DEBUG and why; a configuration whose
+ * ADMIN_IDS and KEYHOLDER_IDS share an id is refused the same way, naming
+ * both.
  */
 export function loadConfig(env: Record<string, string | undefined>): Config {
+  // Defined at all is enough: the empty value counts here, unlike below.
+  const forbidden = Object.keys(FORBIDDEN).filter((name) => Object.hasOwn(env, name) && env[name] !== undefined);
   const present: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined && value !== '') present[name] = value;
   }
 
   const parsed = envSchema.safeParse(present);
-  if (!parsed.success) {
-    const names = new Set(parsed.error.issues.map((issue) => String(issue.path[0] ?? '(config)')));
+  if (!parsed.success || forbidden.length > 0) {
+    const names = new Set(forbidden);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) names.add(String(issue.path[0] ?? '(config)'));
+    }
     throw configInvalid([...names].sort());
   }
 

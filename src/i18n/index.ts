@@ -49,7 +49,22 @@ type ParamsArgs<K extends MessageKey> = [PlaceholderNames<(typeof en)[K]>] exten
   ? []
   : [params: MessageParams<K>];
 
+/** The keys whose English string has no placeholder: t() takes them without parameters. */
+export type PlainMessageKey = {
+  [K in MessageKey]: [PlaceholderNames<(typeof en)[K]>] extends [never] ? K : never;
+}[MessageKey];
+
 const PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const HAS_PLACEHOLDER = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
+
+/**
+ * Whether `key` takes no parameters, read from its English string (the
+ * catalog test keeps the Persian placeholders equal): a key known only at
+ * run time, such as an AppError's userMessageKey, is rendered without
+ * parameters only when this holds.
+ */
+export const isPlainKey = (key: MessageKey): key is PlainMessageKey =>
+  Object.hasOwn(en, key) && !HAS_PLACEHOLDER.test(en[key]);
 
 /**
  * The text for `key` in `locale`, with each `{name}` replaced by its

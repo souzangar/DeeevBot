@@ -1,0 +1,131 @@
+// Builders for the Telegram updates tests feed the bot: messages in a
+// private chat, a group or the venue, button presses, and the update kinds
+// the bot must ignore. Each update gets a fresh update_id and message id.
+// A text that starts with a command (/start, /lockdown@bot) carries the
+// bot_command entity Telegram adds, so grammY's command matching sees what
+// it would see live.
+import type { Message, Update } from 'grammy/types';
+
+let lastUpdateId = 0;
+let lastMessageId = 0;
+const nextUpdateId = (): number => (lastUpdateId += 1);
+const nextMessageId = (): number => (lastMessageId += 1);
+
+/** Seconds since the epoch, as Telegram dates are. */
+const DATE = 1_800_000_000;
+
+export interface SenderOptions {
+  readonly languageCode?: string;
+  readonly firstName?: string;
+  readonly username?: string;
+}
+
+export interface MessageOptions extends SenderOptions {
+  /** Marks the message as forwarded (a hidden user's). */
+  readonly forwarded?: boolean;
+}
+
+const sender = (id: number, options: SenderOptions) => ({
+  id,
+  is_bot: false as const,
+  first_name: options.firstName ?? 'Tester',
+  ...(options.username === undefined ? {} : { username: options.username }),
+  ...(options.languageCode === undefined ? {} : { language_code: options.languageCode }),
+});
+
+/** The bot_command entity of a text that starts with a command, if it does. */
+const commandEntities = (text: string): Message['entities'] => {
+  const command = /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?/.exec(text)?.[0];
+  return command === undefined ? undefined : [{ type: 'bot_command', offset: 0, length: command.length }];
+};
+
+const textMessage = (chat: Message['chat'], userId: number, text: string, options: MessageOptions): Message => {
+  const entities = commandEntities(text);
+  return {
+    message_id: nextMessageId(),
+    date: DATE,
+    chat,
+    from: sender(userId, options),
+    text,
+    ...(entities === undefined ? {} : { entities }),
+    ...(options.forwarded === true
+      ? { forward_origin: { type: 'hidden_user' as const, date: DATE - 60, sender_user_name: 'Someone Else' } }
+      : {}),
+  };
+};
+
+/** A text (or command) from `userId` in their own private chat with the bot. */
+export function privateMessage(userId: number, text: string, options: MessageOptions = {}): Update {
+  return {
+    update_id: nextUpdateId(),
+    message: textMessage({ id: userId, type: 'private', first_name: options.firstName ?? 'Tester' }, userId, text, options),
+  } as Update;
+}
+
+/** A private-chat message carrying a photo and a caption, no text. */
+export function privatePhoto(userId: number, caption: string, options: SenderOptions = {}): Update {
+  return {
+    update_id: nextUpdateId(),
+    message: {
+      message_id: nextMessageId(),
+      date: DATE,
+      chat: { id: userId, type: 'private', first_name: options.firstName ?? 'Tester' },
+      from: sender(userId, options),
+      photo: [{ file_id: 'photo-file', file_unique_id: 'photo-unique', width: 10, height: 10 }],
+      caption,
+    },
+  };
+}
+
+/** A text (or command) from `userId` in the supergroup `chatId` (the venue, the membership group, any group). */
+export function groupMessage(chatId: number, userId: number, text: string, options: MessageOptions = {}): Update {
+  return {
+    update_id: nextUpdateId(),
+    message: textMessage({ id: chatId, type: 'supergroup', title: 'A group' }, userId, text, options),
+  } as Update;
+}
+
+/** An edited private message: an update kind the bot ignores. */
+export function editedPrivateMessage(userId: number, text: string): Update {
+  return {
+    update_id: nextUpdateId(),
+    edited_message: {
+      ...textMessage({ id: userId, type: 'private', first_name: 'Tester' }, userId, text, {}),
+      edit_date: DATE + 1,
+    },
+  } as Update;
+}
+
+/** A post in a channel: an update kind the bot ignores. */
+export function channelPost(chatId: number, text: string): Update {
+  return {
+    update_id: nextUpdateId(),
+    channel_post: { message_id: nextMessageId(), date: DATE, chat: { id: chatId, type: 'channel', title: 'A channel' }, text },
+  };
+}
+
+/** Where a pressed button sits. */
+export interface PressedMessage {
+  readonly chatId: number;
+  readonly messageId: number;
+  readonly chatType?: 'private' | 'supergroup' | 'channel';
+}
+
+/** A press by `userId` of a button carrying `data`, on the message `on`. */
+export function buttonPress(userId: number, data: string, on: PressedMessage, options: SenderOptions = {}): Update {
+  const type = on.chatType ?? (on.chatId > 0 ? 'private' : 'channel');
+  const chat =
+    type === 'private'
+      ? { id: on.chatId, type, first_name: 'Tester' }
+      : { id: on.chatId, type, title: type === 'channel' ? 'The channel' : 'A group' };
+  return {
+    update_id: nextUpdateId(),
+    callback_query: {
+      id: `press-${nextUpdateId()}`,
+      from: sender(userId, options),
+      chat_instance: 'chat-instance',
+      data,
+      message: { message_id: on.messageId, date: DATE, chat, text: 'A post' },
+    },
+  };
+}

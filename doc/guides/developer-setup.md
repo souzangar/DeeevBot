@@ -1,7 +1,7 @@
 ---
 type: guide
 title: "Developer setup"
-description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers, lint and TypeScript settings, configuration and local secrets, wrangler, critical paths and the tripwire, and the toolchain's known issues as of 2026-10-28."
+description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler and the webhook boundary, critical paths and the tripwire, and the toolchain's known issues as of 2026-10-28."
 status: active
 tags: [guide, development, toolchain, testing, cloudflare]
 timestamp: 2026-10-28T00:00:00Z
@@ -14,8 +14,13 @@ toolchain, and Phase 3 is adding the application modules: so far the core
 (`src/errors/`, `src/config/`, the redacting logger and the reporter reference
 in `src/privacy/`, `src/i18n/` and `src/clock.ts`) and the storage (`src/db/`:
 the SQL port with its D1 and node:sqlite adapters, the Node migrations runner
-and the random ids; `migrations/0001_init.sql`, D1 being the only store), with
-no Telegram wiring yet, so the Worker entry is still empty. The decisions: the
+and the random ids; `migrations/0001_init.sql`, D1 being the only store), and
+the Telegram wiring of unit U2 (`src/telegram/`, `src/auth/` and the admin
+free-text validator in `src/review/`: the webhook boundary of section 7, the
+bot with its one API transformer, `/start`, `/language`, `/lockdown` and
+`/unlock`, the two-layer lockdown, the "I reported it" counter, the alerts,
+and the fake Bot API the tests drive). Intake, review, the post with its
+jobs and the Node port follow. The decisions: the
 stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
 storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
 errors in [ADR 0005](../architecture/adr-0005-error-handling-convention.md),
@@ -57,7 +62,7 @@ needs the scripts approved. Nothing else warns on install.
 | `npm run test:unit` | the unit project only |
 | `npm run test:workers` | the workers project only |
 | `npm run test:invariants` | the invariants project: the commit gate's last command; it fails when it finds no spec, so an empty or mis-globbed invariants tier cannot pass silently |
-| `npm run dev` | `wrangler dev`: the Worker on a local server, with the variables from `.dev.vars` (section 6); until Phase 3 it answers every request with 404 |
+| `npm run dev` | `wrangler dev`: the Worker on a local server, with the variables from `.dev.vars` (section 6); it answers the webhook path as the deployed Worker does (section 7, "The webhook boundary") and 404 to anything else |
 | `npm run dry-run` | `wrangler deploy --dry-run --outdir .wrangler/dry-run`: bundles the Worker and lists its bindings (section 7) |
 | `npm run migrate:local` | `wrangler d1 migrations apply div-report --local`: applies `migrations/` to the local D1 database |
 | `bash selftest/run-all.sh` | stack-independent, like the rows below: the kit's tooling pins (devil.sh, the hooks, the statusline, the critical-globs completeness check, the tripwire patterns) |
@@ -103,11 +108,19 @@ the documented intentional bypass.
 
 The three Vitest projects are defined in `vitest.config.ts`. The unit tier
 holds the tests beside each module under `src/`, every SQL-level one on the
-node:sqlite adapter. The workers tier holds `test/workers/smoke.test.ts`
-(boots the Worker, expects 404), `test/workers/d1.test.ts` (applies
-`migrations/` to the local D1 with `applyD1Migrations`, from the
+node:sqlite adapter. The workers tier holds `test/workers/webhook.test.ts`
+(the webhook boundary through `SELF.fetch`, everything but an authentic
+request answered 404; then the Worker entry, `createWorker()`, with the fake
+Bot API on the local D1: a reply's previews off, a keyholder's lockdown in
+D1, and a press counted in one D1 batch, which rests on SQLite's `changes()`
+between the batch's statements; and a check that the workers project's
+bindings equal `test/support/variables.ts`) and `test/workers/d1.test.ts`
+(applies `migrations/` to the local D1 with `applyD1Migrations`, from the
 `TEST_MIGRATIONS` binding `vitest.config.ts` reads, checks that D1 builds the
-same tables as node:sqlite, and drives the D1 adapter). The invariants tier
+same tables as node:sqlite, and drives the D1 adapter). The workers project
+also binds the test deployment's variables, written out in
+`vitest.config.ts` (the config file imports packages only, section 9), so
+the real Worker boots with a valid configuration. The invariants tier
 holds
 `test/invariants/config-redaction.test.ts` and
 `test/invariants/logger-redaction.test.ts` (critical invariant 6: the
@@ -115,10 +128,33 @@ configuration is unprintable, and no secret, report data or Telegram id
 reaches a log line), `test/invariants/approval-record.test.ts` (rule 1: the
 approval record and the due query) and `test/invariants/storage-retention.test.ts`
 (rule 8: no member or reporter identity in the schema, every column with a
-classified fate named in the deletion schedule). In-memory fakes of the ports
-live under `test/fakes/` (the clock; the logger, which is the real redacting
-logger over a recording sink), and shared test code under `test/support/`: the
-schema describer and the expected D1 schema both tiers check.
+classified fate named in the deletion schedule), and, from unit U2,
+`test/invariants/webhook-authenticity.test.ts` (rule 2: nothing happens for a
+request off the path or without the secret, and the compare is
+`timingSafeEqual` over digests), `test/invariants/outgoing-messages.test.ts`
+(rules 4 and 5: every handler driven with every kind of update, under each
+lockdown layer and with failing replies; every send has previews off and HTML
+parse mode, goes only to the chat of the update it answers, and nothing is
+forwarded, copied, fetched or looked up), `test/invariants/lockdown.test.ts`
+(rule 2: what lockdown refuses, and that only a keyholder's `/unlock` lifts
+the switch while nothing lifts the override) and
+`test/invariants/handler-logs.test.ts` (rule 6: no handler's log line holds
+a URL, an id, a text or an update). In-memory fakes of the ports live under
+`test/fakes/`: the clock; the logger, which is the real redacting logger over
+a recording sink; and the fake Bot API, `test/fakes/bot-api.ts`, a `fetch`
+for grammY's client that answers in Telegram's envelopes, records every call
+(its method, chat id and payload), keeps the bot's messages so that edits and
+deletes behave, scripts the Bot API's failures per chat id or method (the
+400s and 403s by their own texts, a 429 with `retry_after`, a 5xx, a timeout,
+a network failure, a request that never answers), answers 404 to any method
+outside the port (`getChat` included) and refuses every other host, so a test
+can assert that no reported URL is ever fetched; its own contract is
+`src/telegram/bot-api-port.test.ts`. Shared test code lives under
+`test/support/`: the schema describer and the expected D1 schema both tiers
+check, the test deployment's variables and configuration (`variables.ts`,
+`config.ts`), a migrated in-memory database (`database.ts`), Telegram update
+builders (`updates.ts`) and the bot as the Worker composes it, over the
+fakes (`bot-harness.ts`).
 The duties, from CLAUDE.md's testing conventions:
 
 - every new logic file (service, repository, handler, util) gets a unit test,
@@ -169,8 +205,17 @@ Code reads the deployment's variables only through `configFor(env)` in
 Worker's `env` (its variables and secrets, never its bindings) to
 `loadConfig()` in `src/config/schema.ts` (critical invariants 2 and 6) and
 keeps the result for as long as that `env` object lives, so an isolate parses
-once per `env` object; a failed load is not kept. Nothing calls it yet: the
-Worker entry is wired in a later unit.
+once per `env` object; a failed load is not kept. The Worker entry calls it
+on every request (section 7, "The webhook boundary"). Under `nodejs_compat`
+at this compatibility date the runtime also copies every variable and secret
+into `process.env` (observed on 2026-10-28 in the workers tier); nothing in
+`src/` reads `process.env`. grammY's bundled `debug` package does, for
+`DEBUG`, and would then write its own lines to the console, outside the
+redacting logger, so the bot refuses to start with a `DEBUG` variable: the
+load fails with `CONFIG_INVALID` naming it, whatever its value, and the
+Worker answers every request 500 until it is removed
+([operations and security runbook](./operations-and-security.md), section
+4).
 
 | Variable | Must hold | Default |
 |---|---|---|
@@ -190,10 +235,12 @@ Worker entry is wired in a later unit.
 | `APPROVAL_GRACE_MINUTES` | an integer from 1 to 1440 | 30 |
 | `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses, all reports together | 20000 |
 | `MARKS_PER_REPORT` | an integer from 0 to 1000000: the cap on recorded "I reported it" presses for one report | 5000 |
+| `DEBUG` | nothing: an environment that defines it, with any value, the empty one included, is refused, because it would switch on grammY's own logging past the redacting logger | must be absent |
 
 - An empty value counts as absent: a tunable left empty takes its default,
   and an empty required variable fails. A value of spaces only is not absent,
-  and no variable accepts it. Variables the schema does not know are ignored.
+  and no variable accepts it. Variables the schema does not know are ignored,
+  except `DEBUG`, which is refused even when empty.
 - Integers are canonical decimals: no leading zero, exponent or decimal point,
   and a sign only as the `-` of a chat id. In `ADMIN_IDS` and `KEYHOLDER_IDS`
   (critical invariant 2) spaces around an entry are ignored; an @handle, a
@@ -232,7 +279,7 @@ and 2.1.
 
 | `wrangler.jsonc` | Setting |
 |---|---|
-| `main` | `src/worker.ts`: the HTTP handler and the cron handler, without logic until Phase 3 (every request is answered 404) |
+| `main` | `src/worker.ts`: the HTTP handler, the webhook boundary below, and the cron handler, which stays empty until the scheduling unit (U5) |
 | `compatibility_date` | 2026-10-28 (see below), with the `nodejs_compat` flag |
 | `send_metrics` | `false`: wrangler sends no usage metrics for this project, overriding each user's own telemetry setting (an explicit `WRANGLER_SEND_METRICS` in the environment still takes precedence); the owner's stance, not a rule-6 requirement |
 | `d1_databases` | binding `DB`, `database_name` `div-report`, an all-zero placeholder `database_id` (the real id is deployment configuration), `migrations_dir` `migrations/` at the repository root |
@@ -248,7 +295,9 @@ later change adds a file rather than editing an applied one. On the Node port
 `schema_migrations`.
 `npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its
 one binding (`env.DB`) with no Cloudflare account and no network access, and
-with `send_metrics` off it prints no telemetry notice. `.wrangler/`, which also
+with `send_metrics` off it prints no telemetry notice. With the Telegram
+wiring the bundle is 971 KiB, 162 KiB gzipped (2026-10-28), most of it zod
+and grammY's web build, unminified; the Free plan allows a Worker of 3 MB. `.wrangler/`, which also
 holds the local D1 state, is gitignored. There is no Durable Object. The
 `Broadcaster` class and its `v1` migration tag of Phase 2 were removed before
 any deployment (the `database_id` is still the placeholder), so no
@@ -264,6 +313,58 @@ and the Vitest plugin, refuses any date after today's UTC date
 2026-10-30; neither `npx workerd --version` (2026-10-23) nor wrangler's
 default date is a ceiling. To raise it, set at most the current UTC date and
 run `npm run test:workers`: dev and tests share one miniflare and one workerd.
+
+### The webhook boundary
+
+`src/worker.ts` hands every request to `handleWebhook()` in
+`src/telegram/webhook.ts`
+([ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md);
+critical invariant 2), which works in this order:
+
+1. The path: a POST to `/` followed by `WEBHOOK_PATH_SEGMENT`, exactly. The
+   random segment keeps scanner traffic off the Free plan's daily request
+   budget; it is not the check.
+2. The header: `X-Telegram-Bot-Api-Secret-Token` against `WEBHOOK_SECRET`,
+   with `timingSafeEqual` from `node:crypto` over the SHA-256 digests of both
+   sides. The digests have the same length whatever the header holds, so the
+   compare takes the same time however much of the header matches. HTTP
+   strips the whitespace around a header value, so a secret with spaces
+   around it arrives as the secret.
+3. An off-path request or a failed check is answered 404 with an empty body.
+   Until then nothing has been read but the method, the URL and the headers:
+   no body read, no bot built, no Bot API call, no log line.
+4. The body: `await request.json()`. A body that is not an update (invalid
+   JSON, an array, no integer `update_id`) is logged by class
+   (`update.unreadable`) and answered 200, since Telegram would only send it
+   again.
+5. The bot: `createBot()` (`src/telegram/bot.ts`) over the configuration,
+   the D1 binding and the runtime's fetch; `bot.handleUpdate(update)` is
+   handed to `ctx.waitUntil`, its failure logged by class only
+   (`update.failed`, the error inside grammY's `BotError`), and the answer is
+   200 at once, so Telegram never redelivers an update because a handler is
+   slow or fails, and every handler is idempotent per update, the "I
+   reported it" counter excepted: a redelivered press counts again, since
+   telling it from a second press would take a record per press
+   (`src/telegram/presses.ts`). The runtime
+   keeps a `waitUntil` promise alive for about 30 seconds after the
+   response.
+
+A configuration that does not load is answered 500 with an empty body and
+logged by class (`config.invalid`) before any of this: no bot, no body read,
+and Telegram keeps the update and retries it.
+
+grammY's `webhookCallback` is not used: it reads the body and builds the
+answer itself (it can even turn the first API call into the webhook's
+reply), so it could not keep the order above or the 200 at once under
+`waitUntil`. The bot knows itself from `BOT_ID` and `BOT_USERNAME`, so no
+update costs a `getMe`; its client keeps grammY's `sensitiveLogs` off, so no
+HttpError message carries the token URL; and its Api carries one
+transformer and no other (`src/telegram/api.ts`): every `sendMessage` and
+`editMessageText` leaves with `link_preview_options: { is_disabled: true }`
+and `parse_mode: 'HTML'`, whatever its caller passed (critical invariant 4).
+The tests: `src/telegram/webhook.test.ts`, `src/worker.test.ts`,
+`test/invariants/webhook-authenticity.test.ts` and
+`test/workers/webhook.test.ts`.
 
 ## 8. Critical paths, the anchor and the tripwire
 
@@ -330,7 +431,13 @@ Workers Vitest pool package, its six high-severity audit findings and the
 
 - `SELF` from `cloudflare:test` is marked deprecated in the plugin's types, in
   favour of `exports` from `cloudflare:workers` (`exports.default.fetch()`);
-  the smoke test still uses `SELF.fetch`.
+  `test/workers/webhook.test.ts` still uses `SELF.fetch`.
+- Vite prints an advisory warning for a relative import without a file
+  extension in `vitest.config.ts` (its future native config loader would not
+  resolve one), and TypeScript refuses the extension without
+  `allowImportingTsExtensions`; so the config file imports packages only, and
+  the workers project's variables are written out there, checked against
+  `test/support/variables.ts` by the workers tier.
 - `@types/node` 26 on a Node 22 runtime can type-check APIs that Node 22
   lacks; that matters only for the unit tests and the Node port. For
   `node:sqlite`, `src/db/node-sqlite.ts` uses only what Node 22 has

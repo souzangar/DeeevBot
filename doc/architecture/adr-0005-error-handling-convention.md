@@ -31,7 +31,12 @@ the edits of that post.
   Never an ad-hoc string or a raw exception from a lower layer.
 - Where codes live. Codes are registered in one catalog,
   `src/errors/catalog.ts`; each code maps to an i18n key for the
-  user-facing text; throw sites never invent codes.
+  user-facing text; throw sites never invent codes. An entry is
+  `retryable` only where the failure provably did nothing
+  (`TELEGRAM_RATE_LIMITED`); `TELEGRAM_TRANSIENT` is marked `ambiguous`
+  ("Telegram may have accepted the request; never retried blindly") and is
+  not retryable, so a job runner keyed on `retryable` can never re-send a
+  timed-out post; the catalog test pins that no entry is both.
 - Boundary. A grammY error middleware maps an `AppError` to a localised
   reply. An unknown error gets a generic reply and a log line with the
   error class only, never the update payload and never a GrammyError
@@ -118,3 +123,7 @@ Accepted 2026-10-28.
 Amended 2026-10-28 (evening, the seizure threat): the two failure
 classes, the edit failures, the cap contract, per-job isolation in the
 tick.
+
+Amended 2026-10-28 (Phase 3, unit U2, from the domain audit): the
+catalog's `ambiguous` marker on `TELEGRAM_TRANSIENT`, which is no longer
+`retryable`.

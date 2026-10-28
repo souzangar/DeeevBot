@@ -8,10 +8,12 @@ code in this repository.
 **div-report** is a Telegram bot run by an NGO working on network & security
 and on child & family safety. Members use it to report social-media accounts
 and links that share people's private data, child abuse, bullying, and other
-harmful behaviour. Bot admins review each report; once approved, the bot sends
-the link to every subscribed user with instructions on how to report it on the
-platform concerned (for example as child abuse, or as a private-data
-violation) and a recommended comment to attach to the report.
+harmful behaviour. Bot admins review each report; once approved, the bot
+posts the link once into a channel the members join, with instructions on
+how to report it on the platform concerned (for example as child abuse, or
+as a private-data violation) and the admin's recommended points. The bot
+sends no direct-message broadcasts and stores no member or reporter
+identity (`doc/product/threat-model-seizure.md`).
 
 The owner's brief, as stated on 2026-10-28, is `doc/product/project-brief.md`.
 Status: **MVP in progress, unit by unit** (2026-10-28). The ten open
@@ -88,14 +90,18 @@ glob in the same change.
 
 - **Report lifecycle** — a user submits a link (+ optional comment, for the
   admins) → the report waits for admin review → an admin approves or
-  rejects → after a 5-minute grace period an approved report is broadcast
-  to the opted-in subscribers with per-platform reporting instructions and
-  an admin-authored recommended comment; a report the admin categorises as
-  suspected CSAM is routed instead and never broadcast
-  (`doc/product/report-lifecycle.md`). Nothing skips review.
-- **Three roles** — reporter (any bot user), admin (configured allowlist of
-  numeric Telegram ids), subscriber (a user who explicitly opted in to
-  broadcasts and has not opted out).
+  rejects → after a 30-minute grace period (every keyholder holds a Cancel
+  and a Lockdown button for it) an approved report is posted once into the
+  configured channel with per-platform reporting instructions and the
+  admin's recommended points; closure and retraction edit that post; a
+  report the admin categorises as suspected CSAM is routed instead and
+  never posted (`doc/product/report-lifecycle.md`). Nothing skips review.
+- **Three roles** — reporter (any bot user; known only by a keyed
+  reference), admin (configured allowlist of numeric Telegram ids, never a
+  channel or group administrator), keyholder (configured allowlist of
+  numeric ids outside the country, never an admin; owns the channel and the
+  accounts, receives the alerts, holds the lockdown and the wipe). Members
+  receive posts by joining the channel; no subscriber list exists.
 - **Docs** — `doc/` is an OKF bundle (see Documentation). `doc/product/`
   holds the brief and flows; `doc/reference/` holds the per-platform
   reporting instructions the broadcasts quote; `doc/guides/` the runbooks
@@ -201,7 +207,9 @@ amended the same day for the single-post model:
   only (never the update payload, never a `GrammyError` payload); the
   Worker answers Telegram with 200 as soon as the update is handed to
   `bot.handleUpdate` under `waitUntil`, so Telegram never redelivers
-  because of a bug and every handler is idempotent per update.
+  because of a bug and every handler is idempotent per update (the one
+  stated exception: a redelivered update counts its "I reported it" press
+  again, a count and never a stored identity).
 - **Where codes live.** New error codes are registered in ONE place,
   `src/errors/catalog.ts`, never inline at the throw site; each code maps
   to an i18n key, and user-facing text comes from that catalog.
