@@ -113,7 +113,12 @@ columns are exactly the aggregate set; `reporter_chat_id` is null and
 
 ## Status of the tests
 
-The secret-shape scan exists today. The remaining tests are written in the
-same change as the module that implements each rule, under the module map
-in ADR 0006; a rule whose test is still missing is listed in that change's
-commit body.
+The secret-shape scan exists today. Phase 2 added the first two seeds:
+`test/invariants/config-redaction.test.ts` (rule 6: the loaded
+configuration is unprintable, and a failed load never echoes a value) and
+the `ADMIN_IDS` rejection cases in `src/config/schema.test.ts` (rule 2: the
+configuration schema rejects a username or an @handle in `ADMIN_IDS`, one
+of the tests rule 2's paragraph names). The remaining tests are written in
+the same change as the module that implements each rule, under the module
+map in ADR 0006; a rule whose test is still missing is listed in that
+change's commit body.

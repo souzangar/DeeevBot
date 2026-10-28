@@ -24,7 +24,7 @@ set -uo pipefail
 #   money handling:   'parseFloat[[:space:]]*\(|\.toFixed[[:space:]]*\(|[^A-Za-z0-9_.]Number[[:space:]]*\('
 #   raw SQL strings:  'query\(["'"'"'`]'
 #   secrets in code:  'API_KEY[[:space:]]*=[[:space:]]*["'"'"']'
-BANNED_PATTERNS=''
+BANNED_PATTERNS='console\.(log|error|warn|info|debug)\(|forwardMessages?\(|copyMessages?\(|getChat\(|getFile\(|(^|[^A-Za-z0-9_.])fetch\(|(globalThis|self|window)\.fetch\(|JSON\.stringify\((err|error|e|ctx|update)\b|disable_web_page_preview|is_disabled:[[:space:]]*false'
 
 # File globs never checked (tests may legitimately contain banned shapes):
 SKIP_FILE_GLOBS='*.spec.* *.test.* *_test.*'
@@ -32,8 +32,19 @@ SKIP_FILE_GLOBS='*.spec.* *.test.* *_test.*'
 # The reminder the model sees on a hit — state the invariant and the sanctioned
 # alternative. Keep it short; point to .claude/devil/critical-invariants.md.
 REMINDER=$(cat <<'EOF'
-EDIT-ME: state the invariant these patterns violate and what to use instead
-(the full rules live in .claude/devil/critical-invariants.md and CLAUDE.md).
+These shapes break div-report's critical invariants (full text:
+.claude/devil/critical-invariants.md, mirrored in CLAUDE.md):
+- console.*( or JSON.stringify(err|error|e|ctx|update): rule 6. Never log a
+  payload, an update or an error wholesale; log through the redacting
+  logger in src/privacy/, which records the error class only.
+- forwardMessage(s)( / copyMessage(s)( / getChat( / getFile(: rules 3 and 4.
+  Never forward or copy a reported message, and never fetch or download
+  what a reported link points to; intake is text-only.
+- a bare fetch( or globalThis./self./window.fetch(: rule 4. The only
+  outbound call is the Telegram Bot API adapter's; a reported URL is never
+  fetched.
+- disable_web_page_preview, or is_disabled: false: rule 4. Every message
+  that carries a reported URL sets link_preview_options: { is_disabled: true }.
 EOF
 )
 # ---------------------------------------------------------------------------

@@ -17,9 +17,9 @@ set -u
 # EDIT-ME: grep -E pattern that marks a file as critical, e.g.
 #   ANCHOR_PATTERN='from ["'"'"'].*common/money/'     (imports the money helpers)
 #   ANCHOR_PATTERN='@critical-path'                    (annotation convention)
-ANCHOR_PATTERN=''
+ANCHOR_PATTERN='@critical-path'
 # EDIT-ME: where critical code can live (space-separated dirs):
-SRC_DIRS='src'
+SRC_DIRS='src migrations'
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 conf="$ROOT/.claude/devil/critical-globs.conf"

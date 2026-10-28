@@ -1,0 +1,58 @@
+// wrangler.jsonc: the Cloudflare Workers deployment of div-report
+// (doc/architecture/adr-0001-runtime-and-hosting.md).
+//
+// No secret ever lives here (critical invariant 6). Production secrets are
+// set with `wrangler secret put <NAME>`; local ones go in .dev.vars, which is
+// gitignored (template with empty values: .dev.vars.example). The variables
+// are validated by src/config/schema.ts.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "div-report",
+  "main": "src/worker.ts",
+  // The newest date the toolchain accepted when set: miniflare (behind
+  // `wrangler dev` and @cloudflare/vitest-plugin) and workerd 1.20261023.1
+  // refuse any date after today's UTC date, and that workerd's own ceiling is
+  // 2026-10-30. Raise it to at most today's date, then run the workers tests.
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+  // No usage telemetry from the toolchain either: the owner's stance, not rule 6.
+  "send_metrics": false,
+
+  // ADR 0004 (storage and the delivery ledger): D1 behind the SqlDb port
+  // holds subscribers, reports, approvals, reporter_stats and stats; plain
+  // SQL migrations live in migrations/. The all-zero database_id is a
+  // placeholder: the real id is deployment configuration.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "div-report",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ADR 0004 (and ADR 0001's Free-plan meters): one broadcaster Durable
+  // Object whose alarms drive the broadcast step(); its SQLite storage
+  // holds the delivery ledger and the "I reported it" marks.
+  "durable_objects": {
+    "bindings": [{ "name": "BROADCASTER", "class_name": "Broadcaster" }]
+  },
+
+  // ADR 0004: the broadcaster is a SQLite-backed Durable Object class.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Broadcaster"] }],
+
+  // ADR 0001 and ADR 0004: the nightly retention job, at 00:05 UTC, after the
+  // Free plan's daily caps reset at 00:00 UTC. The operations runbook
+  // (section 3.3) budgets a second Cron Trigger for the stall detector; its
+  // schedule is set when it lands in Phase 3.
+  "triggers": { "crons": ["5 0 * * *"] },
+
+  // Critical invariant 6: the platform's invocation logs are logs. Workers
+  // observability stays off until it is turned on deliberately
+  // (doc/guides/operations-and-security.md, section 4).
+  "observability": { "enabled": false },
+
+  // Nothing here: every secret and every deployment value comes from
+  // `wrangler secret put` (production) or .dev.vars (local).
+  "vars": {}
+}

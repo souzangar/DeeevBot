@@ -46,9 +46,9 @@ set -uo pipefail
 #                Keep each slot's value on ONE line: put a longer command in
 #                a script and call that (selftest/hooks-behavior.sh blanks
 #                the slots line by line).
-BUILD_CMD=""
-TEST_CMD=""
-INVARIANT_CMD=".claude/hooks/rules-sync-check.sh && .claude/hooks/secret-shape-scan.sh && bash selftest/run-all.sh && bash selftest-okf/run-all.sh && node scripts/okf/check.mjs"
+BUILD_CMD="npm run build"
+TEST_CMD="npm test"
+INVARIANT_CMD=".claude/hooks/rules-sync-check.sh && .claude/hooks/secret-shape-scan.sh && bash selftest/run-all.sh && bash selftest-okf/run-all.sh && node scripts/okf/check.mjs && npm run test:invariants"
 # ---------------------------------------------------------------------------
 
 input=$(cat)

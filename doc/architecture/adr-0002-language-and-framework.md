@@ -1,7 +1,7 @@
 ---
 type: adr
 title: "ADR 0002: Language and framework"
-description: "TypeScript 5.9 strict ESM with grammY, Vitest and the Workers test pool, wrangler, eslint with typescript-eslint, zod, npm, and Node 22 for the port; versions as looked up on 2026-10-28; no AI services."
+description: "TypeScript 5.9 strict ESM with grammY, Vitest with the Workers Vitest plugin, wrangler, eslint with typescript-eslint, zod, npm, and Node 22 for the port; versions as looked up on 2026-10-28; the compatibility-date rule; no AI services."
 status: active
 tags: [architecture, adr, stack, typescript, grammy]
 timestamp: 2026-10-28T00:00:00Z
@@ -22,9 +22,14 @@ report data to a third-party service.
 - TypeScript 5.9.x, strict, ESM (typescript-eslint supports TypeScript
   below 6.1).
 - grammY 1.46: `webhookCallback` on Workers, long polling on Node.
-- Vitest 4.1 with `@cloudflare/vitest-pool-workers` 0.23 (peer `vitest
-  ^4.1`) for the adapters; plain node for pure logic.
+- Vitest 4.1 with `@cloudflare/vitest-plugin` 1.4.9 (the successor of
+  Cloudflare's deprecated Workers Vitest pool package; peer `vitest ^4.1`
+  or `^5`) for the adapters; plain node for pure logic.
 - wrangler 4 for deploy and D1 migrations.
+- `compatibility_date` in `wrangler.jsonc` is the newest date every
+  runtime in the toolchain accepts when it is set: today's UTC date is the
+  ceiling miniflare enforces, and workerd 1.20261023.1's hard ceiling is
+  2026-10-30. It is raised together with a run of the workers tests.
 - eslint 10 with typescript-eslint 8, and `tsc --noEmit` as the build
   check.
 - zod 4: one schema validates the configuration read from Workers secrets
@@ -42,9 +47,10 @@ Versions are as looked up on 2026-10-28.
 
 - Pure logic (the report state machine, the routing table, the broadcast
   `step()`, the error catalog) is tested under plain node; only the
-  Cloudflare adapters need the Workers pool.
-- Two pins constrain upgrades: TypeScript stays below 6.1 until
-  typescript-eslint moves, and the Workers pool requires `vitest ^4.1`.
+  Cloudflare adapters need the Workers Vitest plugin.
+- One pin constrains upgrades: TypeScript stays below 6.1 until
+  typescript-eslint moves. The plugin accepts vitest 4.1 or 5, and the
+  repo pins 4.1.12.
 - The SQLite driver for the port is an open item of the MVP plan; both
   candidates sit behind the same `SqlDb` port
   ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)).
@@ -65,3 +71,7 @@ Versions are as looked up on 2026-10-28.
 ## Status
 
 Accepted 2026-10-28.
+
+Amended 2026-10-28 (Phase 2): the Workers Vitest integration moved to
+`@cloudflare/vitest-plugin` 1.4.9, the successor of the deprecated pool
+package, and the compatibility-date rule was recorded.

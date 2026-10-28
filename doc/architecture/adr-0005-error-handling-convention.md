@@ -53,8 +53,9 @@ hosting platform's invocation logs count as logs.
   same commit as the docs and rules (round-2 suggestion S3 in the
   [planning review](../audits/2026-10-28-planning-review.md)).
 - The redacting logger lives in `src/privacy/` and is the only logger;
-  the Phase 2 tripwire patterns `console.(log|error|warn)(` in `src/` and
-  `JSON.stringify((err|error|e))` catch the bypasses
+  eslint's `no-console` fails the build on any `console` call in `src/`,
+  and the tripwire flags `console.*(` and `JSON.stringify(` of an error,
+  a context or an update on the critical paths
   ([ADR 0006](./adr-0006-data-model-and-module-layout.md)).
 - The i18n catalogs are the only source of user-facing text, so a new
   code needs a key in both `fa` and `en`.

@@ -14,20 +14,31 @@ platform concerned (for example as child abuse, or as a private-data
 violation) and a recommended comment to attach to the report.
 
 The owner's brief, as stated on 2026-10-28, is `doc/product/project-brief.md`.
-Status: **planned, no code yet** (2026-10-28). The ten open questions are
-decided in `doc/product/planning-decisions-2026-10-28.md`; the stack,
-hosting, transport, storage, error convention and module layout are ADRs
-under `doc/architecture/`; the eight invariants below are confirmed. The
-remaining EDIT-ME slots are filled when the toolchain is scaffolded (Phase
-2), in the same change as the commands they describe.
+Status: **toolchain scaffolded, no application logic yet** (2026-10-28).
+The ten open questions are decided in
+`doc/product/planning-decisions-2026-10-28.md`; the stack, hosting,
+transport, storage, error convention and module layout are ADRs under
+`doc/architecture/`; the eight invariants below are confirmed. Phase 2
+scaffolded the toolchain and filled the kit's slots for it (setup:
+`doc/guides/developer-setup.md`); the application modules arrive in
+Phase 3.
 
 ## Commands
 
 ```bash
-# EDIT-ME (planning): dev run, build, lint, and the test tiers with their
-# infra requirements — undecided until the stack is chosen.
-# Stack-independent and available now:
-bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline)
+npm ci                            # install from the committed lockfile (Node >= 22.13, npm)
+npm run typecheck                 # tsc --noEmit
+npm run lint                      # eslint . (typescript-eslint, type-checked)
+npm run build                     # typecheck + lint (the gate's build step)
+npm test                          # unit + workers projects (the gate's test step)
+npm run test:unit                 # plain node, *.test.ts beside the module; no network, no infra
+npm run test:workers              # Workers runtime via @cloudflare/vitest-plugin; local D1 + Durable Object, no account
+npm run test:invariants           # always-run "must never happen" specs (the gate runs them last)
+npm run dev                       # wrangler dev; local secrets in .dev.vars (template .dev.vars.example)
+npm run dry-run                   # bundle the Worker into .wrangler/dry-run, offline, no account
+npm run migrate:local             # apply the D1 migrations in migrations/ to the local database
+# Stack-independent:
+bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline, globs completeness, tripwire patterns)
 bash selftest-okf/run-all.sh      # OKF docs-gate contracts
 node scripts/okf/check.mjs        # docs gate: frontmatter → links → refs → index staleness
 node scripts/okf/build-index.mjs  # regenerate doc indexes after adding/moving/retitling a doc
@@ -37,21 +48,50 @@ node scripts/okf/build-index.mjs  # regenerate doc indexes after adding/moving/r
 
 ## Architecture
 
-EDIT-ME (planning): a compact module map once the stack is chosen. The
-brief's flow, pending planning — the open questions in
-`doc/product/project-brief.md` can change it, category routing above all:
+Cloudflare Workers (Free plan) with a Node port as the fallback; TypeScript
+strict ESM, grammY, zod, D1 plus one broadcaster Durable Object (ADRs 0001,
+0002, 0004 under `doc/architecture/`). The Worker entry is `src/worker.ts`
+(HTTP handler, cron handler, the `Broadcaster` Durable Object class); the
+Node port's entry, `src/node.ts`, comes later. Module map
+(`doc/architecture/adr-0006-data-model-and-module-layout.md`); only
+`src/worker.ts` and `src/config/` exist so far:
+
+| Module | Holds | Critical path (rules) |
+|---|---|---|
+| `src/telegram/` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | yes (2, 4) |
+| `src/auth/` | the allowlist gate, the membership check | yes (2, 4) |
+| `src/review/` | report state machine, categories and routing table, approval records, grace and cancel | yes (1, 3, 7) |
+| `src/broadcast/` | engine, delivery ledger, pacing, retraction, closure, budget | yes (1, 5) |
+| `src/privacy/` | HMAC references, the redacting logger, the retention job | yes (6, 8) |
+| `src/config/` | the zod schema and loaders | yes (2, 6) |
+| `src/db/` | the `SqlDb` port and its adapters | yes (8) |
+| `migrations/` | D1 SQL migrations (wrangler's `migrations_dir`) | yes (8) |
+| `src/errors/` | `AppError` and the catalog | no |
+| `src/i18n/` | the `fa` and `en` catalogs | no |
+| `src/platforms/` | URL parsing, per-platform instruction keys | no |
+
+Critical paths are the globs in `.claude/devil/critical-globs.conf`
+(`src/worker.ts` and `src/node.ts` included). Anchor convention: every file
+on a critical path carries the comment line `// @critical-path` (TypeScript)
+or `-- @critical-path` (SQL) near its top, and
+`selftest/critical-globs-completeness.sh` fails when an anchored file under
+`src/` or `migrations/` matches no glob, so a new critical module adds its
+glob in the same change.
 
 - **Report lifecycle** — a user submits a link (+ optional comment, for the
   admins) → the report waits for admin review → an admin approves or
-  rejects → an approved report is broadcast to the opted-in subscribers
-  with per-platform reporting instructions and an admin-authored
-  recommended comment. Nothing skips review.
+  rejects → after a 5-minute grace period an approved report is broadcast
+  to the opted-in subscribers with per-platform reporting instructions and
+  an admin-authored recommended comment; a report the admin categorises as
+  suspected CSAM is routed instead and never broadcast
+  (`doc/product/report-lifecycle.md`). Nothing skips review.
 - **Three roles** — reporter (any bot user), admin (configured allowlist of
   numeric Telegram ids), subscriber (a user who explicitly opted in to
   broadcasts and has not opted out).
 - **Docs** — `doc/` is an OKF bundle (see Documentation). `doc/product/`
-  holds the brief and flows; `doc/reference/` will hold the per-platform
-  reporting instructions the broadcasts quote.
+  holds the brief and flows; `doc/reference/` holds the per-platform
+  reporting instructions the broadcasts quote; `doc/guides/` the runbooks
+  and the developer setup.
 
 ## Critical invariants
 
@@ -165,8 +205,15 @@ Decided 2026-10-28 (`doc/architecture/adr-0005-error-handling-convention.md`):
   data-integrity) gets a **regression test in the same change** — refactor
   to make it testable rather than skipping.
 - Every new logic file (service/repository/handler/util) gets a unit test.
-  EDIT-ME (planning): naming/suffix conventions and coverage/CI gates once
-  the stack is chosen.
+- Three Vitest projects (`vitest.config.ts`): **unit** is `*.test.ts`
+  beside the module under `src/`, plain node, no network, mocks at the
+  boundary; **workers** is `test/workers/*.test.ts`, run in the Workers
+  runtime by `@cloudflare/vitest-plugin` with the local D1 and
+  Durable Object bindings, for the Cloudflare adapters only; **invariants**
+  is `test/invariants/*.test.ts`, the always-run specs the commit gate runs
+  on every commit, one per stated "must not". Fixture values are never
+  secret-shaped (the secret-shape scan reads test files too). No coverage
+  gate and no CI yet.
 - Tests are run, not just written — a claimed pass must be an observed pass.
 
 ## Commit style
@@ -204,11 +251,14 @@ green.
   matched by `.claude/devil/critical-globs.conf`; ending a turn runs
   `okf-guard.sh` (Stop hook) whenever `doc/`, `scripts/okf/`, or the hook
   itself is dirty or touched by HEAD, and blocks until the docs gate is
-  green. The gate's `INVARIANT_CMD` already runs the stack-independent
-  checks (the catastrophic-rules drift gate, the secret-shape scan, both
-  selftest suites, the OKF gate); its
-  BUILD/TEST slots and the tripwire's patterns are filled in planning, and
-  the gate says so at commit time. If a commit is unexpectedly blocked,
+  green. The gate runs `npm run build`, then `npm test`, then
+  `INVARIANT_CMD`: the catastrophic-rules drift gate, the secret-shape
+  scan, both selftest suites (the kit's includes the critical-globs
+  completeness check and `selftest/tripwire-patterns.sh`, which pins the
+  live tripwire pattern), the OKF gate, and `npm run test:invariants`. The
+  tripwire's `BANNED_PATTERNS` flag logging and stringifying payloads or
+  errors (rule 6), forwarding, copying or fetching reported content and
+  link previews left on (rules 3 and 4). If a commit is unexpectedly blocked,
   read the hook output (and the gate log it names) — do not re-run the
   gate.
 - Agents (`.claude/agents/`): run **domain-auditor** (read-only) on any

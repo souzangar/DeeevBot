@@ -1,0 +1,283 @@
+---
+type: guide
+title: "Developer setup"
+description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers, lint and TypeScript settings, configuration and local secrets, wrangler, critical paths and the tripwire, and the toolchain's known issues as of 2026-10-28."
+status: active
+tags: [guide, development, toolchain, testing, cloudflare]
+timestamp: 2026-10-28T00:00:00Z
+---
+
+# Developer setup
+
+For whoever works on the code; facts as of 2026-10-28. Phase 2 scaffolded the
+toolchain: the only application code is the configuration schema and an empty
+Worker entry; the application modules arrive in Phase 3. The decisions: the
+stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
+storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
+errors in [ADR 0005](../architecture/adr-0005-error-handling-convention.md),
+the module map in
+[ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md), the
+rules in [Critical invariants](../architecture/critical-invariants.md).
+Deployment, the secret store and who holds each value belong to the
+[operations and security runbook](./operations-and-security.md).
+
+## 1. Prerequisites and install
+
+- Node 22.13.0 or later (`engines` in `package.json`; 22.13 is eslint 10's
+  floor on the 22 line). Development so far has used Node v22.22.3 through
+  nvm, with npm 12.0.1; the repository has no `.nvmrc`.
+- git, bash and jq: the kit selftests refuse to run without git and jq, the
+  commit gate is skipped without jq (it says so), and the tripwire is inert.
+- `npm ci` installs exactly what the committed `package-lock.json` records;
+  `npm install` is for changing a dependency. Every version in `package.json`
+  is pinned exactly; ADR 0002 records the stack and the TypeScript pin that
+  constrains upgrades.
+
+npm 12 blocks dependency install scripts by default (its `allow-scripts`
+setting), so an install on Linux warns that two `postinstall` scripts were
+blocked: esbuild 0.28.2's and workerd 1.20261023.1's, one copy of each (the
+lockfile's only other install script is the macOS-only fsevents). That is
+expected and harmless: both binaries resolve through their platform packages
+(`@esbuild/linux-x64` and `@cloudflare/workerd-linux-64` on Linux x64),
+`npx esbuild --version` and `npx workerd --version` both run, and nothing
+needs the scripts approved. Nothing else warns on install.
+
+## 2. Commands
+
+| Command | What it does |
+|---|---|
+| `npm run typecheck` | `tsc --noEmit` over `src/`, `test/` and `vitest.config.ts`; emits nothing |
+| `npm run lint` | `eslint .`, with type information (section 5) |
+| `npm run build` | typecheck, then lint: the commit gate's build step |
+| `npm test` | `vitest run --project unit --project workers`: the commit gate's test step |
+| `npm run test:unit` | the unit project only |
+| `npm run test:workers` | the workers project only |
+| `npm run test:invariants` | the invariants project: the commit gate's last command; it fails when it finds no spec, so an empty or mis-globbed invariants tier cannot pass silently |
+| `npm run dev` | `wrangler dev`: the Worker on a local server, with the variables from `.dev.vars` (section 6); until Phase 3 it answers every request with 404 |
+| `npm run dry-run` | `wrangler deploy --dry-run --outdir .wrangler/dry-run`: bundles the Worker and lists its bindings (section 7) |
+| `npm run migrate:local` | `wrangler d1 migrations apply div-report --local`: applies `migrations/` to the local D1 database |
+| `bash selftest/run-all.sh` | stack-independent, like the rows below: the kit's tooling pins (devil.sh, the hooks, the statusline, the critical-globs completeness check, the tripwire patterns) |
+| `bash selftest-okf/run-all.sh` | the OKF docs-gate contracts |
+| `node scripts/okf/check.mjs` | the docs gate: frontmatter, links, prose references, index staleness |
+| `node scripts/okf/build-index.mjs` | regenerates the doc indexes after a doc is added, moved or retitled |
+| `.claude/hooks/rules-sync-check.sh` | the catastrophic-rules drift gate: the three copies of the invariants block must match |
+| `.claude/hooks/secret-shape-scan.sh` | fails on a secret-shaped string in any tracked file, or in any untracked file git does not ignore |
+
+## 3. The commit gate
+
+`.claude/hooks/pre-commit-check.sh`, a Claude Code `PreToolUse` hook on Bash
+(wired in `.claude/settings.json`), gates the `git commit` commands Claude
+Code runs; a commit typed in a terminal runs no hook (there is no git hook and
+no CI yet), so run the same steps by hand first. All three steps run, even
+after one of them fails:
+
+1. build: `npm run build` (`tsc --noEmit`, then `eslint .`);
+2. tests: `npm test` (the unit and workers projects);
+3. invariants, a chain that stops at its first failure: the catastrophic-rules
+   drift gate (`.claude/hooks/rules-sync-check.sh`), the secret-shape scan
+   (`.claude/hooks/secret-shape-scan.sh`), the kit selftests
+   (`bash selftest/run-all.sh`, with the critical-globs completeness and
+   tripwire-pattern checks of section 8), the OKF selftests
+   (`bash selftest-okf/run-all.sh`), the OKF docs gate
+   (`node scripts/okf/check.mjs`), then `npm run test:invariants`.
+
+A failure blocks the commit with a short summary (the failing steps, up to 12
+key error lines) naming the full log,
+`${TMPDIR:-/tmp}/claude-precommit-gate-<repo>-<checksum>.log`: read it, do not
+re-run the gate. The gate checks the working tree, not the staged snapshot, so
+commit with the tree equal to the index (for example, `git add -A` right
+before). `SKIP_COMMIT_GATE=1`, prefixed to the commit command or exported, is
+the documented intentional bypass.
+
+## 4. Tests
+
+| Tier | Files | Runs in | Rules |
+|---|---|---|---|
+| unit | `src/**/*.test.ts`, beside the module | plain node | no network; mock at the boundary (the Telegram API, storage, the clock) |
+| workers | `test/workers/**/*.test.ts` | the Workers runtime through `@cloudflare/vitest-plugin`, with the local D1 and Durable Object bindings from `wrangler.jsonc`; no Cloudflare account | for the Cloudflare adapters; pure logic stays in unit |
+| invariants | `test/invariants/**/*.test.ts` | plain node | always run by the commit gate; one spec per stated "must not" |
+
+The three Vitest projects are defined in `vitest.config.ts`; so far each holds
+one file: `src/config/schema.test.ts` (the parsing cases),
+`test/workers/smoke.test.ts` (boots the Worker, expects 404) and the first
+invariant spec, `test/invariants/config-redaction.test.ts` (critical invariant
+6). The duties, from CLAUDE.md's testing conventions:
+
+- every new logic file (service, repository, handler, util) gets a unit test,
+  and every stated "must not" a regression test in the same change; refactor
+  to make it testable rather than skip it;
+- tests are run, not just written: a claimed pass is an observed pass;
+- fixture values are never secret-shaped, because the secret-shape scan reads
+  test files too (the fixtures use values like `unit-test-bot-token`);
+- there is no coverage gate yet.
+
+## 5. Lint and TypeScript settings
+
+`eslint.config.js` applies typescript-eslint's `recommendedTypeChecked` to
+every `.ts` file, with type information from `tsconfig.json`, and adds:
+
+- `no-console` as an error: nothing is logged except through the redacting
+  logger in `src/privacy/` (critical invariant 6), which arrives in Phase 3;
+- `@typescript-eslint/no-floating-promises` as an error, and `eqeqeq`;
+- in `src/` outside `src/**/*.test.ts`, `no-restricted-imports` on `node:fs`,
+  `node:fs/promises`, `fs`, `fs/promises`, `node:child_process` and
+  `child_process`: the Workers runtime has no file system or processes, while
+  unit tests run under node and never reach the bundle.
+
+The kit's tooling (`.claude/`, `scripts/okf/`, `selftest/`, `selftest-okf/`)
+and generated output (`node_modules/`, `dist/`, `coverage/`, `.wrangler/`) are
+not linted.
+
+`tsconfig.json` sets `strict` plus `noUncheckedIndexedAccess` (an indexed
+read is `T | undefined`), `exactOptionalPropertyTypes` (an optional property
+takes an explicit `undefined` only when its type includes it),
+`noImplicitOverride` and `noFallthroughCasesInSwitch`. With `module: ESNext`
+and `moduleResolution: Bundler`, relative imports carry no extension
+(`from './schema'`); wrangler (esbuild) and Vitest (Vite) resolve them.
+`verbatimModuleSyntax` requires `import type` for a type-only import, and
+`noEmit` leaves the bundling to wrangler.
+
+## 6. Configuration and local secrets
+
+Code reads the deployment's variables only through `loadConfig(env)` in
+`src/config/schema.ts` (critical invariants 2 and 6); nothing calls it before
+Phase 3.
+
+| Variable | Must hold | Default |
+|---|---|---|
+| `BOT_TOKEN` | a non-blank secret | required |
+| `WEBHOOK_SECRET` | 1 to 256 characters from A-Z, a-z, 0-9, `_` and `-` (Telegram's `secret_token` alphabet) | required |
+| `WEBHOOK_PATH_SEGMENT` | a URL path segment of A-Z, a-z, 0-9, `_` and `-` | required |
+| `ADMIN_IDS` | comma-separated numeric Telegram user ids, never usernames; at least one | required |
+| `REPORTER_REF_KEY` | a non-blank secret | required |
+| `ADMIN_CHAT_ID` | a non-zero integer chat id, negative for groups and channels | required |
+| `NGO_GROUP_ID` | a non-zero integer chat id, negative for groups and channels | required |
+| `MIRROR_CHAT_ID` | optional; a non-zero integer chat id | none: no mirror chat |
+| `DAILY_RECIPIENT_BUDGET` | a positive integer | required, no default |
+| `BROADCAST_BATCH_SIZE` | an integer from 1 to 45 | 35 |
+| `BROADCAST_MESSAGES_PER_SECOND` | an integer from 1 to 30 | 25 |
+| `APPROVAL_GRACE_MINUTES` | an integer from 1 to 60 | 5 |
+
+- An empty value counts as absent: a tunable left empty takes its default,
+  and an empty required variable fails. A value of spaces only is not absent,
+  and no variable accepts it. Variables the schema does not know are ignored.
+- Integers are canonical decimals: no leading zero, exponent or decimal point,
+  and a sign only as the `-` of a chat id. In `ADMIN_IDS` (critical invariant
+  2) spaces around an entry are ignored; an @handle, a username, an empty
+  entry (a doubled, leading or trailing comma), zero, a sign, a leading zero,
+  a decimal, an exponent, hexadecimal, another separator or an id beyond the
+  safe-integer range fails the load.
+- A failed load throws `ConfigError`, naming each offending variable with what
+  it must hold, never a value, and carrying no cause. The loaded object is
+  frozen and unprintable: `JSON.stringify` and `util.inspect` render it, and
+  any spread copy, as `[config redacted]` (critical invariant 6). That covers
+  the object, not a field read from it: `config.botToken` is a plain string,
+  and logging it leaks the token.
+
+Locally, copy `.dev.vars.example` to `.dev.vars` and fill in `.dev.vars`,
+never the example, which is committed with every secret and id empty and the
+three tunables at their defaults. `wrangler dev` reads `.dev.vars` next to
+`wrangler.jsonc`, and the Vitest plugin reads it through wrangler's loader
+too; wrangler also reads `.dev.vars.<name>` under `--env <name>`, and `.env`
+files when no `.dev.vars*` file exists. All of them are gitignored, except the
+`.example` files. In production every value is set with
+`wrangler secret put <NAME>`, and `vars` stays empty; where each value lives,
+who holds it and when it is re-issued is in the
+[operations and security runbook](./operations-and-security.md), sections 1.4
+and 2.1.
+
+## 7. Wrangler
+
+| `wrangler.jsonc` | Setting |
+|---|---|
+| `main` | `src/worker.ts`: the HTTP handler, the cron handler and the `Broadcaster` Durable Object class, without logic until Phase 3 (every request is answered 404) |
+| `compatibility_date` | 2026-10-28 (see below), with the `nodejs_compat` flag |
+| `send_metrics` | `false`: wrangler sends no usage metrics for this project, overriding each user's own telemetry setting (an explicit `WRANGLER_SEND_METRICS` in the environment still takes precedence); the owner's stance, not a rule-6 requirement |
+| `d1_databases` | binding `DB`, `database_name` `div-report`, an all-zero placeholder `database_id` (the real id is deployment configuration), `migrations_dir` `migrations/` at the repository root |
+| `durable_objects`, `migrations` | binding `BROADCASTER`, class `Broadcaster`, SQLite-backed through the migration tag `v1` |
+| `triggers` | one cron, `5 0 * * *`, for the nightly retention job (00:05 UTC, after the Free plan's daily caps reset); the runbook (section 3.3) budgets a second Cron Trigger for the stall detector, whose schedule is set when it lands in Phase 3 |
+| `observability` | disabled: the platform's invocation logs are logs (critical invariant 6); turned on only deliberately (runbook, section 4) |
+| `vars` | empty: no secret and no deployment value lives in this file |
+
+`npm run migrate:local` applies `migrations/` to the local database under
+`.wrangler/`; the first migrations arrive with the data model in Phase 3.
+`npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its
+bindings (`env.BROADCASTER`, `env.DB`) with no Cloudflare account and no
+network access, and with `send_metrics` off it prints no telemetry notice.
+`.wrangler/`, which also holds the local D1 and Durable Object state, is
+gitignored. `wrangler dev` does not fire the cron trigger by itself; it
+prints the `curl` command (`/cdn-cgi/local/scheduled` on the dev server)
+that does.
+
+`compatibility_date` follows ADR 0002's rule: the newest date every runtime
+in the toolchain accepts when it is set. miniflare, behind both `wrangler dev`
+and the Vitest plugin, refuses any date after today's UTC date
+(`ERR_FUTURE_COMPATIBILITY_DATE`), and workerd 1.20261023.1's own ceiling is
+2026-10-30; neither `npx workerd --version` (2026-10-23) nor wrangler's
+default date is a ceiling. To raise it, set at most the current UTC date and
+run `npm run test:workers`: dev and tests share one miniflare and one workerd.
+
+## 8. Critical paths, the anchor and the tripwire
+
+The critical paths are the globs in `.claude/devil/critical-globs.conf`, which
+also scope the domain-auditor and devil.sh's critical-path runs; ADR 0006 is
+the source of truth for the module map and the rules each module carries.
+
+| Glob | Holds | Rules |
+|---|---|---|
+| `*src/telegram/*` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | 2, 4 |
+| `*src/auth/*` | the allowlist gate, the membership check | 2, 4 |
+| `*src/review/*` | the report state machine, routing table, approval records, grace and cancel | 1, 3, 7 |
+| `*src/broadcast/*` | the broadcast engine, ledger, pacing, retraction, closure, budget | 1, 5 |
+| `*src/privacy/*` | HMAC references, log redaction, the retention job | 6, 8 |
+| `*src/config/*` | the zod schema and loaders | 2, 6 |
+| `*src/db/*` | the `SqlDb` port and its adapters | 8 |
+| `*migrations/*` | the D1 schema migrations | 8 |
+| `*src/worker.ts`, `*src/node.ts` | the Worker entry (HTTP, cron, the broadcaster Durable Object) and the Node port's entry, when it lands | none listed |
+
+`src/errors/`, `src/i18n/` and `src/platforms/` are deliberately not critical.
+Every file on a critical path carries the comment line `// @critical-path`
+(TypeScript) or `-- @critical-path` (SQL) near its top, as `src/worker.ts`
+and `src/config/schema.ts` do. `selftest/critical-globs-completeness.sh`
+fails, naming the file, when an anchored file under `src/` or `migrations/`
+matches no glob, so a new critical module adds its glob in the same change.
+The check sees only anchored files: a critical file without the anchor
+escapes it.
+
+The tripwire, `.claude/hooks/critical-path-tripwire.sh`, runs after every
+Claude Code Edit or Write. In a file the globs match (test files, `*.spec.*`,
+`*.test.*` and `*_test.*`, are skipped) it checks the lines added against
+HEAD, or the whole file when it is untracked, and flags:
+
+| Pattern | Rules |
+|---|---|
+| `console.log(`, `.error(`, `.warn(`, `.info(` or `.debug(` | 6 |
+| `JSON.stringify(` of `err`, `error`, `e`, `ctx` or `update` | 6 |
+| `forwardMessage(s)(`, `copyMessage(s)(`, `getChat(`, `getFile(` | 3, 4 |
+| a bare `fetch(` (at the start of a line, or not preceded by a dot or an identifier character), plus `globalThis.fetch(`, `self.fetch(` and `window.fetch(` | 4 |
+| `disable_web_page_preview`, `is_disabled: false` | 4 |
+
+On a hit it feeds a reminder of rules 3, 4 and 6 back to the model; the edit
+itself stays. It is an authoring-time heuristic, not a gate: the
+domain-auditor and the invariant tests are the gates. The pattern itself is
+pinned by `selftest/tripwire-patterns.sh` (run by `bash selftest/run-all.sh`),
+which checks that `BANNED_PATTERNS` compiles and drives the unmodified hook
+with lines that must and must not trip it, so an invalid pattern can no
+longer turn the hook into a silent no-op. `getChatMember(`, which the
+membership check needs, and a method call such as `stub.fetch(` do not match.
+Known false positive: a method-shorthand handler such as
+`async fetch(request, env, ctx) {` matches the bare-fetch pattern, which is
+why `src/worker.ts` writes its handlers as properties (`fetch: () => ...`).
+
+## 9. Known issues (2026-10-28)
+
+Moving to `@cloudflare/vitest-plugin` on 2026-10-28 removed the deprecated
+Workers Vitest pool package, its six high-severity audit findings and the
+2026-08-22 compatibility-date cap; `npm audit` now reports
+`found 0 vulnerabilities`. What remains:
+
+- `SELF` from `cloudflare:test` is marked deprecated in the plugin's types, in
+  favour of `exports` from `cloudflare:workers` (`exports.default.fetch()`);
+  the smoke test still uses `SELF.fetch`.
+- `@types/node` 26 on a Node 22 runtime can type-check APIs that Node 22
+  lacks; that matters only for the unit tests and the future Node port.

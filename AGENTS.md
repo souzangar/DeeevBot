@@ -13,7 +13,8 @@ approved ones are broadcast to the opted-in subscribers with per-platform
 reporting instructions and a recommended comment. The owner's brief is
 `doc/product/project-brief.md`; the decisions of 2026-10-28 are in
 `doc/product/planning-decisions-2026-10-28.md` and the ADRs under
-`doc/architecture/`. Status: planned, no code yet.
+`doc/architecture/`. Status: toolchain scaffolded, no application
+logic yet (the module map, commands and test tiers are in CLAUDE.md).
 
 ## Codex-specific notes
 

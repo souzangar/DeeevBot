@@ -14,16 +14,20 @@ result — never claim a pass you didn't observe.
 
 ## Project conventions
 
-<!-- EDIT-ME: replace with your project's tiers, file-naming suffixes, and
-     run commands, e.g.:
-     | Tier | Suffix | Command | Needs infra? |
-     |------|--------|---------|--------------|
-     | Unit | *.spec.ts | npm test | No — mock everything |
--->
-Until the block above is filled in: discover the conventions yourself —
-read the project's manifest/build files for the test runner and scripts,
-and read two or three existing test files near the target module to copy
-their setup style. State in your report what you discovered and followed.
+Vitest 4, three projects in `vitest.config.ts` (full description:
+`doc/guides/developer-setup.md`):
+
+| Tier | Where | Command | Needs infra? |
+|------|-------|---------|--------------|
+| unit | `*.test.ts` beside the module under `src/` | `npm run test:unit` | No: plain node, no network; mock at the boundary (Telegram API, storage, clock) |
+| workers | `test/workers/*.test.ts` | `npm run test:workers` | Local only: the D1 and Durable Object bindings from `wrangler.jsonc` through `@cloudflare/vitest-plugin`; for the Cloudflare adapters, pure logic stays in unit |
+| invariants | `test/invariants/*.test.ts` | `npm run test:invariants` | No: plain node; always run by the commit gate; one spec per stated "must not" |
+
+`npm test` runs unit and workers; the commit gate runs `npm run build`,
+`npm test`, then the invariants. Fixture values must never be
+secret-shaped: the gate's secret-shape scan reads test files too. Read two
+or three existing tests near the target module and copy their setup
+style; state in your report what you followed.
 
 Defaults that hold in any project:
 

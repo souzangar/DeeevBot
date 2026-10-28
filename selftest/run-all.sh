@@ -36,7 +36,7 @@ if [ "$bad" -eq 0 ]; then echo "  all shell files parse."; else overall=1; fi
 total_ok=0; total_fail=0
 log=$(mktemp "${TMPDIR:-/tmp}/selftest-suite-XXXXXX") || exit 1
 trap 'rm -f "$log"' EXIT
-for t in devil-sh-invariants hooks-behavior statusline-smoke critical-globs-completeness; do
+for t in devil-sh-invariants hooks-behavior statusline-smoke critical-globs-completeness tripwire-patterns; do
   echo "== $t =="
   bash "$HERE/$t.sh" 2>&1 | tee "$log"
   [ "${PIPESTATUS[0]}" -eq 0 ] || overall=1

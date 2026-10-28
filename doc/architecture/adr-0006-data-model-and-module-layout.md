@@ -1,7 +1,7 @@
 ---
 type: adr
 title: "ADR 0006: Data model and module layout"
-description: "The MVP tables in D1 and in the broadcaster's storage, the report statuses, the module map under src/, which modules are critical paths, and the planned tripwire patterns."
+description: "The MVP tables in D1 and in the broadcaster's storage, the report statuses, the module map under src/, which modules are critical paths, and the tripwire patterns."
 status: active
 tags: [architecture, adr, data-model, modules, critical-path]
 timestamp: 2026-10-28T00:00:00Z
@@ -67,28 +67,42 @@ skipped for that report (deterministic, documented in
 | `src/broadcast/` | the engine, the ledger, pacing, retraction, closure, the budget |
 | `src/privacy/` | HMAC references, log redaction, the retention job |
 | `src/config/` | the zod schema and loaders |
-| `src/db/` | the `SqlDb` port, adapters, migrations |
+| `src/db/` | the `SqlDb` port and its adapters |
+| `migrations/`, at the repository root | the D1 SQL migrations (wrangler's `migrations_dir`) |
 | `src/errors/` | `AppError` and the catalog |
 | `src/i18n/` | the `fa` and `en` catalogs |
 | `src/platforms/` | URL parsing, per-platform instruction keys |
 
 ### Critical globs (Phase 2)
 
-`telegram`, `auth`, `review`, `broadcast`, `privacy`, `config` and `db`
-are critical paths; `i18n` and `platforms` are not.
+`.claude/devil/critical-globs.conf` holds one glob per critical path:
+`*src/telegram/*`, `*src/auth/*`, `*src/review/*`, `*src/broadcast/*`,
+`*src/privacy/*`, `*src/config/*`, `*src/db/*`, `*migrations/*` (the root
+migrations directory), `*src/worker.ts` (the Worker entry) and
+`*src/node.ts` (the Node port's entry, when it lands). `src/errors/`,
+`src/i18n/` and `src/platforms/` are not critical.
 
 ### Tripwire patterns (Phase 2)
 
-`console.(log|error|warn)(` anywhere in `src/`; `forwardMessage` or
-`copyMessage`; `getChat(` or `getFile(` on targets; `fetch(` outside the
-Telegram API adapter; `JSON.stringify((err|error|e))`.
+`BANNED_PATTERNS` in `.claude/hooks/critical-path-tripwire.sh` is checked
+on the lines added to a file the critical globs match, test files
+(`*.spec.*`, `*.test.*`, `*_test.*`) skipped:
+`console.(log|error|warn|info|debug)(`; `forwardMessage(s)(` and
+`copyMessage(s)(`; `getChat(` and `getFile(`; a bare `fetch(` (at the
+start of a line, or not preceded by a dot or an identifier character),
+plus `globalThis.fetch(`, `self.fetch(` and `window.fetch(`;
+`JSON.stringify(` of `err`, `error`, `e`, `ctx` or `update`;
+`disable_web_page_preview`; and `is_disabled: false`. A `console` call
+anywhere in `src/` fails the build through eslint's `no-console`, an
+error; the tripwire covers only the critical globs.
 
 ## Consequences
 
 - Each critical module carries named rules: `telegram` and `auth` rule 2
   and rule 4 (rendering), `review` rules 1, 3 and 7, `broadcast` rules 1
-  and 5, `privacy` rules 6 and 8, `config` rule 6, `db` rule 8. The
-  domain-auditor reads diffs under these globs against those rules.
+  and 5, `privacy` rules 6 and 8, `config` rules 2 and 6, `db` and the
+  root `migrations/` rule 8. The domain-auditor reads diffs under these
+  globs against those rules.
 - `member_checked_at` caches the membership check made at subscription
   and at intake against the NGO group, where the bot is a plain member in
   privacy mode and never an admin (or against a channel the bot
@@ -97,7 +111,7 @@ Telegram API adapter; `JSON.stringify((err|error|e))`.
   so `reports` has no media columns and the `forwardMessage` or
   `copyMessage` tripwire has no legitimate hit in `src/`.
 - Every new logic file gets a unit test; pure modules run under plain
-  node, adapters under the Workers pool
+  node, adapters under the Workers Vitest plugin, `@cloudflare/vitest-plugin`
   ([ADR 0002](./adr-0002-language-and-framework.md)).
 - The Phase 2 commit fills CLAUDE.md's Architecture map, the critical
   globs file and the tripwire's `BANNED_PATTERNS` from this record.
@@ -118,3 +132,6 @@ Telegram API adapter; `JSON.stringify((err|error|e))`.
 ## Status
 
 Accepted 2026-10-28.
+
+Amended 2026-10-28 (Phase 2): config rules, migrations location, entry
+files and tripwire patterns aligned with the implementation.

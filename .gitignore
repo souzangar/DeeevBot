@@ -11,3 +11,14 @@
 .env
 .env.*
 !.env.example
+# --- toolchain (Phase 2) ---
+node_modules/
+dist/
+coverage/
+# wrangler's local state (local D1/DO storage, dry-run bundles) — never shared.
+.wrangler/
+# Local Worker secrets for `wrangler dev` and @cloudflare/vitest-plugin; the
+# committed template with empty values is .dev.vars.example.
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
