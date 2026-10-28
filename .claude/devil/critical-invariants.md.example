@@ -1,0 +1,33 @@
+# Critical-path invariants
+
+<!-- Copy to critical-invariants.md (drop the .example) and edit the marked
+     block. devil.sh injects this file VERBATIM into the codex prompt whenever
+     a diff touches a path in critical-globs.conf, so write it as instructions
+     to a hostile reviewer: short, absolute, checkable. The SAME marked block
+     lives in CLAUDE.md and AGENTS.md; .claude/hooks/rules-sync-check.sh
+     diffs the three copies and goes red on drift — edit all three, verbatim,
+     in the same commit. -->
+
+<!-- sync:catastrophic-invariants -->
+EDIT-ME — the small set of catastrophic, non-negotiable rules for this
+project (data-loss, security, correctness), self-contained: a reader must be
+able to enforce each without opening any other file. Proven shapes to copy:
+
+- "<X> is NEVER done in our own code. The only sanctioned exception is <Y>,
+  applied at the boundary call site, never stored, never re-emitted."
+- "Destructive or value-moving operations always go through <the one safe
+  helper>; the raw variant is forbidden. Validate <precondition> before every
+  such operation."
+- "Every state-changing flow claims its work item atomically (e.g.
+  pending → processing via a conditional update) before acting, backed by the
+  unique indexes/constraints that make a double claim impossible — these
+  guards must never be weakened or removed."
+- "Multi-record writes that must succeed or fail together are wrapped in
+  <the project's transaction mechanism>; events fire only after commit."
+- "Client input never DECIDES a critical outcome — it may only request or
+  refuse. Every value the backend acts on is recomputed or re-read from our
+  own code/state at action time; an optional field's absence never waives a
+  server-side check."
+- "Every error leaves the API through <the project's error convention>; new
+  error codes go in <the catalog>, never inline."
+<!-- /sync:catastrophic-invariants -->

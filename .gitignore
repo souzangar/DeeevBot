@@ -1,0 +1,13 @@
+# --- claude-project-kit: append this to the repository's .gitignore ---
+# Per-user Claude Code settings (permissions, statusline wiring) — never shared.
+.claude/settings.local.json
+# Ephemeral session state written by statusline-quota.sh (quota mirror,
+# raw status payloads with session ids, the per-model weekly cache) — local
+# telemetry, not for VCS. NO trailing slash: .claude/state is normally a
+# symlink to a tmpfs directory, and a "dir/" pattern does not match a symlink.
+.claude/state
+# Secrets (bot token, DB credentials, admin allowlist) live in the
+# environment or an untracked config file — never in VCS.
+.env
+.env.*
+!.env.example

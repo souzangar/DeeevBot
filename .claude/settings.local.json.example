@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.claude/scripts/devil.sh *)",
+      "Bash(DEVIL_DRY_RUN=1 .claude/scripts/devil.sh *)",
+      "Bash(DEVIL_ESCALATE=1 .claude/scripts/devil.sh *)",
+      "Bash(jq * .claude/state/quota.json)",
+      "Bash(bash selftest/*.sh)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "<ABSOLUTE-PATH-TO-REPO>/.claude/scripts/statusline-quota.sh",
+    "padding": 0,
+    "refreshInterval": 30
+  }
+}

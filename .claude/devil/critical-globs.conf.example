@@ -1,0 +1,23 @@
+# .claude/devil/critical-globs.conf — the project's critical-path scope.
+#
+# One glob per line, matched (shell `case` pattern) against repo-relative
+# changed-file paths. Blank lines and lines starting with # are ignored.
+# This file is DATA — it is read and matched, never executed.
+#
+# Consumers (kept in agreement by construction — both read THIS file):
+#   .claude/scripts/devil.sh              escalates codex reasoning effort and
+#                                         injects critical-invariants.md when a
+#                                         diff touches a matching path
+#   .claude/hooks/critical-path-tripwire.sh  scopes the authoring-time tripwire
+#
+# Match whole modules generously — harmless extra hits are cheaper than a
+# missed critical file. Equality between consumers is guaranteed; COVERAGE is
+# not: add an anchor-based completeness check for that
+# (selftest/critical-globs-completeness.sh is the skeleton).
+#
+# Copy this file to critical-globs.conf (drop the .example) and edit.
+# Examples for a payments-style service:
+#*src/billing/*
+#*src/payments/*
+#*src/wallet/*
+#*src/common/money/*
