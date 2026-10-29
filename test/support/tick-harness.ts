@@ -11,6 +11,8 @@
 // cases: the report approved under a fresh approval with its rendered
 // bilingual post, and the post job carrying that approval's id; the venue's
 // card and status card are put in the fake's store so their edits behave.
+// plantPosted() goes on to post it with one real run, as the channel then
+// holds it, for the closure and retraction cases.
 // Fixture values are never secret-shaped.
 import { createBotApi } from '../../src/telegram/api';
 import { enqueuePost } from '../../src/broadcast/jobs';
@@ -152,3 +154,27 @@ export async function plantApproved(harness: TickHarness | BotHarness, options: 
 
 /** A fresh random id that is no report's. */
 export const unknownId = (): string => randomId();
+
+/** What plantPosted() left: a planted approval, posted by a real run. */
+export interface PostedPost extends PlantedPost {
+  /** The post's message id in the channel. */
+  readonly postMessageId: number;
+}
+
+/**
+ * An approved report as plantApproved() writes it, posted by one run at the
+ * clock's time; the statement count is reset after it. Its approval starts
+ * before every post job already due, so the run, which posts the oldest,
+ * posts this one.
+ */
+export async function plantPosted(harness: TickHarness, options: Omit<PlantOptions, 'startsAt' | 'withoutJob'> = {}): Promise<PostedPost> {
+  const earliest = await harness.db.first<{ due: number | null }>(sql`SELECT min(due_at) AS due FROM jobs WHERE kind = 'post'`);
+  const startsAt = Math.min(harness.clock.now(), (earliest?.due ?? Number.POSITIVE_INFINITY) - 1);
+  const planted = await plantApproved(harness, { ...options, startsAt });
+  const outcome = await harness.run();
+  if (outcome.post !== 'posted') throw new Error(`the planted report was not posted: ${outcome.post}`);
+  const row = await harness.db.first<{ status: string; post_message_id: number }>(sql`SELECT status, post_message_id FROM reports WHERE id = ?`, [planted.reportId]);
+  if (row?.status !== 'posted') throw new Error('the run posted another report than the planted one');
+  harness.reset();
+  return { ...planted, postMessageId: row.post_message_id };
+}

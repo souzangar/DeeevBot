@@ -32,7 +32,7 @@ the tables in
 | `retracting` | an admin or a keyholder retracted it; the edit of the post has not yet succeeded |
 | `closed` | the post shows "taken down" or "closed without result"; finalized |
 | `retracted` | the post shows the correction; finalized |
-| `expired` | 90 days (configurable) passed since the post and the closure edit succeeded; or a pending report reached 30 days without a decision (outcome `no_decision`) |
+| `expired` | 90 days passed since the post and the closure edit succeeded; or a pending report reached 30 days without a decision (outcome `no_decision`) |
 | `rejected` | an admin rejected it |
 | `routed` | the admin categorised it as suspected CSAM and routed it |
 | `merged` | a second report of a target that is already open |
@@ -59,14 +59,14 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | `posting` | `approved` | an unambiguous failure of the send: a 429 (the job rescheduled for now plus `retry_after`, `meta.paused_until` set), or a 400 or 403 such as no post rights or chat not found (`needs_attention` set, the keyholders alerted, the job abandoned) | the claim reverted and `posting_started_at` cleared in the same batch |
 | `posting` | `posted` | `/attach <id> <message id or t.me/c/... link of the broadcast channel>` by an admin in the venue or a keyholder in their own chat (under lockdown a keyholder only) who found the post in the channel after an ambiguous failure; the bot verifies the message first (below) | `post_message_id`, `posted_at`, the attention flags cleared, the job deleted; then the notices, the status card and the review card as after a send |
 | `posting` | `approved` | `/repost <id>` by an admin in the venue (never under lockdown) who found no post in the channel; admitted only while no `post_message_id` exists, and only two minutes or more after the claim (a send inside that window may still be under way) | `posting_started_at` and the attention flags cleared; the job kept (an ambiguous send leaves it, under the same approval) or re-enqueued |
-| `posted` | `closing` | `/close <id> <outcome>` or a status-card button; the outcomes "taken down" and "closed without result" | `outcome`; an `edit` job |
-| `posted` (or `posting` once `/attach` supplied the id) | `retracting` | `/retract <id>` by an admin, or by a keyholder (also under lockdown), with the correction by prompt | `correction_text`, written before the status change; an `edit` job |
-| `closing` | `closed` | the edit job appended the outcome line and removed the button | the terminal status and the finalization batch together: the aggregate row upserted, every personal and content field nulled, `approvals`, `admin_prompts`, merged rows and the job deleted, `data_deleted_at` set |
-| `retracting` | `retracted` | the edit job replaced the post's text with the correction and removed the button | the same batch; the aggregate row keeps `retracted` |
-| `posted` | `closing`, then `expired` | the retention job, 90 days (configurable) after the post | the closure edit with the outcome `expired`, then the same finalization |
+| `posted` | `closing` | `/close <id> taken_down\|no_result` by an admin in the venue, or the status card's Taken down or Closed without result button; never under lockdown, and no keyholder command | in one batch, while the report holds its post's message id under its live approval and the switch is not set: the status and the `outcome`; an `edit` job, due at once; then, outside lockdown, the status card says the closure is under way, its closure and retraction buttons gone. Nobody is messaged |
+| `posted` (a report `/attach` recorded included: it writes `posted` and the id in one statement) | `retracting` | `/retract <id>` by an admin in the venue, or by a keyholder in their own chat (also under lockdown), or the status card's Retract button: a force-reply prompt in that chat asks for the correction, and only the retractor's own reply there answers it | the reply refused, by a fresh prompt saying why, unless it passes the admin free-text policy and the retracted post it makes fits 4096 characters with no link; then in one batch: `correction_text` written first, then the status with the outcome `retracted` (an admin's bound to no lockdown, a keyholder's not), an `edit` job due at once, the report's retraction prompts deleted; the prompt and the reply deleted from their chat, the retractor told there, and, outside lockdown, the status card says the retraction is under way |
+| `closing` | `closed` | the edit job appended the outcome line, in both locales, to the post and removed the button | the terminal status and the finalization batch together: the aggregate row upserted, every personal and content field nulled, `approvals`, `admin_prompts`, merged rows and the job deleted, `data_deleted_at` set; then, outside lockdown, the status card shows the outcome without buttons |
+| `retracting` | `retracted` | the edit job replaced the post's text with the correction under a fixed heading and the warning line, in both locales, removed the button, and deleted the post as well when it was younger than 48 hours | the same batch; the aggregate row keeps `retracted`; the keyholders' remembered notices say "retracted" |
+| `posted` | `closing`, then `expired` | the retention job, 90 days after the post (at most 50 a night), never while the bot is locked down or halted, when the closure edit could not run and the post could no longer be retracted: the next night without a hold catches up | the closure edit with the outcome `expired`, then the same finalization |
 | `pending` | `rejected` | an admin presses Reject and picks a reason code (internal) | in one batch: `decided_by`, `decided_at`, `rejection_reason`; `comment` and `affected_person` nulled on the report and its merged rows; the rejection counted once on the reference of every report of the target; the report's prompts deleted; then the card deleted (edited to the outcome when older than 48 hours); the row finalized 30 days later |
 | `pending` | `routed` | the admin categorises as suspected CSAM and confirms on the routing card | in one batch: `decided_by`, `decided_at`, the category suspected CSAM; `url`, `account_url`, `comment` and `affected_person` nulled on the report and its merged rows; the report's prompts deleted; then the card deleted (edited to the outcome when older than 48 hours); the row finalized 30 days later; see [categories and routing](./report-categories-and-routing.md) |
-| `pending` | `expired` | the retention job, 30 days after intake with no decision | outcome `no_decision`; finalized in D1 |
+| `pending` | `expired` | the retention job, 30 days after intake with no decision | outcome `no_decision`; finalized in D1 in the night's batch, its review card (past Telegram's 48 hours) edited to the outcome without links outside lockdown, and its row deleted the same night |
 
 A `/repost` is also admitted from `approved` when no job exists after an
 abandoned 400 or 403, or after a stored post the send-time check refused
@@ -290,14 +290,63 @@ stores and deletes nothing.
 ## Closure outcomes
 
 An admin closes a posted report as "taken down" or "closed without
-result", or retracts it; the retention job expires it 90 days after the
-post. Every path edits the post (the button is removed in each case),
-writes the terminal status only when that edit succeeds, and finalizes in
-the same batch: the report's links, comment, texts, approval, prompts,
-merged rows and job are deleted or nulled and the aggregate row remains
-([Retention and minimisation](./retention-and-minimisation.md)). An edit
-job that fails past its bound, or is blocked, leaves the report in
-`closing` or `retracting` with `post_message_id` and `correction_text`
-intact, sets `needs_attention` and alerts; reconciliation re-enqueues a
-missing edit job and never finalizes a `closing` or `retracting` row.
-"Message is not modified" and "message to edit not found" are non-errors.
+result" (`/close <id> taken_down|no_result` in the venue, or the status
+card's buttons), or an admin or a keyholder retracts it (`/retract <id>`,
+or the status card's Retract button); the retention job expires it 90 days
+after the post. Every path edits the report's own post, its
+`post_message_id` in the broadcast channel and no other message, through
+the one transformer (previews off, HTML), without a keyboard, so the "I
+reported it" button goes, and only that edit's success writes the terminal
+status, in the batch that finalizes the report
+(`src/broadcast/closure.ts`, `retraction.ts`, `concluding.ts`,
+`finalize.ts`).
+
+- Closure and expiry append the outcome line to the stored post, in both
+  locales, Persian first. A closed post that would fail the check every
+  outgoing text gets, in practice a post too long once the outcome lines
+  are appended (its targets are code text, never a tappable link), is never
+  sent: the post is replaced by the outcome lines alone.
+- Retraction replaces the post's text with a fixed heading and the fixed
+  warning line in both locales, then the correction as escaped text, with
+  no link at all. The correction passed the admin free-text policy at the
+  prompt and passes it again at the edit; one that does not is never sent.
+  A post younger than Telegram's 48 hours is deleted as well, after its
+  edit, best effort.
+- Telegram's answer decides. "Message is not modified" (an edit a cut run
+  made already) and "message to edit not found" (the post is gone, its
+  conclusion logged `edit.post_gone`, and nothing deleted again) are
+  non-errors, and the report concludes. A 429 pauses every job send
+  (`meta.paused_until`) and the job waits for it; a timeout, a network
+  error or a 5xx is tried again after the job's back-off, an edit being
+  idempotent. Any other refusal (the bot lost its right to edit, the
+  channel is gone) sets `needs_attention`, alerts the keyholders (and the
+  venue unless locked down) once, notes the status card, and leaves the
+  report in `closing` or `retracting` with its post id and its texts; a
+  retraction whose young post the bot can still delete concludes instead.
+  The nightly retention job abandons a job that failed 20 times, with an
+  alert and nothing finalized, and reconciliation queues the edit again at
+  the next quarter hour, so a cause fixed by hand heals by itself.
+- A report that holds no live approval record, no post id or, for a
+  retraction, no correction the policy accepts is never edited: it is
+  flagged for a human, and its job's failure recorded (critical invariant
+  1).
+- `/halt` holds the closures and the expiry; under lockdown only the
+  retractions run. A closure reads the hold again and binds it in its own
+  statements, so a `/halt` or a lockdown set while a run is under way
+  concludes nothing: the post already edited, the next run finds it "not
+  modified" and concludes.
+- The finalization, in the batch that writes the terminal status: the
+  aggregate row upserted (category, platform, the days of intake, of the
+  decision and of the finalization, the outcome, the presses, the keyed
+  link hash); the approval, the prompts and the jobs deleted; the rows
+  merged into the report deleted; every personal and content field of the
+  report nulled; `data_deleted_at` set. The status card then shows the
+  outcome without buttons, and a retraction edits the keyholders'
+  remembered notices to "retracted". The report's own row, holding its id
+  and its state alone, is deleted by the next nightly retention job, after
+  which the aggregate row is the only one that holds its id.
+- A report being closed cannot be retracted, and a closed one keeps no
+  post id to edit: a post found wrong after its closure is deleted by hand
+  in the channel by a keyholder, who owns it.
+- Nobody is messaged, not the reporter and not the members: the edited post
+  is the outcome.

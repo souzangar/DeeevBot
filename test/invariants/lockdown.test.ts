@@ -46,6 +46,13 @@
 // - The scheduler's commands are on the real surface: under either layer an
 //   admin's /attach, /repost, /halt and /resume are refused like every admin
 //   command, while a keyholder's /attach and /halt keep working.
+// - The closure unit's are too: under either layer an admin's /close,
+//   /retract, /stats and /budget and the status card's closure and
+//   retraction buttons are refused like every admin action, while a
+//   keyholder's /retract (its prompt in their own chat, their reply taken
+//   there by the surface's one keyholder reply) and /stats keep working, and
+//   the retraction's edit runs; the retention job runs; the monthly snapshot
+//   goes to the keyholders and never to the venue.
 // The commit gate runs this file on every commit (`npm run test:invariants`).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -73,6 +80,9 @@ import { harnessOver, storeWith } from '../support/review-store';
 import { insertApproval, insertReport, snapshot } from '../support/review-rows';
 import { IDS } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
+import { postKeyboard } from '../../src/broadcast/post';
+import { runRetentionNow, runSnapshot } from '../../src/broadcast/maintenance';
+import { plantApproved, TICK_AT, tickHarness, type TickHarness } from '../support/tick-harness';
 
 const REPORTED_URL = 'https://www.instagram.com/reported.account/';
 const REPORT_ID = 'qwertyuiopasdfghjklz';
@@ -295,6 +305,8 @@ const everyAction = (reportId: string, approvalId: string): Record<ReviewActionK
   cancel: { kind: 'cancel', reportId, approvalId },
   block: { kind: 'block', reportId },
   back: { kind: 'back', reportId },
+  close: { kind: 'close', reportId, outcome: 'taken_down' },
+  retract: { kind: 'retract', reportId },
 });
 
 /** A pending report with its card (message 7) and an approved one with its card (8), its status card (9) and a notice. */
@@ -603,5 +615,97 @@ describe('critical invariant 2: no command or button registration bypasses the a
         { path: 'worker-extra.ts', code: "bot.callbackQuery(/^rv:/, approveEverything);" },
       ]);
     expect(bypasses(planted).sort()).toEqual(['review/composer.ts', 'telegram/api.ts', 'telegram/shortcut.ts', 'worker-extra.ts']);
+  });
+});
+
+describe.each(['switch', 'override'] as const)('critical invariant 2: under the lockdown %s, the closure unit', (layer) => {
+  const CORRECTION = 'The admins were wrong about this account; please do not report it.';
+
+  /** The retention pass a lockdown runs, at the clock's now. */
+  const lockdownNowPass = (harness: TickHarness) => runRetentionNow(harness.deps);
+
+  /** A report posted in the channel, written as a run's record writes it (no run posts under lockdown). */
+  const posted = async (harness: TickHarness) => {
+    const planted = await plantApproved(harness);
+    const postMessageId = 700;
+    harness.telegram.seedMessage(IDS.broadcastChannel, { message_id: postMessageId, text: planted.text, reply_markup: postKeyboard(planted.reportId) });
+    await harness.db.run(sql`UPDATE reports SET status = 'posting', posting_started_at = ? WHERE id = ?`, [TICK_AT, planted.reportId]);
+    await harness.db.run(sql`UPDATE reports SET status = 'posted', post_message_id = ?, posted_at = ? WHERE id = ?`, [postMessageId, TICK_AT, planted.reportId]);
+    await harness.db.run(sql`DELETE FROM jobs WHERE report_id = ?`, [planted.reportId]);
+    return { ...planted, postMessageId };
+  };
+
+  const locked = async () => {
+    const harness = tickHarness(layer === 'override' ? { variables: { LOCKDOWN: '1' } } : {});
+    const report = await posted(harness);
+    if (layer === 'switch') await setLockdown(harness.db, harness.clock);
+    return { harness, report };
+  };
+
+  it("refuses an admin's /close and /retract and the status card's buttons, writing nothing", async () => {
+    const { harness, report } = await locked();
+    const before = await snapshot(harness.db);
+    await harness.send(groupMessage(IDS.adminChat, IDS.admin, `/close ${report.reportId} taken_down`));
+    await harness.send(groupMessage(IDS.adminChat, IDS.admin, `/retract ${report.reportId}`));
+    for (const action of [
+      { kind: 'close' as const, reportId: report.reportId, outcome: 'no_result' as const },
+      { kind: 'retract' as const, reportId: report.reportId },
+    ]) {
+      await harness.send(buttonPress(IDS.admin, reviewData(action), { chatId: IDS.adminChat, messageId: report.statusMessageId, chatType: 'supergroup' }));
+    }
+    expect(await snapshot(harness.db)).toEqual(before);
+    expect(harness.textsTo(IDS.adminChat)).toEqual([t(harness.config.venueLocale, 'admin.refused'), t(harness.config.venueLocale, 'admin.refused')]);
+    expect(harness.telegram.callsOf('answerCallbackQuery').map((call) => call.payload.text)).toEqual([
+      t(harness.config.venueLocale, 'admin.refused'),
+      t(harness.config.venueLocale, 'admin.refused'),
+    ]);
+  });
+
+  it("keeps a keyholder's /retract working, in their own chat, and the retraction's edit runs; nothing reaches the venue", async () => {
+    const { harness, report } = await locked();
+    const from = harness.telegram.calls.length;
+    await harness.send(privateMessage(IDS.keyholder, `/retract ${report.reportId}`));
+    const prompt = harness.telegram.messagesIn(IDS.keyholder).filter((message) => (message.reply_markup as { force_reply?: boolean } | undefined)?.force_reply === true).at(-1);
+    expect(prompt?.text).toBe(t('en', 'retract.prompt', { id: report.reportId }));
+    const replyId = harness.telegram.receive(IDS.keyholder, { text: CORRECTION });
+    const reply = privateMessage(IDS.keyholder, CORRECTION, { replyToBot: prompt?.message_id ?? 0 });
+    await harness.send({ ...reply, message: { ...reply.message, message_id: replyId } } as Update);
+    expect(await harness.db.first(sql`SELECT status, correction_text FROM reports WHERE id = ?`, [report.reportId])).toEqual({ status: 'retracting', correction_text: CORRECTION });
+    await harness.run(TICK_AT + 60_000);
+    expect(await harness.db.first(sql`SELECT status FROM reports WHERE id = ?`, [report.reportId])).toEqual({ status: 'retracted' });
+    expect(harness.telegram.messageIn(IDS.broadcastChannel, report.postMessageId)).toBeUndefined();
+    expect(harness.telegram.calls.slice(from).filter((call) => call.chatId === IDS.adminChat)).toEqual([]);
+    expect(registrationsOf(harness).keyholderReplies).toBe(1);
+  });
+
+  it("keeps a keyholder's /stats working, in their own chat", async () => {
+    const { harness } = await locked();
+    await harness.send(privateMessage(IDS.keyholder, '/stats 2027-01'));
+    expect(harness.textsTo(IDS.keyholder).at(-1)).toBe([t('en', 'stats.title', { period: '2027-01' }), t('en', 'stats.none')].join('\n'));
+  });
+
+  it("lets a post's 90-day expiry wait, so a keyholder can still retract it", async () => {
+    const { harness, report } = await locked();
+    const at = TICK_AT + 120 * 86_400_000;
+    harness.clock.set(at);
+    await harness.run(at);
+    // Not a 00:15 run: the immediate pass a lockdown runs, at the clock's now.
+    await lockdownNowPass(harness);
+    expect(await harness.db.first(sql`SELECT status, outcome FROM reports WHERE id = ?`, [report.reportId])).toEqual({ status: 'posted', outcome: null });
+    await harness.send(privateMessage(IDS.keyholder, `/retract ${report.reportId}`));
+    expect(harness.textsTo(IDS.keyholder).at(-1)).not.toBe(t('en', 'retract.refused', { id: report.reportId }));
+    expect(await harness.db.first(sql`SELECT count(*) AS n FROM admin_prompts WHERE report_id = ? AND kind = 'retraction'`, [report.reportId])).toEqual({ n: 1 });
+  });
+
+  it('runs the retention job, and posts the monthly snapshot to the keyholders, never to the venue', async () => {
+    const { harness } = await locked();
+    const at = Date.UTC(2027, 2, 1, 0, 15);
+    const due = await insertReport(harness.db, { created_at: at - 31 * 86_400_000, card_message_id: null });
+    harness.clock.set(at);
+    expect((await harness.run(at)).ran).toContain('retention');
+    expect(await harness.db.first(sql`SELECT count(*) AS n FROM reports WHERE id = ?`, [due])).toEqual({ n: 0 });
+    const from = harness.telegram.calls.length;
+    await runSnapshot(harness.deps, Date.UTC(2027, 2, 1, 6, 0));
+    expect(harness.telegram.calls.slice(from).map((call) => call.chatId)).toEqual([IDS.keyholder, IDS.secondKeyholder]);
   });
 });

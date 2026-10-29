@@ -4,16 +4,21 @@
 // into the channel with its button and its follow-ups; the claim as the
 // plan states it and every case it claims nothing in; the failure classes
 // (a 429, a refusal, an ambiguous send, a record that fails) and the
-// send-time check of the stored post.
+// send-time check of the stored post; the keyholders' notices edited to
+// "posted" and kept remembered, so the post's retraction edits them again.
+import type { Update } from 'grammy/types';
 import { describe, expect, it } from 'vitest';
 import { sql, type SqlDb, type SqlStatement, type SqlText, type SqlValue } from '../db/sql';
 import { AppError } from '../errors/app-error';
 import { t } from '../i18n/index';
+import { postedNoticeText, retractedNoticeText } from '../review/notify';
 import { statusCard } from '../review/status-card';
 import { FAILURES, rateLimited } from '../../test/fakes/bot-api';
 import { plantApproved, TICK_AT, tickHarness, type TickHarness } from '../../test/support/tick-harness';
+import { reviewIn } from '../../test/support/review-driver';
 import { reportRow } from '../../test/support/review-rows';
 import { IDS } from '../../test/support/variables';
+import { privateMessage } from '../../test/support/updates';
 import { CLAIM_POST, DEFAULT_RETRY_AFTER_SECONDS, postKeyboard, runPostJob } from './post';
 import { readTickState } from './state';
 
@@ -77,6 +82,45 @@ describe('the post of a due approved report', () => {
     );
     expect(statusMessage?.text).toBe(expected.text);
     expect(statusMessage?.text).not.toContain('x.com');
+  });
+
+  it('edits the keyholders\' remembered notices to "posted", and keeps them remembered for the retraction', async () => {
+    const harness = tickHarness();
+    const planted = await plantApproved(harness);
+    const deliveries = harness.config.keyholderIds.map((chatId) => ({ chatId, messageId: 9 }));
+    for (const { chatId } of deliveries) harness.telegram.seedMessage(chatId, { message_id: 9, text: 'the notice' });
+    harness.notices.remember(planted.approvalId, deliveries);
+    await harness.run();
+    for (const { chatId } of deliveries) expect(harness.telegram.messageIn(chatId, 9)?.text, String(chatId)).toBe(postedNoticeText(planted.reportId));
+    expect(harness.notices.recall(planted.approvalId)).toEqual(deliveries);
+  });
+
+  it('leaves a real approval\'s notices saying "retracted" once its post is retracted, nothing remembered by hand', async () => {
+    const harness = tickHarness();
+    const review = reviewIn(harness);
+    const report = await review.submit({ url: 'https://x.com/someone/status/1234567890', category: 'harassment', affected: false });
+    await review.approve(IDS.admin, report, { category: 'harassment', mode: 'account', points: 'Say it mocks a private person every day.' });
+    const notices = review.noticesOf(report.reportId).map((message) => ({ chatId: message.chat.id, messageId: message.message_id }));
+    expect(notices.map((notice) => notice.chatId)).toEqual([...harness.config.keyholderIds]);
+    const start = harness.clock.now();
+    for (let at = start; at <= start + 32 * 60_000 && (await reportRow(harness.db, report.reportId))?.status !== 'posted'; at += 60_000) {
+      harness.clock.set(at);
+      await harness.run(at);
+    }
+    for (const { chatId, messageId } of notices) expect(harness.telegram.messageIn(chatId, messageId)?.text).toBe(postedNoticeText(report.reportId));
+    await harness.send(privateMessage(IDS.keyholder, `/retract ${report.reportId}`));
+    const prompt = harness.telegram.messagesIn(IDS.keyholder).filter((message) => (message.reply_markup as { force_reply?: boolean } | undefined)?.force_reply === true).at(-1);
+    const correction = 'The admins were wrong about this account; please do not report it.';
+    const replyId = harness.telegram.receive(IDS.keyholder, { text: correction });
+    const reply = privateMessage(IDS.keyholder, correction, { replyToBot: prompt?.message_id ?? 0 });
+    await harness.send({ ...reply, message: { ...reply.message, message_id: replyId } } as Update);
+    harness.clock.advance(60_000);
+    await harness.run();
+    expect((await reportRow(harness.db, report.reportId))?.status).toBe('retracted');
+    for (const { chatId, messageId } of notices) {
+      expect(harness.telegram.messageIn(chatId, messageId)?.text, String(chatId)).toBe(retractedNoticeText(report.reportId));
+      expect(harness.telegram.messageIn(chatId, messageId)?.reply_markup, String(chatId)).toBeUndefined();
+    }
   });
 
   it('posts at the start of its approval, not a minute before', async () => {

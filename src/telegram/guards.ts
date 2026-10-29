@@ -19,6 +19,10 @@
 // - Admin replies: an admin's typed reply, in the venue, to one of the
 //   bot's own messages there (isVenueAdminReply), the review's force-reply
 //   prompts among them.
+// - Keyholder replies: a keyholder's typed reply, in their own private chat,
+//   to one of the bot's own messages there (isKeyholderReply), the
+//   retraction's prompt among them; like the keyholder commands they work
+//   under lockdown.
 // - Admin buttons (review and status cards): a press by an id outside
 //   ADMIN_IDS is refused, and so is one on a message outside the venue
 //   (pressedInVenue).
@@ -88,6 +92,24 @@ export const isVenueAdminReply =
       isAdmin(config, ctx.message?.from?.id) &&
       replied !== undefined &&
       replied.chat.id === config.adminChatId &&
+      replied.from?.id === config.botId
+    );
+  };
+
+/**
+ * Whether the update is a keyholder's typed reply, in their own private
+ * chat, to one of the bot's own messages there.
+ */
+export const isKeyholderReply =
+  (config: Pick<Config, 'keyholderIds' | 'botId'>) =>
+  (ctx: Context): boolean => {
+    const message = ctx.message;
+    const replied = message?.reply_to_message;
+    return (
+      typedInOwnChat(ctx) &&
+      isKeyholder(config, message?.from?.id) &&
+      replied !== undefined &&
+      replied.chat.id === message?.chat.id &&
       replied.from?.id === config.botId
     );
   };

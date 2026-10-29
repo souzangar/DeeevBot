@@ -204,10 +204,10 @@ the same `meta` row.
 
 ### 5. The emergency wipe
 
-A documented `wrangler d1 execute` script that deletes every row of every
-table except `stats` and `meta`, run by the keyholder at least a minute
-after setting lockdown, because in-flight `waitUntil` handlers may write
-for up to 30 seconds. It defends against the seized admins, not against a
+A documented `wrangler d1 execute` script, `scripts/wipe.sh`, outside the
+Worker, that deletes every row of every table except `stats` and `meta`,
+run by the keyholder at least a minute after setting lockdown, because
+in-flight `waitUntil` handlers may write for up to 30 seconds. It defends against the seized admins, not against a
 seized Cloudflare account: D1 keeps a 30-day point-in-time history (Time
 Travel) of every database that the account holder can restore. When the
 account itself is in doubt, the second step is `wrangler d1 delete` and

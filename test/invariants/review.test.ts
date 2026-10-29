@@ -368,6 +368,7 @@ describe('critical invariant 8: the review keeps nothing it does not need', () =
   });
 
   it('registers every review button under its own prefix, so the specs reach each one', () => {
-    expect(Object.values(REVIEW_PREFIXES)).toHaveLength(10);
+    // The review's ten, and the posted report's status card's two (a closure, a retraction).
+    expect(Object.values(REVIEW_PREFIXES)).toHaveLength(12);
   });
 });

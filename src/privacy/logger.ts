@@ -129,6 +129,29 @@ export const LOG_EVENTS = [
   'halt.cleared',
   'probe.invocation',
   'probe.fidelity',
+  // The closure and retraction unit (U6): a closure or a retraction
+  // ordered, then concluded (the post edited and the report finalized in
+  // one batch: src/broadcast/concluding.ts), or concluded on a post
+  // Telegram reports as gone (deleted by hand, say); an edit job whose
+  // report left its state, dropped; an edit that could not be made, its
+  // report flagged for a human; an edit whose conclusion a hold or a change
+  // overtook; a
+  // retraction's deletion of a young post that failed (the edit stands);
+  // the retention job's counts, and its alert of the jobs it abandoned
+  // (src/privacy/retention.ts); the monthly snapshot sent
+  // (src/broadcast/stats.ts).
+  'close.ordered',
+  'close.done',
+  'retract.ordered',
+  'retract.done',
+  'edit.post_gone',
+  'edit.stale',
+  'edit.flagged',
+  'edit.unconcluded',
+  'retract.not_deleted',
+  'retention.done',
+  'retention.abandoned',
+  'snapshot.sent',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 
@@ -149,9 +172,28 @@ export type ApiMethod = (typeof API_METHODS)[number];
 
 /**
  * The counts a line may carry. Each unit adds its own here: the deployed
- * probe's D1 queries and Bot API calls per invocation (src/probe.ts).
+ * probe's D1 queries and Bot API calls per invocation (src/probe.ts); the
+ * retention job's rows by path (src/privacy/retention.ts): drafts and
+ * prompts deleted, jobs abandoned, posted reports set to expire, reports
+ * finalized, finalized rows removed, idle reporter rows and old counter
+ * rows deleted.
  */
-export const COUNT_FIELDS = ['count', 'sent', 'failed', 'attempts', 'queries', 'apiCalls'] as const;
+export const COUNT_FIELDS = [
+  'count',
+  'sent',
+  'failed',
+  'attempts',
+  'queries',
+  'apiCalls',
+  'drafts',
+  'prompts',
+  'abandoned',
+  'expiring',
+  'finalized',
+  'removed',
+  'reporterRows',
+  'counterRows',
+] as const;
 export type CountField = (typeof COUNT_FIELDS)[number];
 
 /** Everything a line may carry besides its level and event. */
@@ -286,6 +328,14 @@ const RENDER: Readonly<Record<keyof LogFields, Render>> = {
   attempts: count,
   queries: count,
   apiCalls: count,
+  drafts: count,
+  prompts: count,
+  abandoned: count,
+  expiring: count,
+  finalized: count,
+  removed: count,
+  reporterRows: count,
+  counterRows: count,
 };
 
 const isEvent = (value: unknown): value is LogEvent => inList(LOG_EVENTS)(value);

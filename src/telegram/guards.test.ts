@@ -18,6 +18,7 @@ import {
   adminButton,
   isAdminCommand,
   isKeyholderCommand,
+  isKeyholderReply,
   isVenueAdminCommand,
   isVenueAdminReply,
   keyholderButton,
@@ -250,6 +251,21 @@ describe('the venue gates of the review', () => {
     const replied = toSomeoneElse.message?.reply_to_message;
     if (replied === undefined) throw new Error('no reply');
     const notTheBot = { ...toSomeoneElse, message: { ...toSomeoneElse.message, reply_to_message: { ...replied, from: { id: IDS.secondAdmin, is_bot: false, first_name: 'Admin' } } } };
+    expect(await holds(reply, notTheBot as typeof toSomeoneElse)).toBe(false);
+  });
+
+  it("isKeyholderReply: a keyholder's typed reply in their own chat to the bot's own message there", async () => {
+    const reply = isKeyholderReply(config);
+    expect(await holds(reply, privateMessage(IDS.keyholder, 'a correction', { replyToBot: 4 }))).toBe(true);
+    expect(await holds(reply, privateMessage(IDS.secondKeyholder, 'a correction', { replyToBot: 4 }))).toBe(true);
+    expect(await holds(reply, privateMessage(IDS.keyholder, 'a correction'))).toBe(false);
+    expect(await holds(reply, privateMessage(IDS.admin, 'a correction', { replyToBot: 4 }))).toBe(false);
+    expect(await holds(reply, privateMessage(IDS.keyholder, 'a correction', { replyToBot: 4, forwarded: true }))).toBe(false);
+    expect(await holds(reply, groupMessage(IDS.adminChat, IDS.keyholder, 'a correction', { replyToBot: 4 }))).toBe(false);
+    const toSomeoneElse = privateMessage(IDS.keyholder, 'a correction', { replyToBot: 4 });
+    const replied = toSomeoneElse.message?.reply_to_message;
+    if (replied === undefined) throw new Error('no reply');
+    const notTheBot = { ...toSomeoneElse, message: { ...toSomeoneElse.message, reply_to_message: { ...replied, from: { id: IDS.keyholder, is_bot: false, first_name: 'Keyholder' } } } };
     expect(await holds(reply, notTheBot as typeof toSomeoneElse)).toBe(false);
   });
 

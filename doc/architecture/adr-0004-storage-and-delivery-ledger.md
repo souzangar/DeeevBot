@@ -333,9 +333,84 @@ and where it refines the plan's wording it says so.
   card's deletion), plus one edit per remembered keyholder notice; a
   reconciliation run at its bounds stays under 30 subrequests of the
   invocation's 50.
-- The slots the closure and retention unit fills, no-ops until then:
-  `runRetention()`, `runRetentionNow()`, `runSnapshot()`, `finalize()` and
-  `EDIT_HANDLERS`.
+- The slots the closure and retention unit fills: `runRetention()`,
+  `runRetentionNow()`, `runSnapshot()`, `finalize()` and `EDIT_HANDLERS`
+  (below).
+
+### Closure, retraction, retention and the snapshot as built (unit U6)
+
+- The orders (`src/broadcast/closure.ts`, `retraction.ts`, registered by
+  `src/telegram/closing.ts` and the status card's buttons): `/close <id>
+  taken_down|no_result` (admins, in the venue, never under lockdown) moves
+  a posted report to `closing` with its outcome and enqueues its `edit`
+  job, in one batch bound to its post's message id, its live approval and
+  the switch; `/retract <id>` (admins in the venue, keyholders in their own
+  chat, under lockdown too) asks by a force-reply prompt in that chat
+  (`admin_prompts` kind `retraction`) for the correction, which must pass
+  the admin free-text policy and make a retracted post within 4096
+  characters with no link, then writes `correction_text` before the
+  conditional change to `retracting` and enqueues the job in one batch (an
+  admin's bound to the switch). A keyholder's reply is taken by the admin
+  surface's one keyholder reply (`keyholderReply()`), which works under
+  lockdown; an admin's by the review's one admin reply.
+- The edit jobs (`EDIT_HANDLERS`: `closeEdit`, `retractEdit`; the shared
+  machinery is `src/broadcast/concluding.ts`): the report read with its
+  live approval and the hold in one query; no edit for a report without
+  its approval record, its post id, its outcome or an accepted correction
+  (flagged for a human, the job's failure recorded); a closure reads /halt
+  and the switch again and does nothing under either. ONE editMessageText
+  of the report's own `post_message_id` in `BROADCAST_CHAT_ID`, without a
+  keyboard: closure appends the outcome line in both locales (the outcome
+  lines alone when the closed post would fail `postProblems()`, in practice
+  a post too long once they are appended, its targets being code text);
+  retraction
+  replaces the text with a fixed bilingual heading, the warning line and
+  the escaped correction, and deletes a post younger than 48 hours as
+  well. "Not modified" and "not found" are non-errors; a 429 and an
+  ambiguous answer are thrown for the runner to record and retry (an edit
+  is idempotent); any other refusal flags the report, alerts once and
+  leaves it closing or retracting with its data (a retraction whose young
+  post can still be deleted concludes instead). The success is ONE batch
+  (`concludeStatements()`, `src/broadcast/finalize.ts`): the terminal
+  status bound to the state, the approval, the post edited and, for a
+  closure, to no hold; then the finalization. A batch that a hold or a
+  change overtook concludes nothing; the next run finds the post "not
+  modified". After the commit: the keyholders' remembered notices edited to
+  "retracted" (a retraction; `showPosted()` now keeps them remembered after
+  the post for this) or forgotten (a closure); outside lockdown the status
+  card to the outcome without buttons; the report's prompts deleted from
+  their chats within 48 hours.
+- Finalization (`finalizationStatements()`): for a set of at most 50
+  reports in given terminal statuses and not finalized, every statement
+  bound to that: the aggregate row upserted from the report and its live
+  approval (the days by SQLite's `date()`, D1 parity tested), the approval,
+  the prompts and the jobs deleted, the merged rows deleted, every personal
+  field nulled, `data_deleted_at` set; a rejected report's rejection
+  counted off its references first (`rejectionDecayStatement()`).
+  `finalize()`, reconciliation's slot, takes closed, retracted and expired
+  rows alone, so it never reaches a closing or retracting one.
+- The retention job (`src/privacy/retention.ts`; `runRetention()` and
+  `runRetentionNow()`): the schedule of the retention rule, each step a
+  fixed number of statements (ten for a run with nothing to do, nine under
+  the switch or `/halt`, eight under the override), at most 50
+  finalizations, 50 expiries, 20 abandoned jobs, 5 prompt messages and 5
+  card edits a night; a failing step logged by class and the next run, a
+  storage failure stopping it; nothing in the venue under lockdown; no
+  expiry while locked down or halted, since its closure edit could not run
+  and the post could no longer be retracted (the next night without a hold
+  catches up).
+- The snapshot (`src/broadcast/stats.ts`; `runSnapshot()`): the previous
+  month's counts from `stats` alone, by the day of finalization, to the
+  keyholders in both locales and, unless locked down, to the venue;
+  `/stats [YYYY-MM]` and `/budget` read the same rows and the day's
+  counters.
+- The emergency wipe is `scripts/wipe.sh`, outside the Worker: `wrangler
+  d1 execute div-report --remote --command` with one DELETE for every
+  table but `stats` and `meta`, after the keyholder types the database's
+  name; `test/invariants/wipe.test.ts` pins the list to the schema and
+  runs it on a full store. The operations runbook (section 7) has the
+  procedure: lockdown first, a minute's wait, Time Travel, `wrangler d1
+  delete` as the second step, and the D1-refuses-queries case.
 
 ### The deployed probe (pending: an owner dependency)
 
@@ -503,3 +578,10 @@ Amended 2026-10-29 (Phase 3, unit U5, the audit's re-check): the deployed
 probe's one-time fidelity check of the text comparison against Telegram
 (step 6), and `/attach`'s two refusals, by text and by window, told apart
 to the operator and in the log.
+
+Amended 2026-10-29 (Phase 3, unit U6): "Closure, retraction, retention and
+the snapshot as built": the closure and retraction orders and their edit
+jobs with the shared conclusion, finalization as one bound batch with the
+merged rows deleted and a rejection counted off, the retention job's steps
+and bounds, the snapshot, `/stats` and `/budget`, and the emergency wipe as
+`scripts/wipe.sh`.

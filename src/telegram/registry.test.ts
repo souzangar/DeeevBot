@@ -3,9 +3,9 @@
 // handlers, over a real grammY Bot and the fake Bot API: an admin command
 // in the venue only and refused under lockdown; an admin button refused to
 // anyone but an admin, under lockdown and outside the venue; an admin's
-// reply to the bot in the venue; a keyholder's command and button in their
-// own chat, under lockdown too; what was registered, listed; and a
-// registration that could reach two handlers, refused.
+// reply to the bot in the venue; a keyholder's command, button and reply to
+// the bot in their own chat, under lockdown too; what was registered,
+// listed; and a registration that could reach two handlers, refused.
 import { Bot, type Context } from 'grammy';
 import { describe, expect, it } from 'vitest';
 import { fakeBotApi } from '../../test/fakes/bot-api';
@@ -36,6 +36,7 @@ const setup = (variables: Readonly<Record<string, string | undefined>> = {}) => 
   surface.adminReply(record('admin reply'));
   surface.keyholderCommand('keyprobe', record('keyholder command'));
   surface.keyholderButton('kh:pr:', record('keyholder button'));
+  surface.keyholderReply(record('keyholder reply'));
   const bot = new Bot(config.botToken, { botInfo: botInfoFor(config), client: clientOptions(telegram.fetch) });
   installTransformer(bot.api);
   bot.use(surface.composer);
@@ -143,6 +144,21 @@ describe('keyholderCommand and keyholderButton', () => {
   });
 });
 
+describe('keyholderReply', () => {
+  it("runs for a keyholder's typed reply to the bot in their own chat, under lockdown too, and for nothing else", async () => {
+    const { bot, ran, db, clock } = setup();
+    await bot.handleUpdate(privateMessage(IDS.keyholder, 'a correction', { replyToBot: 5 }));
+    await setLockdown(db, clock);
+    await bot.handleUpdate(privateMessage(IDS.secondKeyholder, 'a correction', { replyToBot: 5 }));
+    await bot.handleUpdate(privateMessage(IDS.keyholder, 'a correction'));
+    await bot.handleUpdate(privateMessage(IDS.keyholder, 'a correction', { replyToBot: 5, forwarded: true }));
+    await bot.handleUpdate(privateMessage(IDS.admin, 'a correction', { replyToBot: 5 }));
+    await bot.handleUpdate(privateMessage(IDS.reporter, 'a correction', { replyToBot: 5 }));
+    await bot.handleUpdate(groupMessage(IDS.adminChat, IDS.keyholder, 'a correction', { replyToBot: 5 }));
+    expect(ran).toEqual(['keyholder reply', 'keyholder reply', 'fell through', 'fell through', 'fell through', 'fell through', 'fell through']);
+  });
+});
+
 describe('registrations', () => {
   it('lists what was registered, by kind', () => {
     const { surface } = setup();
@@ -152,6 +168,7 @@ describe('registrations', () => {
       adminReplies: 1,
       keyholderCommands: ['keyprobe'],
       keyholderButtons: ['kh:pr:'],
+      keyholderReplies: 1,
     });
   });
 

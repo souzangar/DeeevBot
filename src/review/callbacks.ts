@@ -15,6 +15,9 @@
 // keyholder notice), and the registry registers each prefix once, so the
 // always-run lockdown spec drives every one. Every form stays within
 // Telegram's 64 bytes (tested): the longest, a link-mode choice, is 50.
+// The posted report's status card carries the closure unit's (U6): a
+// closure with its outcome, taken down or closed without result
+// (CLOSE_OUTCOMES), and a retraction, which asks for the correction.
 import { isId } from '../db/ids';
 import { isCategory, LINK_MODES, type Category, type LinkMode } from './categories';
 
@@ -24,6 +27,13 @@ export type RejectReason = (typeof REJECT_REASONS)[number];
 
 export const isRejectReason = (value: unknown): value is RejectReason =>
   typeof value === 'string' && (REJECT_REASONS as readonly string[]).includes(value);
+
+/** The outcomes an admin closes a posted report with; the 90-day expiry is the retention job's own. */
+export const CLOSE_OUTCOMES = ['taken_down', 'no_result'] as const;
+export type CloseOutcome = (typeof CLOSE_OUTCOMES)[number];
+
+export const isCloseOutcome = (value: unknown): value is CloseOutcome =>
+  typeof value === 'string' && (CLOSE_OUTCOMES as readonly string[]).includes(value);
 
 const isLinkMode = (value: unknown): value is LinkMode =>
   typeof value === 'string' && (LINK_MODES as readonly string[]).includes(value);
@@ -39,7 +49,9 @@ export type ReviewAction =
   | { readonly kind: 'confirm_route'; readonly reportId: string }
   | { readonly kind: 'cancel'; readonly reportId: string; readonly approvalId: string }
   | { readonly kind: 'block'; readonly reportId: string }
-  | { readonly kind: 'back'; readonly reportId: string };
+  | { readonly kind: 'back'; readonly reportId: string }
+  | { readonly kind: 'close'; readonly reportId: string; readonly outcome: CloseOutcome }
+  | { readonly kind: 'retract'; readonly reportId: string };
 
 export type ReviewActionKind = ReviewAction['kind'];
 
@@ -55,6 +67,8 @@ export const REVIEW_PREFIXES = Object.freeze({
   cancel: 'rv:cn:',
   block: 'rv:bl:',
   back: 'rv:bk:',
+  close: 'rv:cl:',
+  retract: 'rv:rt:',
 } as const satisfies Record<ReviewActionKind, string>);
 
 /** A press of a keyholder button on an approval notice. */
@@ -85,6 +99,8 @@ export function reviewData(action: ReviewAction): string {
       return `${prefix}${action.reportId}:${action.reason}`;
     case 'cancel':
       return `${prefix}${action.reportId}:${action.approvalId}`;
+    case 'close':
+      return `${prefix}${action.reportId}:${action.outcome}`;
     default:
       return `${prefix}${action.reportId}`;
   }
@@ -117,6 +133,8 @@ export function parseReviewData(data: string): ReviewAction | null {
         return parts.length === 2 && isRejectReason(first) ? { kind, reportId, reason: first } : null;
       case 'cancel':
         return parts.length === 2 && isId(first) ? { kind, reportId, approvalId: first } : null;
+      case 'close':
+        return parts.length === 2 && isCloseOutcome(first) ? { kind, reportId, outcome: first } : null;
       default:
         return parts.length === 1 ? { kind, reportId } : null;
     }

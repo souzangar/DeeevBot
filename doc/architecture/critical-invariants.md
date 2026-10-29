@@ -236,7 +236,33 @@ bypasses; and a Lockdown tapped on the notice while the approval's batch
 is on its way leaving nothing approved), and the review's failure paths,
 the approval's unreached, unsent and unreadable notices and batches and
 one that committed after failing included, to
-`test/invariants/handler-logs.test.ts`. The remaining tests are
+`test/invariants/handler-logs.test.ts`. Unit U5, the scheduler, added
+`test/invariants/post.test.ts`. Unit U6, closure, retraction, retention,
+the snapshot and the wipe, added `test/invariants/closure.test.ts` (rule
+1: no closure or retraction edit, and no order, for a report without its
+live approval record; under every failure class of the edit the report
+keeps `closing` or `retracting` with its post id and its correction,
+reconciliation included, and only the edit's success writes the terminal
+status; every edit reaches that report's own post; rule 4: every edit
+with previews off and HTML, no link off the lists, a correction holding a
+link, a domain, a mention or a phone number never reaching the channel;
+rule 5: over a report's whole life the channel gets its post and its
+edits alone, the closure messages nobody, the retraction's only other
+messages are the keyholder's own prompt and answer, and after the
+retraction nothing about the report reaches the channel and its button
+counts nothing), `test/invariants/retention.test.ts` (rule 8: each
+deletion path of the schedule at its moment and not before; every
+terminal path leaves, after the night's run, no row holding the report's
+id but its aggregate row, whose columns are exactly the aggregate set; at
+most 50 finalizations a night; the job runs under either lockdown layer
+and on a lockdown) and `test/invariants/wipe.test.ts` (rule 8: the wipe
+script deletes every table but `stats` and `meta`, each once, without a
+condition, against the bot's own database after a typed confirmation, and
+on a full store leaves the aggregate rows and `meta` alone), and extended
+the lockdown spec (a keyholder's `/retract` and `/stats` working under
+either layer, the retraction's edit running, the admin's closure commands
+and buttons refused, retention running, the snapshot kept from the venue)
+and the log spec (the closure unit's failure paths). The remaining tests are
 written in the same change as the module that implements each rule, under
 the module map in ADR 0006; a rule whose test is still missing is listed
 in that change's commit body.

@@ -26,9 +26,10 @@ reviewed against the plan recorded in
 `doc/audits/2026-10-28-planning-review.md`; the core modules (errors,
 configuration, the redacting logger, i18n, the clock) and the storage
 (the SQL port with its D1 and node:sqlite adapters, the D1 migrations)
-exist, as do the Telegram wiring, the intake, the admin review and the
-scheduler with its single post; the closure and retention unit, the
-Node port and the hardening follow. On 2026-10-28 the owner narrowed the scope: no
+exist, as do the Telegram wiring, the intake, the admin review, the
+scheduler with its single post, and the closure unit (closure,
+retraction, retention, the monthly snapshot, the emergency wipe); the
+Node port and the go-live unit follow. On 2026-10-28 the owner narrowed the scope: no
 direct-message broadcasts and no member or reporter identity in storage;
 an approved report is posted once into a configured group or channel
 (ADR 0004, ADR 0006).
@@ -48,6 +49,7 @@ npm run dev                       # wrangler dev; local secrets in .dev.vars (te
 npm run dry-run                   # bundle the Worker into .wrangler/dry-run, offline, no account
 npm run probe:dry-run             # bundle the deployed probe (src/probe.ts, wrangler.probe.jsonc), offline
 npm run migrate:local             # apply the D1 migrations in migrations/ to the local database
+scripts/wipe.sh [--local]         # the keyholder's emergency wipe (every table but stats and meta); never run by the gate
 # Stack-independent:
 bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline, globs completeness, tripwire patterns)
 bash selftest-okf/run-all.sh      # OKF docs-gate contracts
@@ -77,7 +79,7 @@ then `src/db/` and `migrations/`:
 | `src/telegram/` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | yes (2, 4) |
 | `src/auth/` | the allowlist gate, the membership check | yes (2, 4) |
 | `src/review/` | report state machine, categories and routing table, approval records, grace and cancel | yes (1, 3, 7) |
-| `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains | yes (1, 5) |
+| `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains, the finalization that leaves only the aggregate row, the counts | yes (1, 5, 8) |
 | `src/privacy/` | HMAC references, the redacting logger, the retention job | yes (6, 8) |
 | `src/config/` | the zod schema and loaders | yes (2, 6) |
 | `src/db/` | the `SqlDb` port and its adapters | yes (1, 8) |
@@ -229,7 +231,11 @@ amended the same day for the single-post model:
   `posting` without a message id, the keyholders are alerted, and a human
   runs `/attach` or `/repost` after checking the channel. A 403 "bot was
   blocked by the user" or a 400 "chat not found" on a reply is logged by
-  class and ignored (there is no subscriber to remove).
+  class and ignored (there is no subscriber to remove). An edit job (a
+  closure or retraction edit of the post) that meets a 429 is rescheduled
+  and sets the global pause; one that meets a 400 or 403 flags the report,
+  alerts once and retries with back-off until the retention job abandons
+  it at 20 attempts; a post Telegram reports as gone concludes the job.
 - **What is never swallowed.** No empty `catch`, no log-and-continue on a
   failure that changes state; a job failure is recorded on its job and
   never aborts the tick; a storage failure, a daily-cap error included,
@@ -248,7 +254,8 @@ amended the same day for the single-post model:
   beside the module under `src/`, plain node, no network, mocks at the
   boundary; **workers** is `test/workers/*.test.ts`, run in the Workers
   runtime by `@cloudflare/vitest-plugin` with the local D1 binding, for
-  the Cloudflare adapters only; **invariants**
+  the Cloudflare adapters and the D1 parity of the atomic batches (the
+  submit, the approval, the finalization); **invariants**
   is `test/invariants/*.test.ts`, the always-run specs the commit gate runs
   on every commit, one per stated "must not". Fixture values are never
   secret-shaped (the secret-shape scan reads test files too). No coverage

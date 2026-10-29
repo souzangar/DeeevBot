@@ -23,13 +23,21 @@
 //   pass.
 // - The scheduler's commands, /attach, /repost, /halt and /resume in the
 //   venue and /attach and /halt in a keyholder's chat, register on this same
-//   surface (src/telegram/posting.ts), so one surface holds every
-//   registration and its checks.
+//   surface (src/telegram/posting.ts), and so do the closure unit's, /close,
+//   /retract, /stats and /budget in the venue and /retract and /stats with
+//   the reply to a retraction prompt in a keyholder's chat
+//   (src/telegram/closing.ts), so one surface holds every registration and
+//   its checks. The posted report's status card carries the closure unit's
+//   buttons (Taken down, Closed without result, Retract), and an admin's
+//   reply in the venue answers a retraction prompt as well as the
+//   approval's (src/broadcast/closure.ts, retraction.ts).
 // An admin's command typed in a private chat is not one of these: it falls
 // to the intake's unknown-command answer, deleted on receipt. Nothing here
 // ever messages a reporter, a member or the channel.
 import type { Context, Middleware } from 'grammy';
+import { closeFromCard } from '../broadcast/closure';
 import { lockdownNow, type RetentionPass } from '../broadcast/maintenance';
+import { answerRetraction, retractFromCard } from '../broadcast/retraction';
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import { isId } from '../db/ids';
@@ -56,6 +64,7 @@ import { readPrompt } from '../review/prompts';
 import { reject, showReasons } from '../review/reject';
 import { confirmRoute, showRouting } from '../review/route';
 import { checkedText, type Actor, type Pressed, type PressOutcome, type ReviewDeps } from '../review/venue';
+import { CLOSURE_ADMIN_COMMANDS, CLOSURE_KEYHOLDER_COMMANDS, registerClosure } from './closing';
 import { POSTING_ADMIN_COMMANDS, POSTING_KEYHOLDER_COMMANDS, registerPosting } from './posting';
 import { adminSurface, type AdminSurface } from './registry';
 import { answerPress } from './respond';
@@ -75,10 +84,10 @@ export interface ReviewFeatureDeps {
 export const REVIEW_ADMIN_COMMANDS = ['open', 'block', 'unblock', 'card'] as const;
 /** The keyholders' commands of the review, in their own chat. */
 export const REVIEW_KEYHOLDER_COMMANDS = ['open'] as const;
-/** Every admin command the surface registers, in order: the review's, then the scheduler's. */
-export const ADMIN_COMMANDS = [...REVIEW_ADMIN_COMMANDS, ...POSTING_ADMIN_COMMANDS] as const;
+/** Every admin command the surface registers, in order: the review's, the scheduler's, then the closure unit's. */
+export const ADMIN_COMMANDS = [...REVIEW_ADMIN_COMMANDS, ...POSTING_ADMIN_COMMANDS, ...CLOSURE_ADMIN_COMMANDS] as const;
 /** Every keyholder command the surface registers, in order. */
-export const KEYHOLDER_COMMANDS = [...REVIEW_KEYHOLDER_COMMANDS, ...POSTING_KEYHOLDER_COMMANDS] as const;
+export const KEYHOLDER_COMMANDS = [...REVIEW_KEYHOLDER_COMMANDS, ...POSTING_KEYHOLDER_COMMANDS, ...CLOSURE_KEYHOLDER_COMMANDS] as const;
 
 /**
  * Who acts: the update's own sender, whom the gates checked. In the venue
@@ -144,6 +153,10 @@ function runReview(deps: ReviewDeps, actor: Actor, action: ReviewAction, pressed
       return blockFromCard(deps, actor, action.reportId, pressed);
     case 'back':
       return goBack(deps, actor, action.reportId, pressed);
+    case 'close':
+      return closeFromCard(deps, actor, action.reportId, action.outcome, pressed);
+    case 'retract':
+      return retractFromCard(deps, actor, action.reportId, pressed);
   }
 }
 
@@ -202,6 +215,7 @@ export function reviewSurface(deps: ReviewFeatureDeps): AdminSurface {
     await reply(ctx, await openReportsText(deps.db, keyholder(ctx).locale));
   });
   registerPosting(surface, { config: deps.config, db: deps.db, clock: deps.clock, logger: deps.logger, notices });
+  registerClosure(surface, { config: deps.config, db: deps.db, clock: deps.clock, logger: deps.logger, notices });
 
   for (const kind of Object.keys(REVIEW_PREFIXES) as ReviewActionKind[]) {
     surface.adminButton(
@@ -244,7 +258,11 @@ export function reviewSurface(deps: ReviewFeatureDeps): AdminSurface {
     if (message === undefined || replied === undefined) return next();
     const prompt = await readPrompt(deps.db, message.chat.id, replied.message_id);
     if (prompt === null || prompt.adminId !== message.from?.id) return next();
-    const taken = await answerPrompt(flow(ctx), venue(ctx), prompt, { messageId: message.message_id, text: message.text });
+    const reply = { messageId: message.message_id, text: message.text };
+    const actor = venue(ctx);
+    const taken =
+      (await answerPrompt(flow(ctx), actor, prompt, reply)) ||
+      (await answerRetraction(flow(ctx), { id: actor.id, role: 'admin', locale: deps.config.venueLocale, chatId: deps.config.adminChatId }, prompt, reply));
     if (!taken) await next();
   });
 

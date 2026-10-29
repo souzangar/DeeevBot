@@ -158,11 +158,11 @@ a pending report expires after 30 days (`expired`, outcome
 
 | Module | Holds |
 |---|---|
-| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers, keyholder alerts |
+| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers (the closure unit's in `closing.ts`), keyholder alerts |
 | `src/auth/` | `isAdmin`, `isKeyholder`, the membership check with the member definition, the two-layer lockdown check |
 | `src/review/` | categories and routing as data, the review card, the routing card and the status card, the report state machine with its conditional updates (approve, cancel, reject, route), approval records, grace and cancel, the admin prompts, the post's renderer, the keyholders' approval notice, the block list, the admin free-text validator |
-| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render |
-| `src/privacy/` | HMAC references, log redaction, the retention job, the emergency wipe |
+| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render; closure and retraction (`closure.ts`, `retraction.ts`, their shared edit and conclusion in `concluding.ts`), finalization (`finalize.ts`), the counts of `/stats`, `/budget` and the monthly snapshot (`stats.ts`) |
+| `src/privacy/` | HMAC references, log redaction, the retention job (`retention.ts`); the emergency wipe is `scripts/wipe.sh`, a wrangler invocation outside the Worker |
 | `src/config/` | the zod schema and loaders (a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap is refused) |
 | `src/db/` | the `SqlDb` port and its D1 and node:sqlite adapters, the Node migrations runner, the random ids |
 | `migrations/`, at the repository root | the D1 SQL migrations (wrangler's `migrations_dir`) |
@@ -178,8 +178,10 @@ a pending report expires after 30 days (`expired`, outcome
 `*src/privacy/*`, `*src/config/*`, `*src/db/*`, `*migrations/*` (the root
 migrations directory), `*src/platforms/*` (the link policy lives there:
 rule 4), `*src/worker.ts` (the Worker entry) and `*src/node.ts` (the Node
-port's entry, when it lands). `src/errors/` and `src/i18n/` are not
-critical.
+port's entry, when it lands); since then also `*src/probe.ts` (the deployed
+probe, unit U5) and `*scripts/wipe.sh` (the emergency wipe, an operator
+script outside `src/`: rule 8's wipe clause, unit U6). `src/errors/` and
+`src/i18n/` are not critical.
 
 ### Tripwire patterns (Phase 2)
 

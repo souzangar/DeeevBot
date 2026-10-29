@@ -36,7 +36,8 @@
 //    - a Message: ONE batch writes `post_message_id`, `posted_at` and
 //      status `posted`, clears the attention flags and deletes the job;
 //      then the keyholders' remembered notices are edited to "posted"
-//      without links, the status card to "posted", and the review card,
+//      without links (and still remembered, for a retraction to edit them
+//      again), the status card to "posted", and the review card,
 //      which shows the links, is deleted (edited to the outcome when it
 //      cannot be). A record that fails is a storage failure, which stops
 //      the run: the keyholders are first alerted with the message id, so
@@ -347,14 +348,19 @@ async function showNote(deps: PostDeps, facts: PostFacts, status: 'approved' | '
 
 /**
  * After a post is recorded, by the run or by /attach: the keyholders'
- * remembered notices edited to "posted" without links; then, unless the bot
- * is locked down (the venue is compromised by assumption then), the status
- * card edited to "posted" and the review card, which shows the links,
- * deleted (edited to the outcome when it cannot be). Never throws.
+ * remembered notices edited to "posted" without links, and remembered
+ * still, so the post's retraction edits them again
+ * (src/broadcast/concluding.ts); then, unless the bot is locked down (the
+ * venue is compromised by assumption then), the status card edited to
+ * "posted", with its closure and retraction buttons, and the review card,
+ * which shows the links, deleted (edited to the outcome when it cannot be).
+ * Never throws.
  */
 export async function showPosted(deps: PostDeps, facts: PostFacts, locked: boolean): Promise<void> {
   try {
+    const delivered = deps.notices.recall(facts.approvalId);
     await editNotices(deps, facts.approvalId, postedNoticeText(facts.reportId));
+    if (delivered.length > 0) deps.notices.remember(facts.approvalId, delivered);
   } catch (error) {
     deps.logger.logError('review.notice_not_edited', error, { reportId: facts.reportId });
   }

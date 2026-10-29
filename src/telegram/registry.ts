@@ -20,7 +20,11 @@
 //   lockdown, and is never deleted on receipt: the keyholder's chat is
 //   their operations log;
 // - keyholderButton(prefix): pressed by an id on KEYHOLDER_IDS on a message
-//   in their own chat (keyholderButton); it works under lockdown.
+//   in their own chat (keyholderButton); it works under lockdown;
+// - keyholderReply(): a keyholder's typed reply in their own private chat to
+//   one of the bot's own messages there (isKeyholderReply; anyone else's
+//   falls through), the retraction's prompt among them; it works under
+//   lockdown.
 // The gates are src/telegram/guards.ts; authority is the update's own
 // `from.id`, re-checked on every update. A button prefix is registered
 // once, and no prefix may be a prefix of another, so a press reaches one
@@ -36,6 +40,7 @@ import { AppError } from '../errors/app-error';
 import {
   adminButton,
   isKeyholderCommand,
+  isKeyholderReply,
   isVenueAdminCommand,
   isVenueAdminReply,
   keyholderButton,
@@ -55,6 +60,7 @@ export interface SurfaceRegistrations {
   readonly adminReplies: number;
   readonly keyholderCommands: readonly string[];
   readonly keyholderButtons: readonly string[];
+  readonly keyholderReplies: number;
 }
 
 export interface AdminSurface {
@@ -63,6 +69,7 @@ export interface AdminSurface {
   adminReply(handler: Middleware<Context>): void;
   keyholderCommand(name: string, handler: Middleware<Context>): void;
   keyholderButton(prefix: string, handler: Middleware<Context>): void;
+  keyholderReply(handler: Middleware<Context>): void;
   /** The composer the registrations went into, for createBot()'s slot. */
   readonly composer: Composer<Context>;
   registrations(): SurfaceRegistrations;
@@ -81,6 +88,7 @@ export function adminSurface(deps: SurfaceDeps): AdminSurface {
   const keyholderCommands: string[] = [];
   const keyholderButtons: string[] = [];
   let adminReplies = 0;
+  let keyholderReplies = 0;
   const venue = (): 'fa' | 'en' => deps.config.venueLocale;
 
   const commandName = (name: string, taken: readonly string[]): string => {
@@ -118,6 +126,10 @@ export function adminSurface(deps: SurfaceDeps): AdminSurface {
       composer.callbackQuery(buttonPrefix(prefix), keyholderButton(deps.config), handler);
       keyholderButtons.push(prefix);
     },
+    keyholderReply: (handler) => {
+      composer.filter(isKeyholderReply(deps.config)).on('message', handler);
+      keyholderReplies += 1;
+    },
     composer,
     registrations: () => ({
       adminCommands: [...adminCommands],
@@ -125,6 +137,7 @@ export function adminSurface(deps: SurfaceDeps): AdminSurface {
       adminReplies,
       keyholderCommands: [...keyholderCommands],
       keyholderButtons: [...keyholderButtons],
+      keyholderReplies,
     }),
   };
 }

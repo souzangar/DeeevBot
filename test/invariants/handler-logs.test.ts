@@ -14,7 +14,13 @@
 // alert failing; an edit job failing; the lockdown alert reaching a
 // keyholder short; a storage failure that stops a run, and its alert; any
 // other failure of a run; /attach's refusals and a probe it cannot undo; a
-// lockdown's retention pass failing; an unknown cron; the probe's counts).
+// lockdown's retention pass failing; an unknown cron; the probe's counts),
+// and the closure unit (a closure's edit refused, its alert and its status
+// card failing; a retraction concluded with its deletions and its notice's
+// edit failing; a stale job; a conclusion a hold overtook; the retention
+// job's steps, its abandon alert, its prompt deletions and card edits
+// failing; the snapshot's sends failing; reconciliation's finalization
+// failing; a keyholder's reply whose store fails).
 // Each is driven with updates and texts that carry a reported URL, a
 // comment, the reporter's, the admins', the keyholders' and the chats'
 // Telegram ids, and with Bot API failures whose GrammyError payloads carry
@@ -42,7 +48,14 @@ import { sql } from '../../src/db/sql';
 import { IDS, TEST_VARIABLES } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
 import type { RecordedLine } from '../fakes/logger';
-import { plantApproved, TICK_AT, tickHarness, type TickHarness } from '../support/tick-harness';
+import { plantApproved, plantPosted, TICK_AT, tickHarness, type TickHarness } from '../support/tick-harness';
+import { orderClosure } from '../../src/broadcast/closure';
+import { runSnapshot } from '../../src/broadcast/maintenance';
+import { retention } from '../../src/privacy/retention';
+import { createPrompt } from '../../src/review/prompts';
+import { insertApproval } from '../support/review-rows';
+import type { SqlDb, SqlText, SqlValue } from '../../src/db/sql';
+import type { Update } from 'grammy/types';
 import { attachPost } from '../../src/broadcast/attach';
 import { enqueueEditStatement } from '../../src/broadcast/jobs';
 import { lockdownNow } from '../../src/broadcast/maintenance';
@@ -91,6 +104,14 @@ const ALLOWED_KEYS = new Set([
   'attempts',
   'queries',
   'apiCalls',
+  'drafts',
+  'prompts',
+  'abandoned',
+  'expiring',
+  'finalized',
+  'removed',
+  'reporterRows',
+  'counterRows',
   'unknownFields',
 ]);
 
@@ -491,6 +512,152 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
       'edit.unreadable',
       'retention.failed',
       'probe.invocation',
+    ]) {
+      expect(events.has(event), event).toBe(true);
+    }
+    expectClean(lines);
+  });
+
+  it('the closure unit, when its edits, deletions, alerts, store and sends fail', async () => {
+    const TEXT = `<b>A post</b>\n<code>${REPORTED_URL}</code>\n${COMMENT}`;
+    const MINUTE = 60_000;
+    const DAY = 86_400_000;
+    const lines: RecordedLine[] = [];
+    const events = new Set<string>();
+    const keep = (harness: BotHarness): void => {
+      lines.push(...harness.log.lines);
+      for (const record of harness.log.records()) events.add(String(record.event));
+    };
+    const promptOf = (harness: BotHarness, chatId: number) =>
+      harness.telegram.messagesIn(chatId).filter((message) => (message.reply_markup as { force_reply?: boolean } | undefined)?.force_reply === true).at(-1);
+    const keyholderReply = async (harness: BotHarness, replyTo: number, text: string): Promise<void> => {
+      const messageId = harness.telegram.receive(IDS.keyholder, { text });
+      const update = privateMessage(IDS.keyholder, text, { replyToBot: replyTo });
+      await harness.send({ ...update, message: { ...update.message, message_id: messageId } } as Update);
+    };
+    const failing = (pick: (text: SqlText) => boolean, error: () => Error) => (db: SqlDb): SqlDb => ({
+      ...db,
+      batch: (statements: readonly SqlStatement[]) => (pick(statements[0]?.sql ?? ('' as SqlText)) ? Promise.reject(error()) : db.batch(statements)),
+    });
+
+    // A closure from the venue, its edit refused by a GrammyError carrying the text and the chat id; its alert and status card failing too.
+    const refused = tickHarness();
+    const closing = await plantPosted(refused, { text: TEXT });
+    await refused.send(groupMessage(IDS.adminChat, IDS.admin, `/close ${closing.reportId} taken_down`));
+    refused.telegram.fail({ method: 'editMessageText', chatId: IDS.broadcastChannel }, FAILURES.chatNotFound);
+    refused.telegram.fail({ chatId: IDS.keyholder }, FAILURES.cantInitiateConversation);
+    refused.telegram.fail({ chatId: IDS.adminChat }, FAILURES.botBlocked);
+    await refused.run(TICK_AT + MINUTE);
+    keep(refused);
+
+    // A keyholder's retraction concluded: the prompt's, the reply's and the young post's deletions and the notice's edit failing.
+    const retracted = tickHarness();
+    const young = await plantPosted(retracted, { text: TEXT });
+    retracted.notices.remember(young.approvalId, [{ chatId: IDS.secondKeyholder, messageId: 2 }]);
+    await retracted.send(privateMessage(IDS.keyholder, `/retract ${young.reportId}`));
+    retracted.telegram.fail({ method: 'deleteMessage' }, FAILURES.messageCantBeDeleted);
+    retracted.telegram.fail({ method: 'editMessageText', chatId: IDS.secondKeyholder }, FAILURES.serverError);
+    await keyholderReply(retracted, promptOf(retracted, IDS.keyholder)?.message_id ?? 0, 'The admins were wrong about this account.');
+    await retracted.run(TICK_AT + MINUTE);
+    keep(retracted);
+
+    // A stale job dropped, a closure concluded, and a conclusion a /halt overtook between the edit and its batch.
+    const CONCLUDE = (text: SqlText): boolean => String(text).startsWith('UPDATE reports SET status = ?, closed_at');
+    let halt = false;
+    const overtaken = tickHarness({
+      store: (db) => ({
+        ...db,
+        batch: async (statements: readonly SqlStatement[]) => {
+          if (halt && CONCLUDE(statements[0]?.sql ?? ('' as SqlText))) await db.run(sql`INSERT INTO meta (key, value) VALUES ('halted', 1) ON CONFLICT (key) DO NOTHING`);
+          return db.batch(statements);
+        },
+      }),
+    });
+    const stale = await insertReport(overtaken.db, { status: 'posted', posting_started_at: 1, posted_at: 2, post_message_id: 66 });
+    await overtaken.db.run(sql`INSERT INTO jobs (id, kind, report_id, due_at, payload, attempts, created_at) VALUES ('stalejobxxxxxxxxxxxx', 'edit', ?, 1, '{"action":"close"}', 0, 1)`, [stale]);
+    const concluded = await plantPosted(overtaken, { text: TEXT });
+    await orderClosure(overtaken.deps, concluded.reportId, 'no_result');
+    await overtaken.run(TICK_AT + MINUTE);
+    const held = await plantPosted(overtaken, { text: TEXT });
+    await orderClosure(overtaken.deps, held.reportId, 'taken_down');
+    halt = true;
+    await overtaken.run(TICK_AT + 2 * MINUTE);
+    keep(overtaken);
+
+    // A closure whose post Telegram reports as gone, by a GrammyError carrying the text and the chat id.
+    const gone = tickHarness();
+    const deleted = await plantPosted(gone, { text: TEXT });
+    await orderClosure(gone.deps, deleted.reportId, 'no_result');
+    gone.telegram.fail({ method: 'editMessageText', chatId: IDS.broadcastChannel }, FAILURES.messageToEditNotFound, 1);
+    await gone.run(TICK_AT + MINUTE);
+    keep(gone);
+
+    // The retention job: a step failing by an error carrying the URL and an id; its abandon alert reaching nobody; a prompt's message and an expired card that cannot be touched.
+    const at = Date.UTC(2027, 2, 1, 0, 15);
+    const nightly = tickHarness({
+      store: (db) => ({
+        ...db,
+        run: (text: SqlText, params?: readonly SqlValue[]) =>
+          String(text).startsWith('DELETE FROM drafts') ? Promise.reject(new TypeError(`a bug about ${REPORTED_URL} for ${IDS.reporter}`)) : db.run(text, params),
+      }),
+    });
+    const abandoned = await insertReport(nightly.db, { status: 'posted', created_at: at - 10 * DAY, posting_started_at: at - 9 * DAY, posted_at: at - 9 * DAY, post_message_id: 67 });
+    await insertApproval(nightly.db, abandoned);
+    await nightly.db.run(sql`UPDATE reports SET status = 'closing' WHERE id = ?`, [abandoned]);
+    await nightly.db.run(sql`INSERT INTO jobs (id, kind, report_id, due_at, payload, attempts, created_at) VALUES ('abandonedjobxxxxxxxx', 'edit', ?, ?, '{"action":"close"}', 20, 1)`, [abandoned, at]);
+    const expiring = await insertReport(nightly.db, { created_at: at - 31 * DAY, card_message_id: 68, comment: COMMENT, url: REPORTED_URL });
+    nightly.telegram.seedMessage(IDS.adminChat, { message_id: 68, text: `the card of ${REPORTED_URL}` });
+    nightly.telegram.seedMessage(IDS.adminChat, { message_id: 69, text: 'a prompt' });
+    await createPrompt(nightly.db, { chatId: IDS.adminChat, promptMessageId: 69, adminId: IDS.admin, reportId: expiring, kind: 'recommended_comment', category: 'harassment', linkMode: 'account', createdAt: at - 30 * 3_600_000 });
+    for (const keyholder of nightly.config.keyholderIds) nightly.telegram.fail({ chatId: keyholder }, FAILURES.botBlocked);
+    nightly.telegram.fail({ chatId: IDS.adminChat }, FAILURES.serverError);
+    nightly.clock.set(at);
+    await retention(nightly.deps, at);
+    keep(nightly);
+
+    // The monthly snapshot, its sends failing.
+    const monthly = tickHarness();
+    monthly.telegram.fail({ method: 'sendMessage' }, FAILURES.botBlocked);
+    await runSnapshot(monthly.deps, Date.UTC(2027, 1, 1, 6, 0));
+    keep(monthly);
+
+    // Reconciliation's finalization failing by an error carrying the URL and a comment.
+    const unfinalized = tickHarness({ store: failing((text) => String(text).startsWith('INSERT INTO stats'), () => new TypeError(`${REPORTED_URL} ${COMMENT}`)) });
+    await insertReport(unfinalized.db, { status: 'closed', posting_started_at: 1, posted_at: 2, post_message_id: 70 });
+    await unfinalized.run(Date.UTC(2027, 0, 15, 12, 15));
+    keep(unfinalized);
+
+    // A keyholder's reply whose store fails by an error carrying the URL.
+    const replyFails = harnessOver(
+      failing((text) => String(text).startsWith('UPDATE reports SET correction_text'), () => new AppError('STORAGE_FAILURE', `the correction of ${REPORTED_URL}`)),
+    );
+    const target = await insertReport(replyFails.db, { status: 'posted', posting_started_at: 1, posted_at: 2, post_message_id: 71 });
+    await insertApproval(replyFails.db, target);
+    await replyFails.send(privateMessage(IDS.keyholder, `/retract ${target}`));
+    await keyholderReply(replyFails, promptOf(replyFails, IDS.keyholder)?.message_id ?? 0, 'The admins were wrong about this account.');
+    keep(replyFails);
+
+    for (const event of [
+      'close.ordered',
+      'close.done',
+      'edit.flagged',
+      'edit.failed',
+      'edit.stale',
+      'edit.unconcluded',
+      'edit.post_gone',
+      'alert.failed',
+      'review.message_not_edited',
+      'review.message_not_deleted',
+      'review.notice_not_edited',
+      'retract.ordered',
+      'retract.done',
+      'retract.not_deleted',
+      'retention.failed',
+      'retention.abandoned',
+      'retention.done',
+      'snapshot.sent',
+      'finalize.failed',
+      'update.failed',
     ]) {
       expect(events.has(event), event).toBe(true);
     }

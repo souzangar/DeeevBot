@@ -2,14 +2,15 @@
 // The scheduler's maintenance slots and the one lockdown entry (critical
 // invariants 2 and 8; the MVP plan, sections 2 and 4, "Retention",
 // "Reconciliation", "Lockdown and wipe"):
-// - the slots the closure and retention unit (U6) fills, each a no-op
-//   until then: runRetention(), the nightly retention job the run starts at
-//   00:15 UTC, under lockdown too, since it reduces exposure;
-//   runRetentionNow(), the immediate pass a lockdown triggers;
-//   runSnapshot(), the monthly stats snapshot, on the first day at 06:00
-//   UTC; finalize(), a terminal report's finalization batch, which
-//   reconciliation calls for a closed, retracted or expired row whose
-//   finalization never landed (src/broadcast/reconcile.ts);
+// - the slots the closure and retention unit (U6) fills: runRetention(),
+//   the nightly retention job the run starts at 00:15 UTC, under lockdown
+//   too, since it reduces exposure (src/privacy/retention.ts);
+//   runRetentionNow(), the immediate pass a lockdown triggers, the same job
+//   at the clock's now; runSnapshot(), the monthly stats snapshot, on the
+//   first day at 06:00 UTC (src/broadcast/stats.ts); finalize(), a
+//   terminal report's finalization batch, which reconciliation calls for a
+//   closed, retracted or expired row whose finalization never landed
+//   (src/broadcast/reconcile.ts, src/broadcast/finalize.ts);
 // - lockdownNow(), the ONE function both lockdown entry points call, a
 //   keyholder's /lockdown (src/telegram/commands.ts) and the Lockdown
 //   button of an approval notice (src/telegram/review.ts): the switch set
@@ -24,7 +25,10 @@ import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import type { SqlDb } from '../db/sql';
 import type { Logger } from '../privacy/logger';
+import { retention } from '../privacy/retention';
 import type { BotApiPort } from '../telegram/bot-api-port';
+import { finalizeTerminal } from './finalize';
+import { snapshot } from './stats';
 
 /** What a maintenance pass works with: the bot's api, the configuration, the store, the clock, the logger. */
 export interface MaintenanceDeps {
@@ -38,20 +42,25 @@ export interface MaintenanceDeps {
 /** An immediate retention pass. */
 export type RetentionPass = (deps: MaintenanceDeps) => Promise<void>;
 
-/** The retention job of the run at `now` (U6 fills it; a no-op until then). */
-export const runRetention: (deps: MaintenanceDeps, now: number) => Promise<void> = () => Promise.resolve();
+/** The retention job of the run at `now` (src/privacy/retention.ts). Throws only a storage failure. */
+export const runRetention: (deps: MaintenanceDeps, now: number) => Promise<void> = async (deps, now) => {
+  await retention(deps, now);
+};
 
 /** The immediate retention pass a lockdown triggers: the retention job, now. */
 export const runRetentionNow: RetentionPass = (deps) => runRetention(deps, deps.clock.now());
 
-/** The monthly stats snapshot of the run at `now` (U6 fills it; a no-op until then). */
-export const runSnapshot: (deps: MaintenanceDeps, now: number) => Promise<void> = () => Promise.resolve();
+/** The monthly stats snapshot of the run at `now` (src/broadcast/stats.ts). Throws only a storage failure. */
+export const runSnapshot: (deps: MaintenanceDeps, now: number) => Promise<void> = (deps, now) => snapshot(deps, now);
 
 /**
- * The finalization of report `reportId`, a terminal one whose finalization
- * never landed (U6 fills it; a no-op until then).
+ * The finalization of report `reportId`, a closed, retracted or expired one
+ * whose finalization never landed (src/broadcast/finalize.ts): nothing for
+ * any other. Throws only a storage failure.
  */
-export const finalize: (deps: MaintenanceDeps, reportId: string, now: number) => Promise<void> = () => Promise.resolve();
+export const finalize: (deps: MaintenanceDeps, reportId: string, now: number) => Promise<void> = async (deps, reportId, now) => {
+  await finalizeTerminal(deps, reportId, now);
+};
 
 export interface LockdownNowDeps extends MaintenanceDeps {
   /** The pass to run: runRetentionNow unless given (tests pass a spy). */

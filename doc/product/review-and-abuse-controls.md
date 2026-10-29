@@ -132,8 +132,11 @@ the reporter is never told.
   reporter can be blocked only by `/block` with a reference taken from
   their own primary report.
 - A rejection counter per reference: 3 rejections in 30 days throttle the
-  reporter to 1 report per day. Counters expire after 90 days without
-  activity.
+  reporter to 1 report per day. A rejection is counted on the reference of
+  every report of the target when it is made, and counted off again when
+  the rejected report is finalized, 30 days later
+  (`src/broadcast/finalize.ts`), so the counter holds the last 30 days'
+  rejections. Counters expire after 90 days without activity.
 
 ## No decision messages
 

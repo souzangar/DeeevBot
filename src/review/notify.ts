@@ -27,9 +27,11 @@
 //   edits nothing until the notice is five minutes old:
 //   src/review/cancel.ts); the scheduler edits them to "posted"
 //   (postedNoticeText) once the post is recorded, by the tick or by
-//   /attach (src/broadcast/). A notice another isolate sent is not
-//   remembered, and keeps its text until its own Cancel is pressed: the
-//   stated cost of storing nothing.
+//   /attach (src/broadcast/), and keeps remembering them, so the post's
+//   retraction edits them again to "retracted" (retractedNoticeText,
+//   src/broadcast/concluding.ts); a closure only forgets them. A notice
+//   another isolate sent is not remembered, and keeps its text until its
+//   own Cancel is pressed: the stated cost of storing nothing.
 import type { InlineKeyboardMarkup } from 'grammy/types';
 import { utcMinute } from '../clock';
 import type { Config } from '../config/schema';
@@ -114,6 +116,10 @@ export const cancelledNoticeText = (reportId: string): string =>
 /** The notice of a posted report: its id, in both locales, without links. */
 export const postedNoticeText = (reportId: string): string =>
   bothLocales((locale) => t(locale, 'notice.posted', { id: reportId }));
+
+/** The notice of a retracted report: its id, in both locales, without links. */
+export const retractedNoticeText = (reportId: string): string =>
+  bothLocales((locale) => t(locale, 'notice.retracted', { id: reportId }));
 
 /** The notice's two buttons, labelled in both locales. */
 export function noticeKeyboard(reportId: string, approvalId: string): InlineKeyboardMarkup {

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { randomId } from '../db/ids';
 import {
   CALLBACK_DATA_MAX_BYTES,
+  CLOSE_OUTCOMES,
   NOTICE_PREFIXES,
   noticeData,
   parseNoticeData,
@@ -33,6 +34,8 @@ const ACTIONS: readonly ReviewAction[] = [
   { kind: 'cancel', reportId: REPORT, approvalId: APPROVAL },
   { kind: 'block', reportId: REPORT },
   { kind: 'back', reportId: REPORT },
+  ...CLOSE_OUTCOMES.map((outcome) => ({ kind: 'close' as const, reportId: REPORT, outcome })),
+  { kind: 'retract', reportId: REPORT },
 ];
 const NOTICES: readonly NoticeAction[] = [{ kind: 'cancel', reportId: REPORT, approvalId: APPROVAL }, { kind: 'lockdown' }];
 
@@ -73,6 +76,9 @@ describe('reviewData and parseReviewData', () => {
     ['an unknown reason', `rv:rs:${REPORT}:because`],
     ['a cancel without its approval', `rv:cn:${REPORT}`],
     ['a cancel with a short approval id', `rv:cn:${REPORT}:abc`],
+    ['a closure without its outcome', `rv:cl:${REPORT}`],
+    ['a closure with an outcome no admin picks', `rv:cl:${REPORT}:expired`],
+    ['a retraction with a trailing part', `rv:rt:${REPORT}:now`],
     ['a notice prefix', `kh:cn:${REPORT}:${APPROVAL}`],
     ['an intake press', 'intake:category:harassment'],
     ['a mark press', `mark:${REPORT}`],

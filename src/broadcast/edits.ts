@@ -5,9 +5,10 @@
 // `{"action": "close"}` (a closure, the 90-day expiry included: the outcome
 // is on the report) or `{"action": "retract"}` (the correction is on the
 // report), src/broadcast/jobs.ts. The handlers are the closure and
-// retraction unit's (U6), registered by action in EDIT_HANDLERS, which is
-// empty until then; this runner owns the policy around them, so no handler
-// can run where it must not:
+// retraction unit's (U6), registered by action in EDIT_HANDLERS: closeEdit
+// (src/broadcast/closure.ts) and retractEdit (src/broadcast/retraction.ts),
+// both concluding through src/broadcast/concluding.ts; this runner owns the
+// policy around them, so no handler can run where it must not:
 // - at most EDIT_JOBS_PER_TICK due jobs a run, the oldest first, and only
 //   of an action that has a handler (a job of another action of
 //   EDIT_ACTIONS waits for its handler, and holds back none);
@@ -36,8 +37,10 @@ import { isId } from '../db/ids';
 import { AppError } from '../errors/app-error';
 import { ErrorCode, type CatalogEntry } from '../errors/catalog';
 import { classifyTelegramError } from '../telegram/errors';
+import { closeEdit } from './closure';
 import { EDIT_ACTIONS, isEditAction, type EditAction } from './jobs';
 import { DEFAULT_RETRY_AFTER_SECONDS } from './post';
+import { retractEdit } from './retraction';
 import { isStorageFailure, pauseStatement, type TickState } from './state';
 import type { TickDeps } from './tick';
 
@@ -71,8 +74,8 @@ export type EditHandler = (deps: TickDeps, job: EditJob, now: number) => Promise
 /** The handlers by action. */
 export type EditHandlers = Readonly<Partial<Record<EditAction, EditHandler>>>;
 
-/** The handlers the closure and retraction unit (U6) registers; none until then. */
-export const EDIT_HANDLERS: EditHandlers = Object.freeze({});
+/** The handlers by action (see the header): a closure, the 90-day expiry included, and a retraction. */
+export const EDIT_HANDLERS: EditHandlers = Object.freeze({ close: closeEdit, retract: retractEdit });
 
 const RECORD_FAILURE = sql`UPDATE jobs SET attempts = attempts + 1, due_at = ? WHERE id = ?`;
 const FLAG_REPORT = sql`UPDATE reports SET needs_attention = 1 WHERE id = ?`;

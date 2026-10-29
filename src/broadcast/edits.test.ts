@@ -1,6 +1,8 @@
 // Unit tests for the edit jobs' runner (src/broadcast/edits.ts; critical
 // invariants 1, 2 and 5), through the run over the fakes with handlers of
-// the test's own in the registry's place: due jobs of a registered action
+// the test's own in the registry's place (the registry itself holds the
+// closure unit's two, src/broadcast/closure.ts and retraction.ts, whose
+// own tests drive them): due jobs of a registered action
 // only, the oldest first, at most EDIT_JOBS_PER_TICK a run; under lockdown
 // or /halt retractions only; a failure recorded on its own job while the
 // next one runs; a 429 that reschedules, pauses and ends the run's edits; a
@@ -16,7 +18,9 @@ import { insertReport, reportRow } from '../../test/support/review-rows';
 import { TICK_AT, tickHarness, type TickHarness } from '../../test/support/tick-harness';
 import { IDS } from '../../test/support/variables';
 import { EDIT_HANDLERS, EDIT_JOBS_PER_TICK, EDIT_RETRY_MAX_MS, EDIT_RETRY_MS, runnableActions, type EditHandler, type EditHandlers, type EditJob } from './edits';
+import { closeEdit } from './closure';
 import { enqueueEditStatement, type EditingStatus } from './jobs';
+import { retractEdit } from './retraction';
 
 /** A report in `status` with its edit job, due at `dueAt`. */
 const planted = async (harness: TickHarness, status: EditingStatus, dueAt: number = TICK_AT): Promise<string> => {
@@ -39,9 +43,15 @@ const recording = (act: (job: EditJob) => Promise<void> = () => Promise.resolve(
 };
 
 describe('the edit runner', () => {
-  it('has no handler of its own before the closure and retraction unit: a run runs none, reading the due jobs once', async () => {
-    expect(EDIT_HANDLERS).toEqual({});
-    const harness = tickHarness();
+  it('registers one handler per action, the closure and the retraction, frozen', () => {
+    expect(Object.keys(EDIT_HANDLERS).sort()).toEqual(['close', 'retract']);
+    expect(EDIT_HANDLERS.close).toBe(closeEdit);
+    expect(EDIT_HANDLERS.retract).toBe(retractEdit);
+    expect(Object.isFrozen(EDIT_HANDLERS)).toBe(true);
+  });
+
+  it('with no handler registered, a run runs none, reading the due jobs once', async () => {
+    const harness = tickHarness({ edits: {} });
     const closing = await planted(harness, 'closing');
     harness.reset();
     expect((await harness.run()).edits).toBe(0);

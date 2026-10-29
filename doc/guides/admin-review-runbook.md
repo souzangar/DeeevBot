@@ -122,7 +122,10 @@ The card shows:
   an approval, the card shows when the post goes out and a Cancel button
   for the 30-minute grace period, and a status card for the report follows
   it: its id, platform, category and state, how many keyholders received
-  the approval notice, and the buttons Cancel and Block reporter.
+  the approval notice, and the buttons Cancel and Block reporter. Once the
+  report is posted, the status card carries Taken down, Closed without
+  result and Retract instead of Cancel (sections 7 and 8); once it is
+  concluded, it shows the outcome and no button.
 
 How the card behaves:
 
@@ -147,7 +150,13 @@ How the card behaves:
   the outcome without links or buttons, so no card with live buttons stays
   that its report does not know of.
 - The admin commands, `/open`, `/block <ref>`, `/unblock <ref>` and
-  `/card <id>`, are typed in the venue. Typed in your private chat with
+  `/card <id>`, are typed in the venue, as are the scheduler's (`/attach`,
+  `/repost`, `/halt`, `/resume`) and the closure's: `/close <id>
+  taken_down|no_result`, `/retract <id>`, `/stats [YYYY-MM]` (the counts
+  of the reports concluded this month, or in the month given, from the
+  aggregate rows alone, the "I reported it" presses labelled advisory) and
+  `/budget` (the day's counted presses against `MARKS_PER_DAY` and the
+  day's reports from non-members against their cap). Typed in your private chat with
   the bot, a command is no command: the bot deletes it and answers as it
   answers any unknown command.
 - Intake is text-only. A reporter's message carrying media or a forwarded
@@ -406,26 +415,39 @@ through the routes in order, then confirm.
 When to close: the reported account or content is gone ("taken down"),
 nothing happened after a reasonable time ("closed without result"), or
 the post was wrong ("retracted", section 8). Ninety days after the post
-(configurable) the report expires on its own, through the same edit.
+the report expires on its own, through the same edit.
 
 1. Check the target in the isolated profile. Do not do this for routed
    reports; they are already closed at routing and you no longer have the
    URL.
-2. Run `/close <id> <outcome>` with "taken down" or "closed without
-   result", or press the outcome button on the report's status card.
-   `/open` lists the open reports with their ids.
-3. What the bot does: moves the report to `closing`, then edits the
-   channel post to append the outcome line and remove the "I reported it"
+2. Run `/close <id> taken_down` or `/close <id> no_result` in the venue,
+   or press Taken down or Closed without result on the report's status
+   card. `/open` lists the open reports with their ids. There is no
+   confirmation step: the press closes the report.
+3. What the bot does: moves the report to `closing`, and the status card
+   says so; at the next minute's run it edits the channel post, appending
+   the outcome line in both languages and removing the "I reported it"
    button; only when that edit succeeds does it write `closed` and, in the
-   same batch, delete the report's links, comment, texts, approval and
-   prompts and keep the aggregate row (category, platform, day-level
-   dates, outcome, "I reported it" count, keyed link hash). Nobody is
-   messaged, not the reporter and not the members: the edited post is the
-   outcome.
+   same batch, keep the aggregate row (category, platform, day-level
+   dates, outcome, "I reported it" count, keyed link hash) and delete the
+   report's links, comment, texts, approval, prompts, jobs and merged
+   duplicates; the status card then shows the outcome without buttons, and
+   the rest of the report's row goes the next night. Nobody is messaged,
+   not the reporter and not the members: the edited post is the outcome.
+   If the post with its outcome line would be too long for Telegram's 4096
+   characters, the post is replaced by the outcome line alone.
 4. If the edit cannot be made, the report stays in `closing` with the post
-   untouched, the bot sets `needs_attention` and alerts the keyholders
-   (and the venue when not locked down). Nothing is finalized while the
-   post is unaddressed. `/halt` holds closure edits.
+   untouched and keeps its data: the bot sets `needs_attention`, alerts the
+   keyholders (and the venue when not locked down) once, the status card
+   says so, and the edit is tried again every few minutes; after 20 failed
+   tries the nightly job drops it with an alert, and reconciliation queues
+   it again at the next quarter hour, so once the cause is fixed (usually
+   the bot's right to edit in the channel, which the keyholder restores)
+   it concludes by itself. Nothing is finalized while the post is
+   unaddressed. `/halt` holds closure edits, and under lockdown none runs.
+5. A report being closed cannot be retracted any more, and a closed one has
+   no message id left to edit: if a closed post turns out wrong, the
+   keyholder deletes it by hand in the channel.
 
 ## 8. Retraction
 
@@ -440,15 +462,24 @@ acts on a wrong post, so decide fast.
 2. If it is posted: write the correction text, neutral, no blame, no
    identity of anyone, no leaked data, and within the same rules as the
    recommended comment (no link, bare domain, @mention, "t.me" or phone
-   number; the bot refuses the text otherwise). It replaces the post's
-   text in the channel.
-3. Run `/retract <id>` and reply to the correction prompt. What the bot
-   does: writes the correction to the report first, moves it to
-   `retracting`, then edits the channel post to the correction and removes
-   the button; only when that edit succeeds does it write `retracted` and
-   finalize as in section 7; the aggregate row keeps "retracted". `/halt`
-   never holds a retraction edit, and a keyholder can run `/retract` even
-   under lockdown.
+   number); it must also fit, with the fixed retraction heading in both
+   languages, in Telegram's 4096 characters. It replaces the post's text in
+   the channel.
+3. Run `/retract <id>` in the venue, or press Retract on the status card,
+   and reply to the correction prompt the bot posts; only your own reply
+   to your own prompt counts. A refused text gets a fresh prompt saying
+   why; reply to that one. What the bot does: writes the correction to the
+   report first, moves it to `retracting`, and the status card says so; at
+   the next minute's run it replaces the post's text with the fixed
+   heading, the warning line and your correction, removes the button, and,
+   when the post is younger than 48 hours, deletes it as well; only when
+   the edit succeeds (or the post is gone) does it write `retracted` and
+   finalize as in section 7; the aggregate row keeps "retracted", and the
+   keyholders' approval notices the bot remembers say "retracted". The
+   prompt and your reply are deleted from the venue. `/halt` never holds a
+   retraction edit, and a keyholder can run `/retract` in their own chat
+   with the bot, even under lockdown: the prompt and the reply are then in
+   that chat.
 4. A report shown as `posting` with no message id (an ambiguous send: a
    timeout, a network error or a 5xx; the bot never re-sends on its own):
    look in the channel. If the post is there, `/attach <id> <message id or
@@ -462,9 +493,12 @@ acts on a wrong post, so decide fast.
    admitted only while no message id exists, only two minutes or more
    after the bot started the send (the status card says when it needs
    you), and never under lockdown. There is no blind "post again".
-5. Tell the other admin. If the retraction follows a weaponised report,
+5. If the edit cannot be made, the report stays in `retracting` with its
+   correction and its message id, alerted and retried as in section 7,
+   step 4.
+6. Tell the other admin. If the retraction follows a weaponised report,
    apply section 9 (block the reporter reference).
-6. Retraction closes the report; its data is deleted as in section 7.
+7. Retraction closes the report; its data is deleted as in section 7.
 
 ## 9. Reporter abuse handling, and why nobody is messaged
 
@@ -526,19 +560,27 @@ account. While it is set:
 
 - every admin action is refused: every button of the review card, the
   routing card and the status card (Approve, Reject, Route, Cancel, Block
-  reporter and every step between), your replies to the prompts, and the
-  commands `/open`, `/block`, `/unblock`, `/card`, `/close`, `/retract`,
-  `/attach`, `/repost`, `/halt`, `/resume`; you see "This action is refused right
-  now." and nothing else, and nothing is written;
+  reporter, Taken down, Closed without result, Retract and every step
+  between), your replies to the prompts, the correction prompt's included,
+  and the commands `/open`, `/block`, `/unblock`, `/card`, `/close`,
+  `/retract`, `/stats`, `/budget`, `/attach`, `/repost`, `/halt`,
+  `/resume`; you see "This action is refused right now." and nothing else,
+  and nothing is written;
 - a keyholder's Cancel on an approval notice still works, and so does the
   Lockdown button beside it; under lockdown it edits only the keyholders'
   own chats, never the venue, so the card may still show the approval
   after a keyholder cancelled it: your next press on it, after the
   lockdown is lifted, brings it to the report's real state; a keyholder
-  also finds the open reports with `/open` in their own chat;
+  also finds the open reports with `/open` and the counts with `/stats` in
+  their own chat;
 - intake answers reporters "temporarily unavailable" and stores nothing;
   "I reported it" presses are ignored; no post goes out and no closure
-  edit runs; a keyholder's retraction edit still runs;
+  edit runs; a keyholder's `/retract` still works in their own chat, and
+  its edit still runs, since it removes harm, but the status cards in the
+  venue are left as they were;
+- the nightly retention job still runs (and once at the lockdown itself),
+  deleting what is due, without touching the venue; the monthly snapshot
+  goes to the keyholders only;
 - alerts go to the keyholders by direct message, never to the venue,
   which is assumed compromised;
 - only a keyholder's `/unlock` clears it (never `/resume`, never an
@@ -547,7 +589,8 @@ account. While it is set:
 
 If you believe an admin account or phone has been taken, tell the
 keyholder at once so they can lock down; the review can wait. The
-keyholder's side is in the operations runbook; the reasons in
+keyholder's side, the emergency wipe included, is in the operations
+runbook; the reasons in
 [threat-model-seizure.md](../product/threat-model-seizure.md).
 
 ## 11. Telegram targets and posts forwarded from bots

@@ -25,6 +25,8 @@ import { reporterRef } from '../privacy/reporter-ref';
 import { botInfoFor, createBot } from './bot';
 
 const LOCKDOWN_ROW = sql`SELECT value FROM meta WHERE key = 'lockdown'`;
+/** The line of the immediate retention pass a lockdown runs, over a store with nothing to delete. */
+const RETENTION_DONE = { level: 'info', event: 'retention.done', drafts: 0, prompts: 0, abandoned: 0, expiring: 0, finalized: 0, removed: 0, reporterRows: 0, counterRows: 0 };
 
 describe('/start', () => {
   it("explains the bot in the reader's locale", async () => {
@@ -199,7 +201,8 @@ describe('/lockdown and /unlock from a keyholder', () => {
     expect(await isLockedDown(harness.config, harness.db)).toBe(true);
     expect(harness.textsTo(IDS.keyholder)).toEqual([t('en', 'lockdown.on')]);
     expect(harness.textsTo(IDS.secondKeyholder)).toEqual([t('en', 'lockdown.already_on')]);
-    expect(harness.log.records()).toEqual([{ level: 'info', event: 'lockdown.set' }]);
+    // The immediate retention pass runs at each, the switch set already or not (src/privacy/retention.ts).
+    expect(harness.log.records()).toEqual([{ level: 'info', event: 'lockdown.set' }, RETENTION_DONE, RETENTION_DONE]);
   });
 
   it('/unlock clears the switch and says so; again, that it was off', async () => {
@@ -216,6 +219,7 @@ describe('/lockdown and /unlock from a keyholder', () => {
     ]);
     expect(harness.log.records()).toEqual([
       { level: 'info', event: 'lockdown.set' },
+      RETENTION_DONE,
       { level: 'info', event: 'lockdown.cleared' },
     ]);
   });

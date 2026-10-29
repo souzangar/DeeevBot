@@ -49,7 +49,9 @@ its recovery codes (2.3), the broadcast channel (2.2), and the secrets
 - [ ] Knows the actions: Cancel on an approval notice (3.1); `/lockdown`,
       or the Lockdown button on a notice (3.6); `wrangler secret put
       LOCKDOWN` with the value `1` (3.6, when D1 or the bot cannot be
-      trusted); the emergency wipe and `wrangler d1 delete` (7); the token
+      trusted); `/retract <id>` and `/stats` in their own chat, under
+      lockdown too (admin review runbook, sections 8 and 10); the
+      emergency wipe, `scripts/wipe.sh`, and `wrangler d1 delete` (7); the token
       re-issue (7). A Cancel on a notice whose approval is not recorded
       yet changes nothing and says so, until the notice is five minutes
       old, when it settles the notice as cancelled; on the Node port a
@@ -118,7 +120,7 @@ the bot, or transfer it. Held by the keyholder. Requirements:
 | `LOCKDOWN`, the keyholder's override (the value `1`; a secret change is itself a new deployment, global within about a minute, with no code deploy); no Telegram command clears it | the secret store, set by the keyholder with `wrangler secret put LOCKDOWN` (value `1`) and cleared with `wrangler secret delete LOCKDOWN` | VCS; never set or cleared by an admin |
 | Chat ids: the admin review venue (`ADMIN_CHAT_ID`), the membership chat (`MEMBERSHIP_CHAT_ID`), the broadcast channel (`BROADCAST_CHAT_ID`, a channel the keyholder owns, with the bot as its only posting administrator) | deployment configuration validated by the zod schema | VCS |
 | The bot's numeric id and username (`BOT_ID`, `BOT_USERNAME`), which spare every update a `getMe` call; set again if the bot is ever re-created | deployment configuration validated by the zod schema | |
-| The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), retention days (90 by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default), the review venue's one language (`VENUE_LOCALE`, `fa` by default, or `en`) | deployment configuration validated by the zod schema | |
+| The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default), the review venue's one language (`VENUE_LOCALE`, `fa` by default, or `en`) | deployment configuration validated by the zod schema | |
 | Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file | copied into any backup containing per-user tables |
 
 The commit gate's secret-shape scan (`.claude/hooks/secret-shape-scan.sh`)
@@ -246,10 +248,18 @@ the channel.
   which shows the links, is deleted from the venue (edited to "posted"
   when it cannot be), the status card says "posted", and each keyholder's
   notice the bot remembers is edited to "posted" without links.
-- Retraction and closure edit the post in place; the terminal status is
-  written only when the edit succeeds; an edit that cannot be made leaves
-  the report in `closing` or `retracting` and alerts (admin review
-  runbook, sections 7 and 8).
+- Retraction and closure edit the post in place, the post's own message
+  and no other, and remove its button: `/close <id> taken_down|no_result`
+  or the status card's buttons (admins, never under lockdown), `/retract
+  <id>` or the status card's Retract (admins, and keyholders in their own
+  chat, under lockdown too), with the correction by a force-reply prompt;
+  the 90-day expiry is the retention job's. The terminal status is written
+  only when the edit succeeds, in the batch that finalizes the report; an
+  edit that cannot be made leaves the report in `closing` or `retracting`
+  with its data, flags it and alerts once; after 20 failed tries the
+  nightly job drops the edit with an alert and reconciliation queues it
+  again (admin review runbook, sections 7 and 8; the report lifecycle,
+  "Closure outcomes").
 - "I reported it" presses are counted, never listed, capped by
   `MARKS_PER_DAY` and `MARKS_PER_REPORT`; `/stats` labels the figure
   advisory.
@@ -269,7 +279,14 @@ UTC. The defined behaviour:
    time of day.
 2. A cap error between a post's send and its id write is the ambiguous
    case of 3.2: an alert, never a retry.
-3. Nobody does anything destructive: no re-approval, no restart.
+3. Nobody does anything destructive: no re-approval, no restart. A
+   closure or a retraction whose edit went out before the store failed
+   finds its post "not modified" at the next run and concludes then.
+   The nightly retention job at 00:15 UTC runs after the reset; one that a
+   storage failure stopped resumes the next night from what it committed,
+   at most 50 finalizations a night either way. The emergency wipe writes
+   too (every deleted row counts), so it is refused while the rows-written
+   cap is exhausted (section 7).
 4. Repeated cap alerts mean someone is burning the request meter by
    messaging the bot or pressing the button, possibly on purpose; lower
    `MARKS_PER_DAY`, and consider the Paid plan when a payment path
@@ -297,6 +314,17 @@ cloudflare-free-plan-limits.md):
 - Each approved report is posted there once after its grace; retraction
   and closure edit the post (the message id is stored for that);
   outcomes are visible through the edited post and nowhere else.
+- If the channel itself is gone (deleted, or the bot removed from it for
+  good), no closure or retraction edit can succeed: such a report stays
+  `closing` or `retracting` with its links and texts in D1, flagged, and
+  the nightly abandon alert names it once its edit has failed 20 times;
+  only the emergency wipe (section 7) or SQL run by hand removes that data
+  then.
+- `BROADCAST_CHAT_ID` is never repointed while any report holds a post id
+  (`/open` lists the posted, closing and retracting ones): message ids
+  restart in a new channel, so an old post id could then address an
+  unrelated message there. Let every such report conclude first (close or
+  retract it and wait for its edit), or wipe.
 - Joining the channel is the consent, leaving it the opt-out; the bot
   stores no ids for readers and learns nothing when someone joins or
   leaves
@@ -400,20 +428,44 @@ is throttled to 1 report per day; blocks persist.
   delivered once one keyholder got it (a keyholder who blocked the bot or
   never sent `/start` is counted and logged, and holds back nothing), and
   one that reached no keyholder is sent again at the next quarter hour.
-- The retention job: drafts older than 24 hours; prompts older than 24
-  hours; pending reports older than 30 days (expired, no decision);
-  rejected and routed rows 30 days after the decision; posted reports 90
-  days after posting, through the closure edit (outcome `expired`);
-  reporter counters after 90 days without activity, blocked ones
-  excepted; daily counters older than 90 days; jobs abandoned at 20
-  attempts; finalized report rows. Routed CSAM reports lose their links
-  and comment at routing, not at night
-  ([retention-and-minimisation.md](../product/retention-and-minimisation.md)).
+- The retention job (`src/privacy/retention.ts`), at 00:15 UTC, under
+  lockdown too, and at once on a lockdown; each step a fixed number of
+  statements, a failing step logged by class and the next one run, a
+  storage failure stopping it where it is: drafts older than 24 hours;
+  prompts older than 24 hours, the messages of those still within the 48
+  hours deleted from their chats (at most five a night, none in the venue
+  under lockdown); jobs that failed 20 times abandoned, their reports
+  flagged and alerted once, nothing finalized (reconciliation queues a
+  closure's or a retraction's edit again; an abandoned post waits for
+  `/repost` or Cancel); posted reports 90 days after posting moved to
+  `closing` with the outcome `expired`, the closure edit doing the rest (at
+  most 50 a night; not while locked down or halted, when the edit could
+  not run and the post could no longer be retracted, the next night without
+  a hold catching up); pending reports older than 30 days (expired, no
+  decision) and rejected and routed rows 30 days after the decision,
+  finalized in D1 alone in one batch, at most 50 a night, the oldest
+  first, a pending report's card edited to its outcome outside lockdown;
+  finalized report rows deleted; reporter counters after 90 days without
+  activity, blocked ones excepted; daily counters older than 90 days.
+  Routed CSAM reports lose their links and comment at routing, not at
+  night ([retention-and-minimisation.md](../product/retention-and-minimisation.md)).
+  The 00:15 run also reconciles; at every bound of every step at once (a
+  post, three edit jobs, reconciliation and the retention job together) it
+  could near the invocation's 50 subrequests, a residual the next night's
+  run absorbs.
 - What survives: one aggregate row per report (category, platform,
   day-level dates, outcome, "I reported it" count, keyed link hash).
   Nothing else; no subscriber table exists.
-- The monthly stats snapshot (aggregate rows only) is posted to the admin
-  chat. It is the only export that exists.
+- The monthly stats snapshot (`src/broadcast/stats.ts`), on the first day
+  of the month at 06:00 UTC: the previous month's reports concluded (by the
+  day of their finalization), counted by outcome, category and platform,
+  with their "I reported it" presses labelled advisory, from the
+  aggregate rows alone, to every keyholder in both languages and, unless
+  locked down, to the review venue in its language. `/stats` answers the
+  same on demand (this month so far, or `/stats YYYY-MM`) to an admin in
+  the venue or a keyholder in their own chat; `/budget` gives an admin the
+  day's counted presses and reports from non-members against their caps.
+  It is the only export that exists.
 - Backups: none of our own, ever. D1 keeps a 30-day point-in-time history
   (Time Travel) that the account holder can restore; the wipe cannot
   remove it, `wrangler d1 delete` can (section 7). The recovery story is
@@ -455,15 +507,35 @@ the channel. Record the date and outcome in an audit doc under
   seized account yields is bounded by design (the threat model): no
   reporter or member identity, only the open reports' links and
   comments. `/unlock` only when the keyholder is satisfied.
-- **The emergency wipe.** At least a minute after setting lockdown
-  (in-flight handlers may write for up to 30 seconds), the keyholder runs
-  the documented `wrangler d1 execute` script, which deletes every row of
-  every table except `stats` and `meta`. It defends against the seized
-  admins, not against a seized Cloudflare account: D1's Time Travel
-  history keeps 30 days that the account holder can restore. When the
-  account itself is in doubt: `wrangler d1 delete` and recreate, which
-  also removes the history, and re-issue the token (below). Both work
-  when D1 refuses queries.
+- **The emergency wipe** (`scripts/wipe.sh`, outside the Worker; it
+  deletes every row of every table except `stats`, the aggregate rows, and
+  `meta`, where the lockdown switch stays set). The procedure, from the
+  keyholder's machine with wrangler logged in to the Cloudflare account:
+  1. Lock down first: `/lockdown` from the keyholder's phone, or
+     `wrangler secret put LOCKDOWN` (value `1`) if the bot or D1 cannot be
+     trusted.
+  2. Wait at least a minute: handlers already in flight may write for up
+     to 30 seconds after the switch.
+  3. Run `scripts/wipe.sh` from the repository and type the database's
+     name, `div-report`, when it asks (`scripts/wipe.sh --local` rehearses
+     it on the local database of `wrangler dev`). It runs one `wrangler d1
+     execute div-report --remote --command "..."` with the statement list
+     `test/invariants/wipe.test.ts` pins.
+  4. Check it: `npx wrangler d1 execute div-report --remote --command
+     "SELECT count(*) FROM reports"` answers 0.
+  5. It defends against the seized admins, not against a seized Cloudflare
+     account: D1's Time Travel keeps a 30-day point-in-time history that the
+     account holder can restore. When the account itself is in doubt, the
+     second step is `npx wrangler d1 delete div-report`, which also removes
+     that history, then a new database (`npx wrangler d1 create
+     div-report`, its id in wrangler.jsonc's `database_id`, the migrations
+     applied with `npx wrangler d1 migrations apply div-report --remote`),
+     a redeploy, and the token re-issue (below).
+  6. When D1 refuses queries (a daily cap exhausted, possibly by the
+     attacker), the wipe is refused too, since its deletions are writes:
+     the `LOCKDOWN` secret still stops all activity without a query, and
+     `wrangler d1 delete` still works, so the second step is then the
+     first; otherwise wait for the 00:00 UTC reset and wipe.
 - **Token compromise or suspicion of it.** Re-issue the token in
   @BotFather from the owner account, set it and a new webhook secret in the
   secret store, redeploy, re-register the webhook (2.1). The old token
@@ -558,7 +630,7 @@ Weekly:
 
 Monthly:
 
-- [ ] Stats snapshot received in the admin chat (5)
+- [ ] Stats snapshot received by the keyholders and in the review venue (5)
 - [ ] `ADMIN_IDS` still lists at least two live accounts; `KEYHOLDER_IDS`
       at least one reachable keyholder (1.3)
 
