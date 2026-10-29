@@ -91,6 +91,13 @@ the deployment are in
   reporter's comment as escaped plain text, and the "I am the affected
   person" flag. The comment and the flag exist for your review only; the
   bot nulls both at your decision.
+- The URLs are normalised at intake: the platform's canonical host (for
+  example `www.instagram.com`, `x.com`, `t.me`), no query, no tracking
+  parameters, no fragment. The account's link is derived from the post's
+  URL where it names the account (X, TikTok, Telegram, an Instagram link
+  with the username); otherwise the reporter was asked for it, and it is
+  missing when they answered "I don't know": find the account from the
+  post while you verify it.
 - "Previously reported, outcome X" when the keyed link hash matches an
   earlier aggregate row. This line is on the admin card only; the reporter
   is never told.
@@ -365,8 +372,9 @@ What the bot enforces (you see the effects; you do not operate them):
   reference to 1 report per day); counters expire after 90 days without
   activity; blocks persist.
 - Text-only intake: media and forwarded posts are refused and deleted
-  before anything reaches you; every reporter message is deleted from the
-  reporter's chat as soon as it is processed.
+  before anything reaches you; every message a reporter sends the bot is
+  deleted from the reporter's chat as soon as it is processed, commands
+  included (under lockdown the bot reads, stores and deletes nothing).
 - No decision notices. The reporter receives one acknowledgement at
   intake, which names the report by platform and date, never echoes the
   URL, says that outcomes appear in the channel, and deletes itself; a

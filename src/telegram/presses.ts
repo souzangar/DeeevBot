@@ -32,7 +32,7 @@
 // most 40,000 of the daily 100,000.
 import { Composer, type Context } from 'grammy';
 import { NOT_LOCKED_DOWN } from '../auth/lockdown';
-import type { Clock } from '../clock';
+import { utcDay, type Clock } from '../clock';
 import type { Config } from '../config/schema';
 import { concatSql, sql, type SqlDb } from '../db/sql';
 import { resolveLocale, t } from '../i18n/index';
@@ -48,8 +48,8 @@ export const PRESS_COUNTER = 'presses';
 /** The button's callback data for `reportId`: 25 bytes, well under Telegram's 64. */
 export const markData = (reportId: string): string => `${MARK_PREFIX}${reportId}`;
 
-/** The UTC day of `ms`, as `counters.day` holds it. */
-export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+/** The UTC day of `ms`, as `counters.day` holds it (src/clock.ts). */
+export { utcDay };
 
 const COUNT_FOR_REPORT = concatSql(
   sql`UPDATE reports SET presses = presses + 1 WHERE id = ? AND status = 'posted' AND post_message_id = ? AND presses < ? AND COALESCE((SELECT count FROM counters WHERE day = ? AND key = ?), 0) < ? AND `,

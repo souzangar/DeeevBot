@@ -17,7 +17,8 @@
 //   an unknown message answers "message to edit not found" or "message to
 //   delete not found", an edit to the same text and keyboard "message is
 //   not modified". seedMessage() puts a message there, a post sent before
-//   the test started, say.
+//   the test started, say; receive() puts a user's message there under the
+//   chat's next id, as Telegram numbers a private chat's messages.
 // - Scripted failures, per chat id and/or method, for a number of calls or
 //   for every one: the Bot API's 400s and 403s, a 429 with retry_after, a
 //   5xx, a timeout, a network failure, and a request that never answers.
@@ -135,8 +136,16 @@ export interface FakeBotApi {
   setMember(chatId: number, userId: number, member: FakeMember | 'user_not_found'): void;
   /** Puts a message the bot sent before into `chatId`. */
   seedMessage(chatId: number, message: { readonly message_id: number; readonly text?: string; readonly reply_markup?: unknown }): void;
+  /**
+   * Puts a message a user sent into `chatId` under the chat's next message
+   * id, the one sequence Telegram numbers both sides of a chat with, and
+   * returns that id.
+   */
+  receive(chatId: number, message: { readonly text?: string }): number;
   /** The message the fake holds, if any. */
   messageIn(chatId: number, messageId: number): StoredMessage | undefined;
+  /** Every message the fake holds for `chatId`, by message id. */
+  messagesIn(chatId: number): StoredMessage[];
   /** Updates the next getUpdates answers with. */
   queueUpdates(...updates: Update[]): void;
   /** The requests a 'hang' outcome left unsettled. */
@@ -346,7 +355,12 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     seedMessage: (chatId, message) => {
       store(chatId, message);
     },
+    receive: (chatId, message) =>
+      store(chatId, { message_id: (lastMessageId.get(chatId) ?? 0) + 1, ...(message.text === undefined ? {} : { text: message.text }) })
+        .message_id,
     messageIn: (chatId, messageId) => messages.get(key(chatId, messageId)),
+    messagesIn: (chatId) =>
+      [...messages.values()].filter((message) => message.chat.id === chatId).sort((a, b) => a.message_id - b.message_id),
     queueUpdates: (...queued) => {
       updates.push(...queued);
     },

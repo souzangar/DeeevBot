@@ -6,7 +6,8 @@
 // - Under either layer: an admin command, registered behind the gates the
 //   later units register theirs behind, is refused and does not run; an
 //   admin button is refused; a press writes nothing; the intake entry
-//   stores nothing and answers the neutral text; the venue gets no alert.
+//   stores nothing and answers the neutral text, for a message and for an
+//   intake button press alike, and deletes nothing; the venue gets no alert.
 // - Only a keyholder's /unlock, typed in their own private chat, clears
 //   `meta.lockdown`: from an admin, a reporter, anyone, from the venue, a
 //   group, or forwarded, it clears nothing; and in the source, clearLockdown
@@ -16,7 +17,10 @@
 //   locked, and the configuration that holds it is frozen.
 // - /lockdown from anyone but a keyholder is not a command: the answer is
 //   byte-for-byte the answer to a command that does not exist, locked or
-//   not, so nothing hints that it exists.
+//   not (outside lockdown each is deleted on receipt alike, only the
+//   deleted message's own id differing), so nothing hints that it exists.
+// - Under lockdown nothing is deleted either: no message, /start or
+//   /language, nor an intake press, which answers the neutral text.
 // The commit gate runs this file on every commit (`npm run test:invariants`).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -31,6 +35,8 @@ import { t } from '../../src/i18n/index';
 import { alertVenue } from '../../src/telegram/alerts';
 import { createBotApi } from '../../src/telegram/api';
 import { adminButton, isAdminCommand, refuseUnderLockdown } from '../../src/telegram/guards';
+import { reporterRef } from '../../src/privacy/reporter-ref';
+import { pressData } from '../../src/review/intake';
 import { markData } from '../../src/telegram/presses';
 import { botHarness, NOW, type BotHarness } from '../support/bot-harness';
 import { IDS } from '../support/variables';
@@ -92,6 +98,29 @@ describe.each(['switch', 'override'] as const)('critical invariant 2: under the 
     await harness.send(privateMessage(IDS.stranger, REPORTED_URL, { languageCode: 'fa' }));
     expect(harness.textsTo(IDS.reporter)).toEqual([t('en', 'lockdown.unavailable')]);
     expect(harness.textsTo(IDS.stranger)).toEqual([t('fa', 'lockdown.unavailable')]);
+    expect(harness.telegram.count('deleteMessage')).toBe(0);
+    expect(await harness.db.first(STORED)).toEqual({ drafts: 0, reporter_stats: 0, counters: 0, presses: 0 });
+  });
+
+  it('an intake press stores nothing, deletes nothing and answers the neutral text', async () => {
+    const { harness } = await lockedHarness(layer);
+    const key = await reporterRef(IDS.reporter, harness.config.reporterRefKey);
+    await harness.db.run(
+      sql`INSERT INTO drafts (draft_key, step, url, platform, account_url, locale, created_at, updated_at) VALUES (?, 'category', 'https://x.com/someone/status/1', 'x', 'https://x.com/someone', 'en', 1, 1)`,
+      [key],
+    );
+    await harness.send(buttonPress(IDS.reporter, pressData({ kind: 'category', category: 'other' }), { chatId: IDS.reporter, messageId: 4, chatType: 'private' }));
+    expect(harness.telegram.calls.map((call) => [call.method, call.payload.text])).toEqual([['answerCallbackQuery', t('en', 'lockdown.unavailable')]]);
+    expect(await harness.db.all(sql`SELECT step, category, updated_at FROM drafts`)).toEqual([{ step: 'category', category: null, updated_at: 1 }]);
+  });
+
+  it('deletes nothing: no message, /start or /language', async () => {
+    const { harness } = await lockedHarness(layer);
+    for (const text of [REPORTED_URL, '/start', '/language fa', '/nosuchcommand', '/cancel']) {
+      await harness.send(privateMessage(IDS.reporter, text));
+    }
+    expect(harness.telegram.count('deleteMessage')).toBe(0);
+    expect(harness.textsTo(IDS.reporter)).toEqual(Array.from({ length: 5 }, () => t('en', 'lockdown.unavailable')));
     expect(await harness.db.first(STORED)).toEqual({ drafts: 0, reporter_stats: 0, counters: 0, presses: 0 });
   });
 
@@ -187,13 +216,22 @@ describe('critical invariant 2: /lockdown hints nothing to anyone but a keyholde
     const harness = botHarness();
     if (locked) await setLockdown(harness.db, harness.clock);
     for (const id of [IDS.admin, IDS.reporter, IDS.stranger]) {
-      const before = harness.telegram.calls.length;
-      await harness.send(privateMessage(id, '/lockdown'));
-      await harness.send(privateMessage(id, '/unlock'));
-      await harness.send(privateMessage(id, '/nosuchcommand'));
-      const answers = harness.telegram.calls.slice(before).map((call) => JSON.stringify([call.method, call.chatId, call.payload]));
-      expect(answers).toHaveLength(3);
+      const answers: string[] = [];
+      for (const text of ['/lockdown', '/unlock', '/nosuchcommand']) {
+        const update = privateMessage(id, text);
+        const before = harness.telegram.calls.length;
+        await harness.send(update);
+        // Outside lockdown each is deleted on receipt, as every message is: the
+        // deletion names the message's own id, the one thing that may differ.
+        const calls = harness.telegram.calls.slice(before).map((call) => {
+          if (call.method !== 'deleteMessage') return [call.method, call.chatId, call.payload];
+          expect(call.payload.message_id).toBe(update.message?.message_id);
+          return [call.method, call.chatId, { ...call.payload, message_id: 'its own' }];
+        });
+        answers.push(JSON.stringify(calls));
+      }
       expect(new Set(answers).size).toBe(1);
+      expect((JSON.parse(answers[0] ?? '[]') as unknown[]).length).toBe(locked ? 1 : 2);
     }
     expect(await harness.db.first(LOCKDOWN_ROW)).toEqual({ rows: locked ? 1 : 0 });
   });

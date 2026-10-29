@@ -92,7 +92,7 @@ being gone at once.
 | the post of an approved report | the broadcast channel | edited in place to the correction at retraction and to the outcome at closure or expiry, the button removed each time |
 | the review card | the admin review venue | within 48 hours of its message (the Bot API's limit, which binds administrator bots as well); a decision older than that edits the card to the outcome without links, and the venue's auto-delete covers the rest |
 | a force-reply prompt's message and the reply to it | the admin venue, or the replier's own chat | when the reply is captured; within the same 48 hours otherwise |
-| each reporter message of the intake | the reporter's chat | on receipt, by the handler that processed it, after the draft write and before the step's reply, with one retry; if the delete still fails the reply asks the reporter to delete it; no message id is kept |
+| every message a reporter or member sends the bot in a private chat: each intake step, refused and misplaced messages and every command (a keyholder's own commands excepted) | the sender's chat | on receipt, outside lockdown, by the handler that took it, after the write that recorded it and before the reply, with one retry; if the delete still fails the reply asks the sender to delete it; no message id is kept; under lockdown nothing is read, stored or deleted |
 | the intake acknowledgement | the reporter's chat | deletes itself at `min(handlerStart + 25 s, ackSent + 20 s)`; no message id is kept; the hotline message sent for a "sexual content involving a minor" label stays, and carries no URL |
 | the keyholder's approval notice (the rendered post text with its Cancel and Lockdown buttons) | the keyholder's chat | edited to "posted" or "cancelled" without links once the outcome is known |
 
@@ -119,11 +119,13 @@ reporter is never told.
 
 ## Chat hygiene
 
-- Reporter side: every reporter message is deleted by the handler that
-  processed it, after the draft write that recorded its content has
-  committed and before the step's reply (one retry; then the reply asks
-  the reporter to delete it themselves and the failure is logged by
-  class), so an abandoned draft leaves no URL in the reporter's chat; the
+- Reporter side: outside lockdown every message the bot receives in a
+  private chat, commands included (a keyholder's own commands excepted),
+  is deleted by the handler that took it, after the write that recorded
+  its content has committed and before the reply (one retry; then the
+  reply asks the reporter to delete it themselves and the failure is
+  logged by class), so an abandoned draft leaves no URL in the reporter's
+  chat; the
   acknowledgement names the report by platform and date, never echoes the
   URL and deletes itself; no decision message ever arrives; `/start` says
   so.

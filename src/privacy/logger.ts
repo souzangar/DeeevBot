@@ -50,6 +50,13 @@ export const LOG_EVENTS = [
   // A keyholder set or lifted the lockdown switch (src/telegram/commands.ts).
   'lockdown.set',
   'lockdown.cleared',
+  // A message received in a private chat still there after one retry (the
+  // reply asks the sender to delete it; src/telegram/delete-message.ts), the
+  // intake acknowledgement's self-deletion failed, a press's prompt was not
+  // edited (src/telegram/intake.ts).
+  'intake.message_not_deleted',
+  'intake.ack_not_deleted',
+  'intake.prompt_not_edited',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 

@@ -94,7 +94,8 @@ describe("the later units' slot", () => {
     await harness.send(privateMessage(IDS.reporter, 'any text'));
     await harness.send(privateMessage(IDS.keyholder, '/lockdown'));
     expect(seen).toEqual(['probe', 'message']);
-    expect(harness.textsTo(IDS.reporter)).toEqual(['probed', t('en', 'fallback.help')]);
+    // 'any text' went on to the intake entry, which took it as a link that is none.
+    expect(harness.textsTo(IDS.reporter)).toEqual(['probed', `${t('en', 'intake.refused.not_a_link')}\n\n${t('en', 'intake.ask_url')}`]);
     expect(harness.textsTo(IDS.keyholder)).toEqual([t('en', 'lockdown.on')]);
   });
 });
@@ -196,7 +197,7 @@ describe('the error boundary', () => {
     };
     const telegram = fakeBotApi();
     const log = recordingLogger();
-    const bot = createBot({ config, db: failing, clock: { now: () => 0 }, logger: log.logger, fetch: telegram.fetch });
+    const bot = createBot({ config, db: failing, clock: { now: () => 0, sleep: () => Promise.resolve() }, logger: log.logger, fetch: telegram.fetch });
     await bot.handleUpdate(privateMessage(IDS.reporter, '/start'));
     expect(telegram.callsOf('sendMessage').map((call) => call.payload.text)).toEqual([t('en', 'error.unexpected')]);
     expect(log.records()).toEqual([

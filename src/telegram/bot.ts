@@ -17,7 +17,8 @@
 // 5. the later units' composers (`features`: the admin commands and
 //    buttons, behind the gates of src/telegram/guards.ts), in order;
 // 6. the intake entry, lockdown-gated (src/telegram/intake-entry.ts), which
-//    takes every private message nothing before it took;
+//    takes every private message nothing before it took, and the intake's
+//    own button presses: the intake conversation (src/telegram/intake.ts);
 // 7. every other button press, answered empty so its spinner stops.
 //
 // The bot's error handler (`bot.catch`), which grammY calls on the long
@@ -34,6 +35,7 @@
 // (src/telegram/webhook.ts).
 import { Bot, Composer, type Context, type Middleware, type MiddlewareFn } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
+import type { MembershipCache } from '../auth/membership';
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import type { SqlDb } from '../db/sql';
@@ -53,6 +55,8 @@ export interface BotDeps {
   readonly logger: Logger;
   /** The Bot API's transport: the runtime's fetch, or the fake Bot API's in tests. */
   readonly fetch: typeof fetch;
+  /** The intake's membership answers: the isolate's own cache unless given (tests pass a fresh one). */
+  readonly membershipCache?: MembershipCache;
 }
 
 /** The bot's own identity, from BOT_ID and BOT_USERNAME: grammY never calls getMe. */

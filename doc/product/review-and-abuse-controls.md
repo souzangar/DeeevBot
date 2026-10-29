@@ -82,28 +82,33 @@ The owner's rule: "Anyone, with stricter limits for non-members".
   request meter). The owner's go-live probe verifies that `getChatMember`
   answers for a plain-member bot; otherwise `MEMBERSHIP_CHAT_ID` becomes
   the broadcast channel, which the bot administers.
-- Members: 5 open reports, 20 per day. Non-members: 1 report per day and
-  a global cap of 20 non-member reports per day (admin cards are the
-  scarce resource). There is no subscription for anyone; the channel is
+- Members: 5 open reports (pending a decision, counted from the reports
+  at each submit), 20 per day. Non-members: 1 report per day and a global
+  cap of 20 non-member reports per day (admin cards are the scarce
+  resource). There is no subscription for anyone; the channel is
   joined in the app.
 - Intake is text-only. A message carrying media or a forwarded post is
   refused with a reply and deleted, never stored, forwarded or copied.
-- Each reporter message is deleted by the handler that processed it,
-  before the step's reply, with one retry and a fallback that asks the
-  reporter to delete it themselves; the comment prompt warns against
-  identifying details and the comment is limited to 500 characters
+- Outside lockdown every message the bot receives in a private chat is
+  deleted on receipt, whatever it is (an intake step, a refused message, a
+  command, `/start` and `/language` included; a keyholder's own commands
+  excepted), before the reply, with one retry and a fallback that asks
+  the sender to delete it themselves; under lockdown nothing is read,
+  stored or deleted. The comment prompt warns against identifying details
+  and the comment is limited to 500 characters
   ([Report lifecycle](./report-lifecycle.md)).
 
 ## Duplicate detection
 
 A keyed hash of the normalised URL identifies a target. A second report of
-the same open target becomes its own row merged into the first; the admin
-decides once per target, and a routing nulls the links and comment of the
-merged rows in the same batch. The acknowledgement is identical for new
-and merged reports, so nobody can probe whether a target was already
-reported. For a target that was reported and closed before, the keyed
-link hash in the aggregate row lets the admin's card say "previously
-reported, outcome X"; the reporter is never told.
+the same open target (a report pending, approved, posting or posted)
+becomes its own row merged into the first; the admin decides once per
+target, and a routing nulls the links and comment of the merged rows in
+the same batch. The acknowledgement is identical for new and merged
+reports, so nobody can probe whether a target was already reported. For a
+target that was reported and closed before, the keyed link hash in the
+aggregate row lets the admin's card say "previously reported, outcome X";
+the reporter is never told.
 
 ## Block list and rejection throttle
 

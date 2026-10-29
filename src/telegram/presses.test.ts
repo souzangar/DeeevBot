@@ -223,7 +223,7 @@ describe('recordPress', () => {
     batch: () => Promise.reject(new AppError('STORAGE_CAP_HIT', 'D1 batch failed')),
   };
   const config = { broadcastChatId: IDS.broadcastChannel, marksPerDay: 10, marksPerReport: 10 };
-  const clock = { now: () => NOW };
+  const clock = { now: () => NOW, sleep: () => Promise.resolve() };
 
   it('runs no query at all under the LOCKDOWN override', async () => {
     expect(await recordPress({ config: { ...config, lockdown: true }, db: failing, clock }, randomId(), 1)).toBe(false);

@@ -1,7 +1,7 @@
 ---
 type: reference
 title: "Platform reporting: other platforms"
-description: "What holds on every platform read, the checklist an admin follows to write instructions for a platform without its own reference page, and the template for adding one."
+description: "What holds on every platform read, the checklist the fixed instruction blocks for a platform without its own reference page are written from, and the template for adding one."
 status: active
 tags: [reference, platform, reporting, template]
 timestamp: 2026-10-28T00:00:00Z
@@ -14,10 +14,11 @@ platforms"; Telegram was added because the owner's own cases live there.
 Each named platform has its own page
 (`platform-reporting-instagram.md`, `platform-reporting-x.md`,
 `platform-reporting-facebook.md`, `platform-reporting-tiktok.md`,
-`platform-reporting-telegram.md`). For any other platform the admin writes
-the broadcast's instructions by hand (the category "other" in
-[report-categories-and-routing.md](../product/report-categories-and-routing.md)),
-following this page. Nothing on this page was researched for a specific
+`platform-reporting-telegram.md`). For any other platform the post quotes
+a fixed instruction block per category, written from this page's
+checklist (the platform "other" in
+[report-categories-and-routing.md](../product/report-categories-and-routing.md));
+no admin writes instructions. Nothing on this page was researched for a specific
 other platform; everything specific to such a platform is unverified until
 it has a reference page of its own.
 
@@ -136,10 +137,14 @@ Reading notes that apply to any platform:
 
 ## What the bot's instructions say
 
-For a platform without a reference page, the admin writes the instruction
-block in the approval flow. The bot adds nothing platform-specific. Write
-it from this checklist, in English (the Persian copy follows the same
-rules):
+For a platform without a reference page, the post quotes a fixed block
+per category (the catalogs' `instructions.other.<slug>` keys), and a
+report of the category "other" on any platform quotes the fixed generic
+block (`instructions.generic`): since the scope reduction of 2026-10-28
+no admin writes instructions, and the recommended comment is the only
+admin text. The blocks name nothing platform-specific. They were written
+from this checklist, which also governs any change to them, in English
+(the Persian copy follows the same rules):
 
 1. Name the in-app path you verified in the isolated browser profile: where
    the Report option is on a post and on a profile. If you could not find

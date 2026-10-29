@@ -456,6 +456,10 @@ Impersonation:
 - Reason "Fake Account" on the channel, the user or the bot; a person
   being impersonated can also contact @NoToScam.
 - Points to make: whom it imitates and what it does with the identity.
+- The bot's block leaves out the @NoToScam line: every post carries the
+  fixed warning never to join a chat on anyone's instructions, and a
+  mention would also be a tappable Telegram link, which the link policy
+  never sends.
 
 Intimate images shared without consent:
 

@@ -10,7 +10,8 @@
 //   the bot drops without a call, since SELF's outbound fetch is the real
 //   network.
 // - Through createWorker() with the fake Bot API, the same handler on the
-//   real D1: a reply leaves with previews off and HTML; a keyholder's
+//   real D1: /start is deleted on receipt and the reply leaves with
+//   previews off and HTML; a keyholder's
 //   /lockdown writes the switch to D1, intake then answers the neutral
 //   text, /unlock clears it; and a press is counted in one D1 batch, which
 //   relies on SQLite's changes() between the batch's two statements on D1.
@@ -106,10 +107,16 @@ describe('the Worker entry with the fake Bot API, on D1', () => {
     return { response, telegram, log };
   };
 
-  it("replies to /start with previews off and HTML, in the reader's own chat", async () => {
-    const { response, telegram } = await run(privateMessage(IDS.reporter, '/start', { languageCode: 'fa' }));
+  it("deletes /start on receipt and replies with previews off and HTML, in the reader's own chat", async () => {
+    const update = privateMessage(IDS.reporter, '/start', { languageCode: 'fa' });
+    const { response, telegram } = await run(update);
     expect(response.status).toBe(200);
     expect(telegram.calls).toEqual([
+      {
+        method: 'deleteMessage',
+        chatId: IDS.reporter,
+        payload: { chat_id: IDS.reporter, message_id: update.message?.message_id },
+      },
       {
         method: 'sendMessage',
         chatId: IDS.reporter,

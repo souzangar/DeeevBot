@@ -51,7 +51,7 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | From | To | Trigger | Recorded |
 |---|---|---|---|
 | intake | `pending` | the reporter completes the intake conversation (below) | the report row: platform, category, URL, account URL, comment, affected-person flag, the keyed reporter reference (never the chat id), the keyed link hash, `created_at` |
-| intake | `merged` | the keyed hash of the normalised URL matches an open target | its own row with `merged_into` the first; the acknowledgement is identical to a new report's |
+| intake | `merged` | the keyed hash of the normalised URL matches an open target (pending, approved, posting or posted) | its own row with `merged_into` the oldest such report; the acknowledgement is identical to a new report's |
 | `pending` | `approved` | an allowlisted admin presses Approve, confirms the category, picks the link mode and replies to the recommended-comment prompt; the allowlist is re-checked at every step; the rendered post is validated in both locales against 4096 characters and the link allowlist before anything is written | the approval row: a random `approval_id`, `admin_id`, `approved_at`, `link_mode`, `recommended_comment`, `starts_at` (now plus the grace); a `post` job due at `starts_at` (`INSERT OR IGNORE`) carrying that `approval_id`; the card edited to show Cancel; a status card; every keyholder notified by direct message with the rendered post text, a Cancel button for the whole grace and a Lockdown button beside it |
 | `approved` | `pending` | an admin presses Cancel on the card, or a keyholder presses Cancel on the notice, within the grace | `voided_at` set on the approval; the post job deleted; the keyholder notice edited to "cancelled" without links |
 | `approved` | `posting` | the tick finds the due `post` job and claims the report with one conditional update (below) | `posting_started_at`; the send follows in the same invocation |
@@ -150,32 +150,83 @@ lockdown, which overrides all of this, is in the
 
 ## Intake
 
-Private chats only; text only (a message carrying media or a forward is
-refused with a reply and deleted). The draft is keyed by the reporter
+Private chats only, behind the lockdown gate; text only: a message
+carrying anything but text (a photo, a document, a sticker, a voice note,
+a location, a poll and the like), a forward, a message sent through an
+inline bot and a reply quoting another chat are refused with a reply and
+deleted, never read. The draft (`drafts`) is keyed by the reporter
 reference computed from the update's chat id, which is never stored in
-plaintext. The steps:
+plaintext; its locale is the reporter's resolved one, or the choice of
+`/language`, which the draft keeps. The steps (`drafts.step`):
 
-1. the URL, checked against the link policy of
-   [categories and routing](./report-categories-and-routing.md);
-2. the account link, when it cannot be derived from the URL ("I don't
-   know" is an answer);
-3. the category;
-4. the affected-person flag;
-5. an optional comment, at most 500 characters; the prompt says not to
-   write names, phone numbers or anything that identifies the reporter;
-6. submit; `/cancel` at any step drops the draft.
+1. `url`: one link, as text: the message itself when it is one token (an
+   address without a scheme, `instagram.com/name`, is read as https),
+   else the one token with `://`. It passes the link policy of
+   [categories and routing](./report-categories-and-routing.md), and a
+   refusal says why: not a link, more than one, a shortener or redirect,
+   a Telegram link outside `t.me/<username>` and
+   `t.me/<username>/<digits>`, a page that is no account or post, any
+   other refused link. The draft is written with the normalised link, its
+   platform and the account it names, if it names one;
+2. `account`: the account's link, asked for only when the URL does not
+   name it (an Instagram `/p/` link, a Facebook share link, reel or group
+   post, a site other than the five platforms); it must be an account on
+   the same platform. The "I don't know" button skips it, and the admin
+   finds the account;
+3. `category`: seven buttons, the categories of the routing table, the
+   suspected-CSAM one labelled "sexual content involving a minor";
+4. `affected`: "I am the affected person", yes or no, as buttons;
+5. `comment`: optional, at most 500 characters, `/skip` for none; the
+   prompt says not to write names, phone numbers or anything that
+   identifies the reporter. The comment, or `/skip`, submits the report.
 
-Every reporter message is deleted by the handler that processed it, after
-the draft write that recorded its content has committed and before the
-step's reply is sent; the delete is awaited and retried once, and if it
-still fails the reply asks the reporter to delete that message themselves
-and the failure is logged by class. So an abandoned draft leaves no URL
-in the reporter's chat and the draft needs no message ids. Limits by the
-reference: members of the NGO group (`getChatMember` on the update's user
-id) 5 open reports and 20 a day; non-members 1 a day and a global 20 a
-day; three rejections in 30 days throttle a reference to 1 a day; a
-blocked reference is refused. Under lockdown intake answers "temporarily
-unavailable" and stores nothing.
+A button press is answered (`answerCallbackQuery`) and edits the prompt
+it sat on into the next one, so a press never causes a new message. A
+message at a step a press answers repeats that step's prompt, and a press
+on an old prompt is answered "already answered"; neither changes
+anything. Every draft write is conditional on the step it leaves, so a
+double press or a message sent twice moves a draft on once. `/cancel`
+deletes the draft at any step. A command the intake does not know is
+deleted like every other message, and nothing is stored; it gets the
+answer every unknown command gets.
+
+Outside lockdown every message the bot receives in a private chat is
+deleted on receipt, whatever it is: every intake step, a refused or
+misplaced message, `/cancel`, `/skip`, a command the bot does not know,
+`/start` and `/language`. The only exceptions are a keyholder's own
+commands (`/start` from a keyholder, `/lockdown`, `/unlock`), whose chat
+is an operations log the keyholder keeps, and the lockdown path, which
+reads, stores and deletes nothing. Each message is deleted by the handler
+that took it, after the write that recorded its content has committed
+and before the reply is sent; a refused or misplaced message records
+nothing and is deleted at once. The delete is awaited and
+retried once, a message already gone counts as deleted, and if it still
+fails the reply asks the reporter to delete that message themselves and
+the failure is logged by class. If anything fails before the message was
+deleted (a read, the membership check, the write), it is deleted all the
+same before the error reply. So an abandoned draft leaves no URL in the
+reporter's chat and the draft needs no message ids.
+
+The submit is one D1 batch: the draft deleted, from the comment step only
+(a second submit of the same draft writes nothing); the reference's
+`reporter_stats` row, written only if the limits hold; the report; the
+day's non-member count. Members of the NGO group (`getChatMember` on the
+update's user id, cached in memory, never stored) may have 5 open
+reports, open meaning pending a decision, and submit 20 a day;
+non-members 1 a day, and 20 a day all together; three rejections in 30
+days throttle a reference to 1 a day; a blocked reference is refused. The
+open count is read from `reports` at each submit, so no decision has to
+keep a counter right; `reporter_stats.open_count` holds it as of the
+reference's last submit. A refused submit gets the neutral
+`error.rate_limited`, a blocked reference included, and keeps nothing:
+the draft is deleted. The report is `merged` into the oldest open target
+with the same keyed link hash (the HMAC of the normalised URL under the
+reporter-reference key, `src/privacy/link-hash.ts`), open meaning
+pending, approved, posting or posted: a report in `closing` or
+`retracting` is leaving the channel, so a new report of its target is
+reviewed afresh; otherwise it is `pending`. Under lockdown intake answers
+"temporarily unavailable" to a message and to a button press alike, and
+stores and deletes nothing.
 
 ## What the reporter is told
 
@@ -185,7 +236,9 @@ unavailable" and stores nothing.
   appear in the channel, and deletes itself from inside the same
   `waitUntil` at `min(handlerStart + 25 s, ackSent + 20 s)`, so the
   runtime's 30-second lifetime after the response is never exceeded; no
-  message id is stored for it.
+  message id is stored for it. The handler waits for it on the clock
+  port, so on the Node port's long polling updates must be handled
+  concurrently. The replies before it echo nothing the reporter sent.
 - When the reporter's label is "sexual content involving a minor", a
   second, persistent message carries the public hotline links and nothing
   else (no target URL), so the reporter can report directly whatever the

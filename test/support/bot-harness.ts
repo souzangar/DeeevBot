@@ -1,11 +1,14 @@
 // The bot under test, wired as the Worker wires it (src/telegram/bot.ts),
 // over the fakes: the fake Bot API (test/fakes/bot-api.ts) behind grammY's
 // real client and the one transformer, a migrated node:sqlite database, a
-// fake clock and the real redacting logger over a recorder. send() hands an
-// update to bot.handleUpdate as the webhook does.
+// fake clock (its sleep() moves time on at once) and the real redacting
+// logger over a recorder, with a fresh membership cache per harness, so no
+// getChatMember answer is shared between tests. send() hands an update to
+// bot.handleUpdate as the webhook does.
 import type { DatabaseSync } from 'node:sqlite';
 import type { Bot, Context, Middleware } from 'grammy';
 import type { Update } from 'grammy/types';
+import { createMembershipCache } from '../../src/auth/membership';
 import type { Config } from '../../src/config/schema';
 import type { SqlDb } from '../../src/db/sql';
 import { botInfoFor, createBot } from '../../src/telegram/bot';
@@ -46,7 +49,10 @@ export function botHarness(options: HarnessOptions = {}): BotHarness {
   const database = migratedDatabase(clock);
   const log = recordingLogger();
   const features = options.features?.({ config, db: database.db }) ?? [];
-  const bot = createBot({ config, db: database.db, clock, logger: log.logger, fetch: telegram.fetch }, features);
+  const bot = createBot(
+    { config, db: database.db, clock, logger: log.logger, fetch: telegram.fetch, membershipCache: createMembershipCache() },
+    features,
+  );
   return {
     config,
     telegram,

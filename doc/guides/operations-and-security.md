@@ -304,8 +304,9 @@ non-members 1 report per day, a global cap of 20 non-member reports per
 day across all non-members (admin cards are the scarce resource). There
 is no subscription for anyone. Intake is text-only: media and forwarded
 posts are refused with a reply and deleted, never stored, forwarded or
-copied; every reporter message is deleted on receipt and the
-acknowledgement deletes itself. A reference with 3 rejections in 30 days
+copied; every message a reporter sends the bot is deleted on receipt,
+commands included (a keyholder's own commands excepted; under lockdown
+nothing is deleted), and the acknowledgement deletes itself. A reference with 3 rejections in 30 days
 is throttled to 1 report per day; blocks persist.
 
 ## 4. Logs and telemetry

@@ -2,7 +2,9 @@
 // the Telegram wiring that writes a log line: the error boundary (a failing
 // handler, a failing answer), the webhook (a failing update, an unreadable
 // body), the Worker entry (a configuration that does not load), the
-// membership check and the alerts (failing calls), the lockdown commands.
+// membership check and the alerts (failing calls), the lockdown commands,
+// and the intake (a reporter message, a prompt edit, the acknowledgement or
+// its self-deletion failing).
 // Each is driven with updates and texts that carry a reported URL, a
 // comment, the reporter's, the admins', the keyholders' and the chats'
 // Telegram ids, and with Bot API failures whose GrammyError payloads carry
@@ -16,8 +18,10 @@ import { alertKeyholders, alertVenue } from '../../src/telegram/alerts';
 import { createBotApi } from '../../src/telegram/api';
 import { handleWebhook, SECRET_HEADER } from '../../src/telegram/webhook';
 import { createWorker } from '../../src/worker';
+import { pressData } from '../../src/review/intake';
 import { FAILURES, rateLimited } from '../fakes/bot-api';
 import { botHarness } from '../support/bot-harness';
+import { reporterIn } from '../support/intake-driver';
 import { IDS, TEST_VARIABLES } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
 
@@ -153,5 +157,31 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
       'alert.failed',
     ]);
     expectClean(harness.log.lines);
+  });
+
+  it('the intake, when a reporter message, a prompt edit, the acknowledgement and its self-deletion fail', async () => {
+    const harness = botHarness();
+    const reporter = reporterIn(harness, IDS.reporter, { username: 'reporter_handle' });
+    harness.telegram.fail({ method: 'deleteMessage' }, FAILURES.messageCantBeDeleted, 2);
+    await reporter.say(`${REPORTED_URL} ${COMMENT}`);
+    harness.telegram.fail({ method: 'editMessageText' }, FAILURES.serverError, 1);
+    await reporter.press(pressData({ kind: 'category', category: 'private_data' }));
+    await reporter.say('/skip');
+    await reporter.press(pressData({ kind: 'affected', affected: false }));
+    harness.telegram.fail({ method: 'sendMessage' }, FAILURES.botBlocked, 1);
+    await reporter.say(COMMENT);
+    const second = reporterIn(harness, IDS.stranger);
+    await second.say(REPORTED_URL);
+    await second.press(pressData({ kind: 'category', category: 'csam' }));
+    await second.press(pressData({ kind: 'affected', affected: true }));
+    harness.telegram.fail({ method: 'deleteMessage' }, FAILURES.timeout);
+    await second.say(COMMENT);
+    const events = harness.log.records().map((record) => record.event);
+    expect(events).toContain('intake.message_not_deleted');
+    expect(events).toContain('intake.prompt_not_edited');
+    expect(events).toContain('intake.ack_not_deleted');
+    expect(events).toContain('reply.failed');
+    expectClean(harness.log.lines);
+    expect(harness.log.text()).not.toContain('reporter_handle');
   });
 });

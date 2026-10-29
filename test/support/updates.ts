@@ -23,6 +23,10 @@ export interface SenderOptions {
 export interface MessageOptions extends SenderOptions {
   /** Marks the message as forwarded (a hidden user's). */
   readonly forwarded?: boolean;
+  /** Marks the message as sent through an inline bot. */
+  readonly viaBot?: boolean;
+  /** Marks the message as a reply quoting a message of another chat. */
+  readonly externalReply?: boolean;
 }
 
 const sender = (id: number, options: SenderOptions) => ({
@@ -51,6 +55,10 @@ const textMessage = (chat: Message['chat'], userId: number, text: string, option
     ...(options.forwarded === true
       ? { forward_origin: { type: 'hidden_user' as const, date: DATE - 60, sender_user_name: 'Someone Else' } }
       : {}),
+    ...(options.viaBot === true ? { via_bot: { id: 424240099, is_bot: true as const, first_name: 'Inline', username: 'some_inline_bot' } } : {}),
+    ...(options.externalReply === true
+      ? { external_reply: { origin: { type: 'hidden_user' as const, date: DATE - 60, sender_user_name: 'Someone Else' } } }
+      : {}),
   };
 };
 
@@ -73,6 +81,62 @@ export function privatePhoto(userId: number, caption: string, options: SenderOpt
       from: sender(userId, options),
       photo: [{ file_id: 'photo-file', file_unique_id: 'photo-unique', width: 10, height: 10 }],
       caption,
+    },
+  };
+}
+
+/** What a private message can carry instead of text. */
+export const MEDIA_KINDS = ['photo', 'document', 'video', 'sticker', 'voice', 'animation', 'location', 'contact', 'poll'] as const;
+export type MediaKind = (typeof MEDIA_KINDS)[number];
+
+const FILE = { file_id: 'media-file', file_unique_id: 'media-unique' };
+
+/** The field a message of `kind` carries, with the least Telegram sends for it. */
+const mediaField = (kind: MediaKind): Record<string, unknown> => {
+  switch (kind) {
+    case 'photo':
+      return { photo: [{ ...FILE, width: 10, height: 10 }] };
+    case 'document':
+      return { document: { ...FILE, file_name: 'leak.pdf' } };
+    case 'video':
+      return { video: { ...FILE, width: 10, height: 10, duration: 1 } };
+    case 'sticker':
+      return { sticker: { ...FILE, type: 'regular', width: 10, height: 10, is_animated: false, is_video: false } };
+    case 'voice':
+      return { voice: { ...FILE, duration: 1 } };
+    case 'animation':
+      return { animation: { ...FILE, width: 10, height: 10, duration: 1 } };
+    case 'location':
+      return { location: { latitude: 35.7, longitude: 51.4 } };
+    case 'contact':
+      return { contact: { phone_number: '09120000000', first_name: 'Someone' } };
+    case 'poll':
+      return {
+        poll: {
+          id: 'poll',
+          question: 'Q',
+          options: [],
+          total_voter_count: 0,
+          is_closed: false,
+          is_anonymous: true,
+          type: 'regular',
+          allows_multiple_answers: false,
+        },
+      };
+  }
+};
+
+/** A private-chat message carrying `kind` instead of text, with `caption` where the kind takes one. */
+export function privateMedia(userId: number, kind: MediaKind, caption?: string, options: SenderOptions = {}): Update {
+  return {
+    update_id: nextUpdateId(),
+    message: {
+      message_id: nextMessageId(),
+      date: DATE,
+      chat: { id: userId, type: 'private', first_name: options.firstName ?? 'Tester' },
+      from: sender(userId, options),
+      ...mediaField(kind),
+      ...(caption === undefined ? {} : { caption }),
     },
   };
 }
