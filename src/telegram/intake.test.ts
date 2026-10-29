@@ -263,15 +263,17 @@ describe('the acknowledgement', () => {
     expect(harness.telegram.messagesIn(IDS.reporter).some((message) => message.text === ackText('X'))).toBe(false);
   });
 
-  it('deletes itself 25 seconds after the handler started when the send itself was slow', async () => {
+  /** The conversation over a Bot API whose sends take 12 seconds each, to `slowChats` only when given. */
+  const slowReport = async (slowChats?: readonly number[]) => {
     const config = testConfig();
     const clock = fakeClock(NOW);
     const telegram = fakeBotApi({ botInfo: botInfoFor(config), now: () => clock.now() });
     const { db } = migratedDatabase(clock);
-    // Every send takes 12 seconds.
     const slow: typeof fetch = async (input, init) => {
       const response = await telegram.fetch(input, init);
-      if (String(input instanceof Request ? input.url : input).endsWith('/sendMessage')) clock.advance(12_000);
+      const chatId = (JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { chat_id?: number }).chat_id;
+      const isSend = String(input instanceof Request ? input.url : input).endsWith('/sendMessage');
+      if (isSend && (slowChats === undefined || (chatId !== undefined && slowChats.includes(chatId)))) clock.advance(12_000);
       return response;
     };
     const bot = createBot({ config, db, clock, logger: recordingLogger().logger, fetch: slow, membershipCache: createMembershipCache() });
@@ -281,8 +283,20 @@ describe('the acknowledgement', () => {
       category: 'other',
       affected: false,
     });
+    return { clock, telegram };
+  };
+
+  it('deletes itself 25 seconds after the handler started when the send itself was slow', async () => {
     // The handler started, the acknowledgement took 12 s: 25 s from the start is the earlier bound.
+    const { clock } = await slowReport([IDS.reporter]);
     expect(clock.sleeps).toEqual([13_000]);
+  });
+
+  it('still deletes itself 25 seconds after the handler started when the review card was slow too', async () => {
+    // The acknowledgement took 12 s, the card to the venue 12 s more: 1 s is left of the 25.
+    const { clock, telegram } = await slowReport();
+    expect(clock.sleeps).toEqual([1_000]);
+    expect(telegram.callsOf('sendMessage').map((call) => call.chatId)).toEqual([IDS.reporter, IDS.reporter, IDS.adminChat]);
   });
 
   it('is followed, for a "sexual content involving a minor" label, by a persistent message with the hotline links and nothing else', async () => {

@@ -175,6 +175,52 @@ describe('the submit', () => {
     expect(await statsOf(db, ref(11))).toMatchObject({ open_count: 1, day_count: 2 });
   });
 
+  it('stores no comment and no affected-person flag on a merged report', async () => {
+    const { db, clock } = setup();
+    expect(await submitFresh(db, clock, ref(21), { comment: 'the first view' })).toBe('submitted');
+    expect(await submitFresh(db, clock, ref(22), { comment: 'a second view', affectedPerson: false })).toBe('submitted');
+    expect(await db.all(sql`SELECT status, comment, affected_person FROM reports ORDER BY status DESC`)).toEqual([
+      { status: 'pending', comment: 'the first view', affected_person: 0 },
+      { status: 'merged', comment: null, affected_person: null },
+    ]);
+  });
+
+  it("raises a pending target's flag when the merged report's reporter is the affected person", async () => {
+    const { db, clock } = setup();
+    expect(await submitFresh(db, clock, ref(23), { affectedPerson: false })).toBe('submitted');
+    expect(await submitFresh(db, clock, ref(24), { affectedPerson: true, comment: 'it is my data' })).toBe('submitted');
+    expect(await db.all(sql`SELECT status, comment, affected_person FROM reports ORDER BY status DESC`)).toEqual([
+      { status: 'pending', comment: 'a note', affected_person: 1 },
+      { status: 'merged', comment: null, affected_person: null },
+    ]);
+  });
+
+  it('never raises the flag of a target already decided, nor for a refused submit', async () => {
+    const { db, clock } = setup();
+    const id = randomId();
+    await db.run(
+      sql`INSERT INTO reports (id, status, platform, category, link_hash, affected_person, created_at) VALUES (?, 'pending', 'instagram', 'harassment', ?, 0, ?)`,
+      [id, HASH, NOW - 5_000],
+    );
+    await db.run(
+      sql`INSERT INTO approvals (report_id, approval_id, admin_id, approved_at, link_mode, recommended_comment, starts_at) VALUES (?, ?, 424240011, ?, 'post', 'points', ?)`,
+      [id, randomId(), NOW - 6_000, NOW - 6_000],
+    );
+    await db.run(sql`UPDATE reports SET status = 'approved' WHERE id = ?`, [id]);
+    expect(await submitFresh(db, clock, ref(25), { affectedPerson: true })).toBe('submitted');
+    expect(await db.first(sql`SELECT affected_person FROM reports WHERE id = ?`, [id])).toEqual({ affected_person: 0 });
+    // A blocked reference's refused submit merges nothing and raises nothing.
+    const pending = randomId();
+    await db.run(sql`INSERT INTO reports (id, status, platform, category, link_hash, affected_person, created_at) VALUES (?, 'pending', 'x', 'other', ?, 0, ?)`, [
+      pending,
+      OTHER_HASH,
+      NOW - 5_000,
+    ]);
+    await db.run(sql`INSERT INTO reporter_stats (reporter_ref, blocked, last_seen) VALUES (?, 1, ?)`, [ref(26), DAY]);
+    expect(await submitFresh(db, clock, ref(26), { affectedPerson: true, linkHash: OTHER_HASH })).toBe('limited');
+    expect(await db.first(sql`SELECT affected_person FROM reports WHERE id = ?`, [pending])).toEqual({ affected_person: 0 });
+  });
+
   it.each(['approved', 'posting', 'posted'])('merges into a target that is %s', async (status) => {
     const { db, clock } = setup();
     const id = randomId();
@@ -330,11 +376,13 @@ describe('the limits', () => {
 });
 
 describe('submitStatements', () => {
-  it('is four statements, the first the draft taken from the comment step', () => {
+  it('is five statements, the first the draft taken from the comment step, the next three chained by changes(), the flag last', () => {
     const statements = submitStatements(input(ref(50)), NOW);
-    expect(statements).toHaveLength(4);
+    expect(statements).toHaveLength(5);
     expect(statements[0]?.sql).toMatch(/^DELETE FROM drafts WHERE draft_key = \? AND step = 'comment'$/);
     expect(statements[0]?.params).toEqual([ref(50)]);
-    expect(statements.map((statement) => statement.sql).slice(1).every((text) => text.includes('changes() = 1'))).toBe(true);
+    expect(statements.map((statement) => statement.sql).slice(1, 4).every((text) => text.includes('changes() = 1'))).toBe(true);
+    expect(statements[4]?.sql).toMatch(/^UPDATE reports SET affected_person = 1 WHERE /);
+    expect(statements[4]?.sql).not.toContain('changes()');
   });
 });

@@ -45,6 +45,12 @@
 //   label is "sexual content involving a minor", a second, persistent
 //   message carries the hotline links and nothing else. A limit answers the
 //   neutral `error.rate_limited`, a blocked reference included.
+// - A submitted report that is pending (not a duplicate merged into an
+//   open target) gets its review card in the admin review venue, right
+//   after the acknowledgement and before its wait (src/review/card-post.ts):
+//   the one message an intake update sends outside the reporter's own chat,
+//   and to the venue only. A card that fails is logged by class and ends
+//   nothing: the report is in, and /card posts its card later.
 // - On the Node port's long polling, updates must be handled concurrently
 //   (grammY's runner, unit U7): this handler waits up to 25 seconds after
 //   the acknowledgement, and a sequential loop would hold every other
@@ -63,6 +69,7 @@ import { checkReportedLink, outgoingLinkProblems, type LinkRefusal } from '../pl
 import { linkHash } from '../privacy/link-hash';
 import type { Logger } from '../privacy/logger';
 import { reporterRef } from '../privacy/reporter-ref';
+import { postReviewCard } from '../review/card-post';
 import { CATEGORIES, ROUTING } from '../review/categories';
 import {
   cancelDraft,
@@ -246,11 +253,12 @@ async function accountStep(turn: Turn, draft: Draft, text: string): Promise<void
 
 /**
  * The acknowledgement (see the header), then the hotline message for a
- * "sexual content involving a minor" label, then the wait and the
- * acknowledgement's deletion. A failed send is logged by class and ends
- * nothing else: the report is in already.
+ * "sexual content involving a minor" label, then the review card of report
+ * `reportId` in the venue, then the wait and the acknowledgement's
+ * deletion. A failed send is logged by class and ends nothing else: the
+ * report is in already.
  */
-async function acknowledge(turn: Turn, content: CompleteDraft, now: number, deleted: boolean): Promise<void> {
+async function acknowledge(turn: Turn, content: CompleteDraft, now: number, deleted: boolean, reportId: string): Promise<void> {
   const { deps, ctx, chatId, locale } = turn;
   const platform = t(locale, PLATFORM_NAME_KEYS[content.platform]);
   const text = withDeleteNote(locale, t(locale, 'intake.ack', { platform, date: utcDay(now) }), deleted);
@@ -268,6 +276,7 @@ async function acknowledge(turn: Turn, content: CompleteDraft, now: number, dele
       deps.logger.logError('reply.failed', error);
     }
   }
+  await postReviewCard({ api: ctx.api, config: deps.config, db: deps.db, logger: deps.logger }, reportId);
   if (ack === undefined) return;
   await deps.clock.sleep(ackDeleteAt(turn.handlerStart, ackSentAt) - deps.clock.now());
   try {
@@ -294,14 +303,11 @@ async function submit(turn: Turn, draft: Draft, comment: string | null): Promise
     turn.userId,
   );
   const hash = await linkHash(content.url, deps.config.reporterRefKey);
-  const outcome = await submitReport(
-    deps.db,
-    { reporterRef: turn.key, reportId: randomId(), member, ...content, comment, linkHash: hash },
-    now,
-  );
+  const reportId = randomId();
+  const outcome = await submitReport(deps.db, { reporterRef: turn.key, reportId, member, ...content, comment, linkHash: hash }, now);
   if (outcome === 'limited') return deleteThenReply(turn, { text: t(turn.locale, 'error.rate_limited') });
   if (outcome === 'stale') return deleteThenReply(turn, { text: t(turn.locale, 'intake.nothing_pending') });
-  await acknowledge(turn, content, now, await deleteTurnMessage(turn));
+  await acknowledge(turn, content, now, await deleteTurnMessage(turn), reportId);
 }
 
 /** The comment step: a comment within the bound submits the report. */

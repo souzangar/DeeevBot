@@ -55,7 +55,8 @@ below are defined in
 
 Every table and column named here is defined in
 [ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md) and
-created by `migrations/0001_init.sql`; D1 is the only store.
+created by `migrations/0001_init.sql` and the files after it (`category` on
+`admin_prompts` by `0002_prompt_category.sql`); D1 is the only store.
 
 ### Finalization
 
@@ -80,12 +81,12 @@ being gone at once.
 | What | Where | Deleted |
 |---|---|---|
 | the intake conversation: `draft_key` (the reporter reference, never the chat id), `step`, `url`, `platform`, `account_url`, `category`, `affected_person`, `comment` and `locale` | D1 `drafts` | on submit, on `/cancel`, and by the retention job after 24 hours |
-| the review-only fields: the reporter's `comment` and the `affected_person` flag | D1 `reports`, the report and every row merged into it | at the decision (approval, rejection or routing), since they serve the review only; a pending report's at its expiry |
+| the review-only fields: the reporter's `comment` and the `affected_person` flag | D1 `reports`, the report and every row merged into it | never stored on a merged row (a merged reporter's flag raises the pending target's instead); at the decision (approval, rejection or routing), since they serve the review only; a pending report's at its expiry |
 | the reported links: `url`, `account_url` | D1 `reports`, the report and every row merged into it | at closure (finalization); for a routed report at routing, at once |
 | the report's other personal and content fields: `reporter_ref`, `link_hash`, `decided_by`, `rejection_reason` (an internal code), `broadcast_text`, `correction_text` (the retraction text), `link_mode`, `card_message_id`, `status_message_id`, `post_message_id` | D1 `reports`, the report and every row merged into it | at closure (finalization) |
 | the report row itself, by then holding only its id, `status`, `platform`, `category`, `merged_into`, its times, `presses` and the state of its post and alerts (`posting_started_at`, `posted_at`, `alert_sent_at`, `needs_attention`, `data_deleted_at`, `closed_at`, `outcome`) | D1 `reports` | by the retention job once finalized (`data_deleted_at` set); a rejected row 30 days after the rejection and a routed row 30 days after the routing, both through finalization; a pending row expires 30 days after intake; a merged row goes with its primary, the foreign key cascading |
 | the approval record: `approval_id` (a random id), `admin_id`, `approved_at`, `link_mode`, `recommended_comment`, `starts_at`, `voided_at` | D1 `approvals` | at finalization, and with its report row |
-| a force-reply prompt awaiting an admin's or a keyholder's reply: `chat_id` (the admin venue, or the replier's own chat), `prompt_message_id`, `admin_id` (the replier's id), `report_id`, `kind`, `link_mode`, `created_at`; with `approvals.admin_id` and `reports.decided_by`, the only Telegram ids stored, all of them the allowlisted admins' and keyholders' own ids (both deployment configuration) | D1 `admin_prompts` | when the reply is captured, by the retention job after 24 hours, at finalization, and with its report row |
+| a force-reply prompt awaiting an admin's or a keyholder's reply: `chat_id` (the admin venue, or the replier's own chat), `prompt_message_id`, `admin_id` (the replier's id), `report_id`, `kind`, `category` (the category the admin confirmed before the prompt), `link_mode`, `created_at`; with `approvals.admin_id` and `reports.decided_by`, the only Telegram ids stored, all of them the allowlisted admins' and keyholders' own ids (both deployment configuration) | D1 `admin_prompts` | when the reply is captured or refused (a fresh prompt replaces it), when its admin goes Back or opens another prompt for the report, at every decision of its report, by the retention job after 24 hours, at finalization, and with its report row |
 | a job of the one-minute cron and its `payload` (the post of an approved report, or the edit of that post at retraction or closure) | D1 `jobs` | on completion; at finalization; with its report row; abandoned at 20 attempts |
 | reporter counters: `reporter_ref`, `open_count`, `day`, `day_count`, `rejections_30d`, `blocked`, `last_seen` | D1 `reporter_stats` | after 90 days without activity (`last_seen`); a row with `blocked` set persists |
 | daily counts (the global non-member cap, the day's presses against `MARKS_PER_DAY`): `day`, `key`, `count` | D1 `counters` | rows older than 90 days |
@@ -94,7 +95,7 @@ being gone at once.
 | a force-reply prompt's message and the reply to it | the admin venue, or the replier's own chat | when the reply is captured; within the same 48 hours otherwise |
 | every message a reporter or member sends the bot in a private chat: each intake step, refused and misplaced messages and every command (a keyholder's own commands excepted) | the sender's chat | on receipt, outside lockdown, by the handler that took it, after the write that recorded it and before the reply, with one retry; if the delete still fails the reply asks the sender to delete it; no message id is kept; under lockdown nothing is read, stored or deleted |
 | the intake acknowledgement | the reporter's chat | deletes itself at `min(handlerStart + 25 s, ackSent + 20 s)`; no message id is kept; the hotline message sent for a "sexual content involving a minor" label stays, and carries no URL |
-| the keyholder's approval notice (the rendered post text with its Cancel and Lockdown buttons) | the keyholder's chat | edited to "posted" or "cancelled" without links once the outcome is known |
+| the keyholder's approval notice (the rendered post text with its Cancel and Lockdown buttons) | the keyholder's chat | edited to "posted" or "cancelled" without links once the outcome is known, by the isolate that sent it (the notices' message ids are kept in that isolate's memory only, never stored) or at the keyholder's own Cancel on it; a notice no isolate remembers keeps its text until its Cancel is pressed, and one whose approval was never recorded (a reply refused after a send that timed out yet arrived, or a failed approval batch whose outcome could not be read) keeps it until its Cancel is pressed more than five minutes after it was sent, which edits it to "cancelled" (a press before that answers that the approval is not recorded yet) |
 
 The `meta` rows hold no personal data: the schema version, the halt flag,
 the global pause, the lockdown flag and its once-only alert marker.
@@ -137,7 +138,9 @@ reporter is never told.
   code text; `comment` and `affected_person` are nulled at the decision,
   so a seized admin account reads only the reports still open.
 - Keyholder side: the approval notice is edited to the outcome without
-  links, so no target URL stays in the keyholder's chat.
+  links, so no target URL stays in the keyholder's chat, but for the
+  notices the table above names (one no isolate remembers, one whose
+  approval was never recorded).
 
 ## Logs and third parties
 

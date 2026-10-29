@@ -82,7 +82,7 @@ describe('the D1 schema on node:sqlite', () => {
   });
 
   it('states its schema version in meta', async () => {
-    expect(await rows(sql`SELECT key, value FROM meta`)).toEqual([{ key: 'schema_version', value: 1 }]);
+    expect(await rows(sql`SELECT key, value FROM meta`)).toEqual([{ key: 'schema_version', value: 2 }]);
   });
 
   it('holds a full row in every table', async () => {
@@ -118,8 +118,8 @@ describe('the D1 schema on node:sqlite', () => {
     insertReport(id('mergedreport'), 'merged', { merged_into: id('fullreport'), link_hash: OTHER_HEX });
     await approve(id('fullreport'), NOW + 300_000);
     await run(
-      sql`INSERT INTO admin_prompts (chat_id, prompt_message_id, admin_id, report_id, kind, link_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [-1001424242, 99, 424242001, id('fullreport'), 'comment', 'account', NOW],
+      sql`INSERT INTO admin_prompts (chat_id, prompt_message_id, admin_id, report_id, kind, link_mode, created_at, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [-1001424242, 99, 424242001, id('fullreport'), 'recommended_comment', 'account', NOW, 'private_data'],
     );
     await run(
       sql`INSERT INTO reporter_stats (reporter_ref, open_count, day, day_count, rejections_30d, blocked, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)`,

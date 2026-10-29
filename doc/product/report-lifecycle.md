@@ -51,9 +51,9 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | From | To | Trigger | Recorded |
 |---|---|---|---|
 | intake | `pending` | the reporter completes the intake conversation (below) | the report row: platform, category, URL, account URL, comment, affected-person flag, the keyed reporter reference (never the chat id), the keyed link hash, `created_at` |
-| intake | `merged` | the keyed hash of the normalised URL matches an open target (pending, approved, posting or posted) | its own row with `merged_into` the oldest such report; the acknowledgement is identical to a new report's |
-| `pending` | `approved` | an allowlisted admin presses Approve, confirms the category, picks the link mode and replies to the recommended-comment prompt; the allowlist is re-checked at every step; the rendered post is validated in both locales against 4096 characters and the link allowlist before anything is written | the approval row: a random `approval_id`, `admin_id`, `approved_at`, `link_mode`, `recommended_comment`, `starts_at` (now plus the grace); a `post` job due at `starts_at` (`INSERT OR IGNORE`) carrying that `approval_id`; the card edited to show Cancel; a status card; every keyholder notified by direct message with the rendered post text, a Cancel button for the whole grace and a Lockdown button beside it |
-| `approved` | `pending` | an admin presses Cancel on the card, or a keyholder presses Cancel on the notice, within the grace | `voided_at` set on the approval; the post job deleted; the keyholder notice edited to "cancelled" without links |
+| intake | `merged` | the keyed hash of the normalised URL matches an open target (pending, approved, posting or posted) | its own row with `merged_into` the oldest such report, holding no comment and no affected-person flag (nobody reads them: the admins decide on the target's card); when its reporter is the affected person and the target is still pending, the target's flag is raised in the same batch, so its post can carry the account link only; the acknowledgement is identical to a new report's |
+| `pending` | `approved` | an allowlisted admin presses Approve, confirms the category (suspected CSAM leads to the routing card instead), enters the account link when the report has none, picks the link mode and replies to the recommended-comment prompt; the allowlist, the venue and the lockdown switch are re-checked at every step, and only the admin who was prompted can answer the prompt; the rendered post is validated in both locales, together with the keyholders' notice that carries it, against 4096 characters and the link allowlist before anything is written; then, still before anything is written, every keyholder is sent the notice by direct message under the new approval's id: the rendered post text, a Cancel button for the whole grace and a Lockdown button beside it. An approval whose notice reaches no keyholder (every send failed, a timeout included) is never written: the reply is refused like any other, by a fresh prompt saying that the keyholders must send `/start` to the bot before the admin replies again; one delivered notice of several suffices | in one batch, every statement bound to the new approval: the approval row (a random `approval_id`, `admin_id`, `approved_at`, `link_mode`, `recommended_comment`, `starts_at`, now plus the grace), written only while the report is pending and the lockdown switch is not set (the switch bound in the statement itself, since the notices and their Lockdown button go out after the gates read it), and over a voided row only; the conditional status change, with the admin's category, the link mode and the rendered post (`broadcast_text`); a `post` job due at `starts_at` carrying that `approval_id` (the plan's `INSERT OR IGNORE`, as `ON CONFLICT (kind, report_id) DO NOTHING`, so a refused row fails rather than vanishes); `comment` and `affected_person` nulled on the report and its merged rows; the report's prompts deleted. Then the card edited to show Cancel; a status card saying how many keyholders got the notice; the prompts and the reply deleted from the venue. When the batch loses (another decision won after the notices went out, or a keyholder locked the bot down meanwhile, when the batch writes nothing but the answered prompt's deletion), the notices are edited to "cancelled" without links, and the prompt is ended in the venue unless the bot is locked down. When it fails, a read decides: the approval did not land, and the notices are edited so; it landed after all, and the failure is logged by class and the approval goes on as if the batch had answered, since a live approval's notice never says "cancelled"; the read fails too, and the notices are left as they are |
+| `approved` | `pending` | an admin presses Cancel on the card or the status card, or a keyholder presses Cancel on the notice, before the tick claims the report; the button names its approval's id, so a stale one cancels nothing; under lockdown only a keyholder's Cancel works; a keyholder's Cancel on a notice whose approval is not recorded (the notice goes out before the batch, which has not landed yet or never will) changes nothing, leaves the notice and its buttons as they are and answers that the approval is not recorded yet, until the notice is more than five minutes old (no approval's batch takes that long on Workers): then the notice is edited to "cancelled" and the answer says so | in one batch: `voided_at` set on the approval, the post job deleted, the status back to `pending` with the rendered post, the link mode and the status card's id cleared; then the keyholder notices edited to "cancelled" without links, the card back to its review state and the status card deleted (under lockdown only the notices are edited, never the venue) |
 | `approved` | `posting` | the tick finds the due `post` job and claims the report with one conditional update (below) | `posting_started_at`; the send follows in the same invocation |
 | `posting` | `posted` | the send succeeded | `post_message_id` (unique), `posted_at`, the job deleted, in one batch; the keyholder notice edited to "posted" without links |
 | `posting` | `approved` | an unambiguous failure of the send: a 429 (the job rescheduled for now plus `retry_after`, `meta.paused_until` set), or a 400 or 403 such as no post rights or chat not found (`needs_attention` set, the keyholders alerted, the job abandoned) | the claim reverted and `posting_started_at` cleared in the same batch |
@@ -64,8 +64,8 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | `closing` | `closed` | the edit job appended the outcome line and removed the button | the terminal status and the finalization batch together: the aggregate row upserted, every personal and content field nulled, `approvals`, `admin_prompts`, merged rows and the job deleted, `data_deleted_at` set |
 | `retracting` | `retracted` | the edit job replaced the post's text with the correction and removed the button | the same batch; the aggregate row keeps `retracted` |
 | `posted` | `closing`, then `expired` | the retention job, 90 days (configurable) after the post | the closure edit with the outcome `expired`, then the same finalization |
-| `pending` | `rejected` | an admin presses Reject and picks a reason code (internal) | `decided_by`, `decided_at`, `rejection_reason`; `comment` and `affected_person` nulled; the card deleted (edited to the outcome when older than 48 hours); the reference's rejection counter; the row finalized 30 days later |
-| `pending` | `routed` | the admin categorises as suspected CSAM and confirms on the routing card | `decided_by`, `decided_at`; `url`, `account_url` and `comment` nulled on the report and its merged rows in the same batch; the card deleted; the row finalized 30 days later; see [categories and routing](./report-categories-and-routing.md) |
+| `pending` | `rejected` | an admin presses Reject and picks a reason code (internal) | in one batch: `decided_by`, `decided_at`, `rejection_reason`; `comment` and `affected_person` nulled on the report and its merged rows; the rejection counted once on the reference of every report of the target; the report's prompts deleted; then the card deleted (edited to the outcome when older than 48 hours); the row finalized 30 days later |
+| `pending` | `routed` | the admin categorises as suspected CSAM and confirms on the routing card | in one batch: `decided_by`, `decided_at`, the category suspected CSAM; `url`, `account_url`, `comment` and `affected_person` nulled on the report and its merged rows; the report's prompts deleted; then the card deleted (edited to the outcome when older than 48 hours); the row finalized 30 days later; see [categories and routing](./report-categories-and-routing.md) |
 | `pending` | `expired` | the retention job, 30 days after intake with no decision | outcome `no_decision`; finalized in D1 |
 
 A `/repost` is also admitted from `approved` when no job exists after an
@@ -130,9 +130,13 @@ send is refused; `/attach` then `/retract` edits the attached message.
 ### First decision wins
 
 With one or two admins a status change is a conditional update
-(`WHERE status = 'pending'`, exactly one row changed). The losing admin's
-card is edited to show the outcome. The same conditional update guards
-Cancel, the claim of the post, closure and retraction.
+(`WHERE status = 'pending'`, exactly one row changed), and every other
+statement of the decision's batch is bound to the same condition (or, for
+an approval, to its new approval id), so a losing decision writes nothing
+(a losing approval only removes the prompt it answered).
+The losing admin's press is answered "already decided" with the report's
+state, and its card is edited to that state. The same conditional update
+guards Cancel, the claim of the post, closure and retraction.
 
 ### Grace period, Cancel and /halt
 
@@ -140,8 +144,10 @@ Approval starts the grace period of `APPROVAL_GRACE_MINUTES`, 30 minutes
 by the owner's decision (1 to 1440). The card carries Cancel, and every
 keyholder receives the rendered post with a Cancel button that works for
 the whole grace and a Lockdown button beside it, so someone outside the
-admins' reach reviews each post before it goes out; the notice is edited
-to the outcome, without links, once it is known. `/halt` holds every post
+admins' reach reviews each post before it goes out; the notice goes out
+before the approval is written, so an approval whose notice reaches no
+keyholder is never written, and it is edited to the outcome, without
+links, once that is known. `/halt` holds every post
 and closure edit for every report until `/resume`; retraction edits still
 run, since they remove harm. Both are in the
 [operations and security runbook](../guides/operations-and-security.md);
@@ -224,7 +230,12 @@ with the same keyed link hash (the HMAC of the normalised URL under the
 reporter-reference key, `src/privacy/link-hash.ts`), open meaning
 pending, approved, posting or posted: a report in `closing` or
 `retracting` is leaving the channel, so a new report of its target is
-reviewed afresh; otherwise it is `pending`. Under lockdown intake answers
+reviewed afresh; otherwise it is `pending`. A merged report stores no
+comment and no affected-person flag, since the admins decide once, on the
+target's card, so a duplicate of a target already decided leaves nothing
+of them behind; when its reporter is the affected person and the target
+is still pending, the target's flag is raised in the same batch, so the
+review offers the account link alone. Under lockdown intake answers
 "temporarily unavailable" to a message and to a button press alike, and
 stores and deletes nothing.
 

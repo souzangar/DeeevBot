@@ -5,6 +5,7 @@
 // bot_command entity Telegram adds, so grammY's command matching sees what
 // it would see live.
 import type { Message, Update } from 'grammy/types';
+import { IDS } from './variables';
 
 let lastUpdateId = 0;
 let lastMessageId = 0;
@@ -27,6 +28,8 @@ export interface MessageOptions extends SenderOptions {
   readonly viaBot?: boolean;
   /** Marks the message as a reply quoting a message of another chat. */
   readonly externalReply?: boolean;
+  /** Marks the message as a reply to the bot's own message of this id, in the same chat. */
+  readonly replyToBot?: number;
 }
 
 const sender = (id: number, options: SenderOptions) => ({
@@ -59,6 +62,18 @@ const textMessage = (chat: Message['chat'], userId: number, text: string, option
     ...(options.externalReply === true
       ? { external_reply: { origin: { type: 'hidden_user' as const, date: DATE - 60, sender_user_name: 'Someone Else' } } }
       : {}),
+    ...(options.replyToBot === undefined
+      ? {}
+      : {
+          // grammY types the replied-to message without a reply of its own; this one has none.
+          reply_to_message: {
+            message_id: options.replyToBot,
+            date: DATE - 30,
+            chat,
+            from: { id: IDS.bot, is_bot: true as const, first_name: 'Fake', username: 'div_report_test_bot' },
+            text: 'A message of the bot',
+          } as unknown as NonNullable<Message['reply_to_message']>,
+        }),
   };
 };
 
@@ -173,6 +188,8 @@ export interface PressedMessage {
   readonly chatId: number;
   readonly messageId: number;
   readonly chatType?: 'private' | 'supergroup' | 'channel';
+  /** The message's `date`, in seconds: a fixed one unless given. */
+  readonly date?: number;
 }
 
 /** A press by `userId` of a button carrying `data`, on the message `on`. */
@@ -189,7 +206,7 @@ export function buttonPress(userId: number, data: string, on: PressedMessage, op
       from: sender(userId, options),
       chat_instance: 'chat-instance',
       data,
-      message: { message_id: on.messageId, date: DATE, chat, text: 'A post' },
+      message: { message_id: on.messageId, date: on.date ?? DATE, chat, text: 'A post' },
     },
   };
 }

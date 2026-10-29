@@ -15,7 +15,10 @@
 //    only; src/telegram/commands.ts);
 // 4. the "I reported it" presses (src/telegram/presses.ts);
 // 5. the later units' composers (`features`: the admin commands and
-//    buttons, behind the gates of src/telegram/guards.ts), in order;
+//    buttons, behind the gates of src/telegram/guards.ts), in order; the
+//    Worker and the Node port pass defaultFeatures(): the review
+//    (src/telegram/review.ts), registered through the admin surface
+//    (src/telegram/registry.ts);
 // 6. the intake entry, lockdown-gated (src/telegram/intake-entry.ts), which
 //    takes every private message nothing before it took, and the intake's
 //    own button presses: the intake conversation (src/telegram/intake.ts);
@@ -42,11 +45,13 @@ import type { SqlDb } from '../db/sql';
 import { isAppError } from '../errors/app-error';
 import { isPlainKey, type PlainMessageKey } from '../i18n/index';
 import type { Logger } from '../privacy/logger';
+import type { NoticeMemory } from '../review/notify';
 import { clientOptions, installTransformer } from './api';
 import { keyholderCommands, publicCommands } from './commands';
 import { intakeEntry } from './intake-entry';
 import { presses } from './presses';
 import { answerPress, answersIn, respondWith } from './respond';
+import { reviewFeatures } from './review';
 
 export interface BotDeps {
   readonly config: Config;
@@ -57,6 +62,8 @@ export interface BotDeps {
   readonly fetch: typeof fetch;
   /** The intake's membership answers: the isolate's own cache unless given (tests pass a fresh one). */
   readonly membershipCache?: MembershipCache;
+  /** The keyholder notices' memory: the isolate's own unless given (tests pass a fresh one). */
+  readonly notices?: NoticeMemory;
 }
 
 /** The bot's own identity, from BOT_ID and BOT_USERNAME: grammY never calls getMe. */
@@ -116,6 +123,9 @@ const unansweredButtons = (): Composer<Context> => {
   });
   return composer;
 };
+
+/** The later units' composers the Worker and the Node port put in createBot()'s slot, in order. */
+export const defaultFeatures = (deps: BotDeps): Middleware<Context>[] => [reviewFeatures(deps)];
 
 /**
  * The bot of the header, over `deps.fetch`, with `features` in their slot;

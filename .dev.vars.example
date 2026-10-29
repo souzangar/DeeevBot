@@ -18,5 +18,6 @@ BROADCAST_CHAT_ID=
 ALLOWED_LINK_HOSTS=instagram.com,www.instagram.com,x.com,twitter.com,www.facebook.com,facebook.com,www.tiktok.com,tiktok.com,t.me
 LOCKDOWN=
 APPROVAL_GRACE_MINUTES=30
+VENUE_LOCALE=fa
 MARKS_PER_DAY=20000
 MARKS_PER_REPORT=5000

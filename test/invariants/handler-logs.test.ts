@@ -3,8 +3,12 @@
 // handler, a failing answer), the webhook (a failing update, an unreadable
 // body), the Worker entry (a configuration that does not load), the
 // membership check and the alerts (failing calls), the lockdown commands,
-// and the intake (a reporter message, a prompt edit, the acknowledgement or
-// its self-deletion failing).
+// the intake (a reporter message, a prompt edit, the acknowledgement or its
+// self-deletion failing), and the review (its card, a venue message's
+// deletion or edit, the status card, a keyholder notice and its edit
+// failing; an approval whose notice reaches no keyholder or cannot be sent
+// at all, one whose batch fails with the read after it, and one whose
+// batch fails after committing).
 // Each is driven with updates and texts that carry a reported URL, a
 // comment, the reporter's, the admins', the keyholders' and the chats'
 // Telegram ids, and with Bot API failures whose GrammyError payloads carry
@@ -20,8 +24,15 @@ import { handleWebhook, SECRET_HEADER } from '../../src/telegram/webhook';
 import { createWorker } from '../../src/worker';
 import { pressData } from '../../src/review/intake';
 import { FAILURES, rateLimited } from '../fakes/bot-api';
-import { botHarness } from '../support/bot-harness';
+import { botHarness, type BotHarness } from '../support/bot-harness';
 import { reporterIn } from '../support/intake-driver';
+import { reviewIn } from '../support/review-driver';
+import { harnessOver, storeWith } from '../support/review-store';
+import { noticeData } from '../../src/review/callbacks';
+import { createNoticeMemory } from '../../src/review/notify';
+import { reviewFeatures } from '../../src/telegram/review';
+import { AppError } from '../../src/errors/app-error';
+import { sql } from '../../src/db/sql';
 import { IDS, TEST_VARIABLES } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
 
@@ -183,5 +194,106 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
     expect(events).toContain('reply.failed');
     expectClean(harness.log.lines);
     expect(harness.log.text()).not.toContain('reporter_handle');
+  });
+
+  it('the review, when its card, a deletion, an edit, the status card, a notice and its edit fail', async () => {
+    const harness = botHarness();
+    const review = reviewIn(harness);
+    const sender = { username: 'reporter_handle', firstName: 'Reporter Name' };
+    // The first card fails: logged, and /card posts it again.
+    harness.telegram.fail({ method: 'sendMessage', chatId: IDS.adminChat }, FAILURES.serverError, 1);
+    const report = await review.submit({ url: REPORTED_URL, category: 'private_data', affected: false, comment: COMMENT }, IDS.reporter, sender);
+    await harness.send(groupMessage(IDS.adminChat, IDS.admin, `/card ${report.reportId}`));
+    const row = await harness.db.first<{ card_message_id: number }>(sql`SELECT card_message_id FROM reports WHERE id = ?`, [report.reportId]);
+    const card = { ...report, cardId: Number(row?.card_message_id) };
+    // A keyholder unreachable, the status card refused, the prompt and the reply undeletable.
+    harness.telegram.fail({ chatId: IDS.secondKeyholder }, FAILURES.cantInitiateConversation, 1);
+    await review.press(IDS.admin, { kind: 'approve', reportId: card.reportId }, card.cardId);
+    await review.press(IDS.admin, { kind: 'category', reportId: card.reportId, category: 'private_data' }, card.cardId);
+    await review.press(IDS.admin, { kind: 'mode', reportId: card.reportId, category: 'private_data', mode: 'account' }, card.cardId);
+    const prompt = review.lastPrompt()?.message_id ?? 0;
+    harness.telegram.fail({ method: 'editMessageText', chatId: IDS.adminChat }, FAILURES.serverError, 1);
+    harness.telegram.fail({ method: 'deleteMessage', chatId: IDS.adminChat }, FAILURES.messageCantBeDeleted, 4);
+    harness.telegram.fail({ method: 'sendMessage', chatId: IDS.adminChat }, FAILURES.botBlocked, 1);
+    await review.reply(IDS.admin, prompt, `Say it publishes ${COMMENT} without consent.`);
+    // A notice that cannot be edited at the Cancel.
+    const approval = await harness.db.first<{ approval_id: string }>(sql`SELECT approval_id FROM approvals`);
+    harness.telegram.fail({ method: 'editMessageText', chatId: IDS.keyholder }, FAILURES.serverError, 1);
+    await review.pressData(IDS.keyholder, noticeData({ kind: 'cancel', reportId: card.reportId, approvalId: approval?.approval_id ?? '' }), 1, IDS.keyholder);
+    const events = harness.log.records().map((record) => record.event);
+    for (const event of [
+      'review.card_not_sent',
+      'alert.failed',
+      'review.notice_incomplete',
+      'review.message_not_edited',
+      'review.status_card_not_sent',
+      'review.message_not_deleted',
+      'review.notice_not_edited',
+    ]) {
+      expect(events, event).toContain(event);
+    }
+    expectClean(harness.log.lines);
+    expect(harness.log.text()).not.toContain('reporter_handle');
+    expect(harness.log.text()).not.toContain('Reporter Name');
+  });
+
+  it('the approval, when no keyholder can be notified, when the notice cannot be sent at all, and when its batch fails, unreadably or after committing', async () => {
+    const sender = { username: 'reporter_handle', firstName: 'Reporter Name' };
+    const approveIn = async (harness: BotHarness): Promise<void> => {
+      const review = reviewIn(harness);
+      const report = await review.submit({ url: REPORTED_URL, category: 'private_data', affected: false, comment: COMMENT }, IDS.reporter, sender);
+      await review.approve(IDS.admin, report, { category: 'private_data', mode: 'account', points: `Say it publishes ${COMMENT} without consent.` });
+    };
+    // Every keyholder unreachable: the reply is refused.
+    const unreached = botHarness();
+    for (const keyholder of unreached.config.keyholderIds) unreached.telegram.fail({ chatId: keyholder }, FAILURES.cantInitiateConversation);
+    await approveIn(unreached);
+    // The notice cannot be sent at all, by an error whose message carries the URL.
+    const unsent = botHarness({
+      features: (deps) => [
+        reviewFeatures({
+          ...deps,
+          notices: {
+            ...createNoticeMemory(),
+            remember: () => {
+              throw new AppError('UNEXPECTED', `the notice of ${REPORTED_URL}`);
+            },
+          },
+        }),
+      ],
+    });
+    await approveIn(unsent);
+    // The approval's batch fails, and so does the read that would tell whether it landed.
+    let failed = false;
+    const unknown = harnessOver((db) =>
+      storeWith(db, {
+        batch: () => {
+          failed = true;
+          return Promise.reject(new AppError('STORAGE_FAILURE', `a batch of ${COMMENT}`));
+        },
+        first: () => (failed ? Promise.reject(new AppError('STORAGE_FAILURE', `a read of ${REPORTED_URL}`)) : undefined),
+      }),
+    );
+    await approveIn(unknown);
+    // The approval's batch fails after committing: the approval goes on.
+    const landed = harnessOver((db) =>
+      storeWith(db, {
+        batch: async (statements) => {
+          await db.batch(statements);
+          throw new AppError('STORAGE_FAILURE', `a batch of ${REPORTED_URL}`);
+        },
+      }),
+    );
+    await approveIn(landed);
+    for (const [harness, event] of [
+      [unreached, 'review.notice_unreached'],
+      [unsent, 'review.notice_failed'],
+      [unknown, 'review.approval_unknown'],
+      [landed, 'review.approval_landed'],
+    ] as const) {
+      expect(harness.log.records().map((record) => record.event), event).toContain(event);
+      expectClean(harness.log.lines);
+      expect(harness.log.text(), event).not.toContain('reporter_handle');
+    }
   });
 });

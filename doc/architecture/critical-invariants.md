@@ -209,7 +209,34 @@ locked down; nothing is forwarded, copied, fetched or looked up; no inline
 mode, Mini App or subscription command in the source) and
 `test/invariants/handler-logs.test.ts` (rule 6: no log line of any handler,
 the boundary, the membership check or the alerts holds a URL, an id, a text
-or an update). The remaining tests are
+or an update). Unit U4, the admin review, added
+`test/invariants/review.test.ts` (rule 1: no approval row but the one the
+whole flow writes, with a random approval id and its start after the
+grace, none for any press or a reply by anyone but the asked admin, the
+status change impossible without its row, none ever written whose notice
+reached no keyholder, Cancel voiding it and deleting its job, a
+re-approval under a new id; rule 3: the post and the
+keyholders' notice carry no reporter reference, comment, id, username or
+name and no admin id, and no post URL under the account mode, the card
+the reference only; rules 4 and 5: the review's sends and edits have
+previews off and HTML, link only to the two lists, and go to the venue
+and the keyholders only; rule 7: no approval for suspected CSAM by any
+path, Route nulling the links, the comment and the flag on the report and
+its merged rows, the routing card in the venue only; rule 8: the comment
+and the flag null after every decision, every prompt and reply deleted,
+no reporter id in any table), extended `test/invariants/lockdown.test.ts`
+to drive the REAL admin surface (every registered admin command, button
+prefix and reply refused under either layer, the keyholder's Cancel,
+Lockdown and `/open` working, every admin prefix refused to anyone but an
+admin, the review's command names hinting nothing in a private chat, a
+source scan that no command or button registration bypasses
+`src/telegram/registry.ts`, and one that nothing in `src/` registers a
+handler but the five registrars of `src/telegram/`, probed with planted
+bypasses; and a Lockdown tapped on the notice while the approval's batch
+is on its way leaving nothing approved), and the review's failure paths,
+the approval's unreached, unsent and unreadable notices and batches and
+one that committed after failing included, to
+`test/invariants/handler-logs.test.ts`. The remaining tests are
 written in the same change as the module that implements each rule, under
 the module map in ADR 0006; a rule whose test is still missing is listed
 in that change's commit body.

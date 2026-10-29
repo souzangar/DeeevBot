@@ -117,7 +117,11 @@ between the batch's statements; and a check that the workers project's
 bindings equal `test/support/variables.ts`) and `test/workers/d1.test.ts`
 (applies `migrations/` to the local D1 with `applyD1Migrations`, from the
 `TEST_MIGRATIONS` binding `vitest.config.ts` reads, checks that D1 builds the
-same tables as node:sqlite, and drives the D1 adapter). The workers project
+same tables as node:sqlite, and drives the D1 adapter), and, from unit U4,
+`test/workers/review.test.ts` (the review's batches on D1: the approval's
+upsert over a SELECT, the post job's `ON CONFLICT DO NOTHING`, the Cancel
+and a re-approval under a new id, the rejection's counters and the
+routing's nulls). The workers project
 also binds the test deployment's variables, written out in
 `vitest.config.ts` (the config file imports packages only, section 9), so
 the real Worker boots with a valid configuration. The invariants tier
@@ -139,7 +143,14 @@ forwarded, copied, fetched or looked up), `test/invariants/lockdown.test.ts`
 (rule 2: what lockdown refuses, and that only a keyholder's `/unlock` lifts
 the switch while nothing lifts the override) and
 `test/invariants/handler-logs.test.ts` (rule 6: no handler's log line holds
-a URL, an id, a text or an update). In-memory fakes of the ports live under
+a URL, an id, a text or an update), and, from unit U4,
+`test/invariants/review.test.ts` (rules 1, 3, 4, 5, 7 and 8 for the admin
+review), with the lockdown spec driving the review's real registrations. The
+bot under test (`test/support/bot-harness.ts`) is wired as the Worker wires
+it, the review in the slot of features (`defaultFeatures()`), unless a test
+passes its own; `test/support/review-driver.ts` drives the review as the
+admins and keyholders do, and `test/support/review-rows.ts` writes the
+review's rows for the SQL-level tests. In-memory fakes of the ports live under
 `test/fakes/`: the clock; the logger, which is the real redacting logger over
 a recording sink; and the fake Bot API, `test/fakes/bot-api.ts`, a `fetch`
 for grammY's client that answers in Telegram's envelopes, records every call
@@ -233,6 +244,7 @@ Worker answers every request 500 until it is removed
 | `ALLOWED_LINK_HOSTS` | comma-separated exact lowercase hostnames, each of a-z, 0-9, dots and hyphens, with no scheme, path or port: the only hosts a post may link to | `instagram.com,www.instagram.com,x.com,twitter.com,www.facebook.com,facebook.com,www.tiktok.com,tiktok.com,t.me` |
 | `LOCKDOWN` | `1` or nothing: the keyholder's override, which no Telegram command can clear | none: off |
 | `APPROVAL_GRACE_MINUTES` | an integer from 1 to 1440 | 30 |
+| `VENUE_LOCALE` | `fa` or `en`: the one language of every message the bot writes in the admin review venue (cards, prompts, the answers to the venue's commands and presses), whoever acts | `fa` |
 | `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses, all reports together | 20000 |
 | `MARKS_PER_REPORT` | an integer from 0 to 1000000: the cap on recorded "I reported it" presses for one report | 5000 |
 | `DEBUG` | nothing: an environment that defines it, with any value, the empty one included, is refused, because it would switch on grammY's own logging past the redacting logger | must be absent |
@@ -290,7 +302,8 @@ and 2.1.
 `npm run migrate:local` applies `migrations/` to the local database under
 `.wrangler/`; `migrations/0001_init.sql` is the MVP schema
 ([ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md)), and a
-later change adds a file rather than editing an applied one. On the Node port
+later change adds a file rather than editing an applied one, as
+`0002_prompt_category.sql` does (schema version 2). On the Node port
 `src/db/migrate.ts` applies the same files, each once, recording them in
 `schema_migrations`.
 `npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its

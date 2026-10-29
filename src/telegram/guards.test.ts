@@ -18,7 +18,10 @@ import {
   adminButton,
   isAdminCommand,
   isKeyholderCommand,
+  isVenueAdminCommand,
+  isVenueAdminReply,
   keyholderButton,
+  pressedInVenue,
   refuseUnderLockdown,
   typedInOwnChat,
   typedInVenue,
@@ -220,5 +223,47 @@ describe('keyholder buttons', () => {
     await bot.handleUpdate(buttonPress(IDS.keyholder, 'notice:cancel', { chatId: IDS.adminChat, messageId: 4, chatType: 'supergroup' }));
     expect(ran).toEqual([]);
     expect(answers()).toEqual(Array.from({ length: 3 }, () => t('en', 'error.unauthorized')));
+  });
+});
+
+describe('the venue gates of the review', () => {
+  const config = testConfig();
+
+  it('isVenueAdminCommand: an admin typing in the venue, and nobody, nowhere else', async () => {
+    const venue = isVenueAdminCommand(config);
+    expect(await holds(venue, groupMessage(IDS.adminChat, IDS.admin, '/open'))).toBe(true);
+    expect(await holds(venue, groupMessage(IDS.adminChat, IDS.secondAdmin, '/open'))).toBe(true);
+    expect(await holds(venue, privateMessage(IDS.admin, '/open'))).toBe(false);
+    expect(await holds(venue, groupMessage(IDS.adminChat, IDS.keyholder, '/open'))).toBe(false);
+    expect(await holds(venue, groupMessage(IDS.adminChat, IDS.admin, '/open', { forwarded: true }))).toBe(false);
+    expect(await holds(venue, groupMessage(IDS.membershipChat, IDS.admin, '/open'))).toBe(false);
+  });
+
+  it("isVenueAdminReply: an admin's typed reply in the venue to the bot's own message there", async () => {
+    const reply = isVenueAdminReply(config);
+    expect(await holds(reply, groupMessage(IDS.adminChat, IDS.admin, 'points', { replyToBot: 4 }))).toBe(true);
+    expect(await holds(reply, groupMessage(IDS.adminChat, IDS.admin, 'points'))).toBe(false);
+    expect(await holds(reply, groupMessage(IDS.adminChat, IDS.reporter, 'points', { replyToBot: 4 }))).toBe(false);
+    expect(await holds(reply, groupMessage(IDS.adminChat, IDS.admin, 'points', { replyToBot: 4, forwarded: true }))).toBe(false);
+    expect(await holds(reply, groupMessage(IDS.strangerGroup, IDS.admin, 'points', { replyToBot: 4 }))).toBe(false);
+    const toSomeoneElse = groupMessage(IDS.adminChat, IDS.admin, 'points', { replyToBot: 4 });
+    const replied = toSomeoneElse.message?.reply_to_message;
+    if (replied === undefined) throw new Error('no reply');
+    const notTheBot = { ...toSomeoneElse, message: { ...toSomeoneElse.message, reply_to_message: { ...replied, from: { id: IDS.secondAdmin, is_bot: false, first_name: 'Admin' } } } };
+    expect(await holds(reply, notTheBot as typeof toSomeoneElse)).toBe(false);
+  });
+
+  it('pressedInVenue: refuses a press on a message outside the venue', async () => {
+    const telegram = fakeBotApi();
+    const ran: string[] = [];
+    const bot = new Bot(config.botToken, { botInfo: botInfoFor(config), client: clientOptions(telegram.fetch) });
+    bot.callbackQuery(/^card:/, pressedInVenue(config), async (ctx) => {
+      ran.push('ran');
+      await ctx.answerCallbackQuery();
+    });
+    await bot.handleUpdate(buttonPress(IDS.admin, 'card:x', { chatId: IDS.adminChat, messageId: 1, chatType: 'supergroup' }));
+    await bot.handleUpdate(buttonPress(IDS.admin, 'card:x', { chatId: IDS.admin, messageId: 1, chatType: 'private' }));
+    expect(ran).toEqual(['ran']);
+    expect(telegram.callsOf('answerCallbackQuery').map((call) => call.payload.text)).toEqual([undefined, t('en', 'error.unauthorized')]);
   });
 });

@@ -63,6 +63,8 @@ describe('readMigrations', () => {
     const migrations = readMigrations(MIGRATIONS_DIR);
     expect(migrations[0]?.name).toBe('0001_init.sql');
     expect(migrations[0]?.sql.startsWith('-- @critical-path')).toBe(true);
+    expect(migrations.map((migration) => migration.name)).toEqual(['0001_init.sql', '0002_prompt_category.sql']);
+    for (const migration of migrations) expect(migration.sql.startsWith('-- @critical-path'), migration.name).toBe(true);
   });
 });
 
@@ -110,7 +112,7 @@ describe('applyMigrations', () => {
   it('applies the repository migrations on an empty database, once', () => {
     const database = openNodeSqlite(':memory:');
     const clock = fakeClock(1_800_000_000_000);
-    expect(migrate(database.connection, MIGRATIONS_DIR, clock)).toEqual(['0001_init.sql']);
+    expect(migrate(database.connection, MIGRATIONS_DIR, clock)).toEqual(['0001_init.sql', '0002_prompt_category.sql']);
     expect(migrate(database.connection, MIGRATIONS_DIR, clock)).toEqual([]);
     expect(tables(database)).toEqual([
       'admin_prompts',

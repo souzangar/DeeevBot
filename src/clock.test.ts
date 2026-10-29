@@ -3,7 +3,7 @@
 // whose sleep() moves its time on at once.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeClock } from '../test/fakes/clock';
-import { systemClock } from './clock';
+import { systemClock, utcDay, utcMinute } from './clock';
 
 describe('systemClock', () => {
   afterEach(() => {
@@ -63,5 +63,14 @@ describe('fakeClock', () => {
     await clock.sleep(-3);
     expect(clock.now()).toBe(21_000);
     expect(clock.sleeps).toEqual([20_000, 0]);
+  });
+});
+
+describe('utcDay and utcMinute', () => {
+  it('write the UTC day, and the UTC minute without its seconds', () => {
+    const ms = Date.UTC(2027, 0, 15, 23, 59, 59, 999);
+    expect(utcDay(ms)).toBe('2027-01-15');
+    expect(utcMinute(ms)).toBe('2027-01-15 23:59 UTC');
+    expect(utcMinute(Date.UTC(2027, 0, 16, 0, 0, 0))).toBe('2027-01-16 00:00 UTC');
   });
 });

@@ -187,10 +187,12 @@ no post or edit job runs except a retraction edit ordered by a keyholder,
 since it removes harm. The post claim binds the lockdown state in the same
 statement as the approval, so a lockdown set after a tick's eligibility
 read claims nothing; the one request already in flight in that instant is
-the stated residual. The tick alerts the keyholders once
-(`meta.lockdown_alerted_at`) and still runs retention, which reduces
-exposure, and `/lockdown` triggers an immediate retention pass. A
-keyholder may still run `/open`, `/stats`, `/attach <id> ...` and
+the stated residual. The approval row binds it too, so a Lockdown tapped
+on an approval's notice before the approval is written leaves nothing
+approved: its notices are edited to "cancelled". The tick alerts the
+keyholders once (`meta.lockdown_alerted_at`) and still runs retention,
+which reduces exposure, and `/lockdown` triggers an immediate retention
+pass. A keyholder may still run `/open`, `/stats`, `/attach <id> ...` and
 `/retract <id>`, and the Cancel and Lockdown buttons on the approval
 notices still work (the status cards sit in a venue the keyholder is not
 in, so `/open` is how an id is found); nobody may `/repost` under
@@ -223,14 +225,22 @@ approval with the rendered post text, a Cancel button that works for the
 whole grace period and a Lockdown button beside it (one tap escalates
 when a seized admin keeps re-approving), the notice being edited to
 "posted" or "cancelled" without links once the outcome is known, so no
-target URL stays in the keyholder's chat; and may run `/lockdown`,
-`/unlock`, `/retract` and `/attach`, in their private chat with the bot
-only. A keyholder id is never also an admin id: the configuration refuses
-a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap. A bot cannot start a
-private chat, so every keyholder sends `/start` once at go-live and the
-bot confirms "you will receive alerts"; a failed alert is logged by class
-and retried by the next reconciliation, never dropped. Admins have no
-Cloudflare access and cannot override a keyholder.
+target URL stays in the keyholder's chat; the notice goes out before the
+approval is written, so an approval whose notice reaches no keyholder is
+never written, since nobody outside the admins' reach could see it (the
+admin's reply is refused, saying that the keyholders must `/start` the
+bot first), and a keyholder's Cancel pressed before the approval's record
+lands writes nothing and says so, never "cancelled" (a notice more than
+five minutes old is settled as cancelled, its approval never to be
+recorded); and may run
+`/lockdown`, `/unlock`, `/retract` and `/attach`, in their private chat
+with the bot only. A keyholder id is never also an admin id: the
+configuration refuses a load whose `KEYHOLDER_IDS` and `ADMIN_IDS`
+overlap. A bot cannot start a private chat, so every keyholder sends
+`/start` once at go-live and the bot confirms "you will receive alerts";
+a failed alert is logged by class and retried by the next
+reconciliation, never dropped. Admins have no Cloudflare access and
+cannot override a keyholder.
 
 ### 7. The 30-minute grace
 

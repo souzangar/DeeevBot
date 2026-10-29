@@ -5,7 +5,7 @@
 // files (test/support/expected-schema.ts, also checked by
 // src/db/d1-schema.test.ts), CHECK constraints and the trigger included,
 // and refuse what node:sqlite refuses: that is the D1 parity of
-// 0001_init.sql.
+// 0001_init.sql and 0002_prompt_category.sql.
 import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -39,7 +39,7 @@ describe('migrations/ on D1', () => {
     const names = (await raw('SELECT name FROM d1_migrations ORDER BY id')).map((row) => row.name);
     expect(names).toEqual(env.TEST_MIGRATIONS.map((migration) => migration.name));
     expect(names).toContain('0001_init.sql');
-    expect(await raw("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual([{ value: 1 }]);
+    expect(await raw("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual([{ value: 2 }]);
   });
 
   it('enforces the CHECK, NOT NULL and foreign-key constraints, as node:sqlite does', async () => {

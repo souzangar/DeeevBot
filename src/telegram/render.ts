@@ -13,7 +13,13 @@
 // - bidiIsolate(): a left-to-right run inside Persian text, between U+2068
 //   FIRST STRONG ISOLATE and U+2069 POP DIRECTIONAL ISOLATE, placed around
 //   the <code> entity, never inside it, so a copied URL stays clean;
-// - withLinks(): a text followed by its URLs, one per line, as code.
+// - withLinks(): a text followed by its URLs, one per line, as code;
+// - safeText() and codeText(): free text someone wrote (the admin's points,
+//   the reporter's comment) as text, or as a <code> entity Telegram cannot
+//   linkify, its line breaks kept, its control characters and its bidi
+//   embeddings, overrides and isolates shown as U+FFFD, so it can neither
+//   carry markup nor reorder the lines around it; the zero-width
+//   non-joiner and joiner Persian writing needs are kept.
 // These helpers only format. Which links a message may carry at all is the
 // link policy's decision (src/platforms/, from the intake unit on), made
 // before a URL reaches them; the review card shows any URL, as code.
@@ -30,6 +36,9 @@ export const PDI = '\u2069';
 /** Control (Cc) and format (Cf) characters: invisible, or able to reorder the line. */
 const INVISIBLE = /[\p{Cc}\p{Cf}]/gu;
 
+/** Control characters but the line feed, and the bidi embeddings, overrides and isolates. */
+const UNSAFE_IN_TEXT = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/gu;
+
 /** `text` isolated as a left-to-right run inside right-to-left text. */
 export const bidiIsolate = (text: string): string => `${FSI}${text}${PDI}`;
 
@@ -45,3 +54,10 @@ export function withLinks(locale: Locale, text: string, urls: readonly string[])
   const lines = urls.map((url) => (locale === 'fa' ? bidiIsolate(codeUrl(url)) : codeUrl(url)));
   return [text, ...lines].join('\n');
 }
+
+/** Free text as Telegram-HTML text (see the header): escaped, its unsafe characters shown as U+FFFD. */
+export const safeText = (text: string): string =>
+  escape(text.replace(UNSAFE_IN_TEXT, (char) => (char === '\n' ? char : '\uFFFD')));
+
+/** Free text as a <code> entity (see the header): copyable, never linkified, never markup. */
+export const codeText = (text: string): string => `<code>${safeText(text)}</code>`;

@@ -50,7 +50,11 @@ its recovery codes (2.3), the broadcast channel (2.2), and the secrets
       or the Lockdown button on a notice (3.6); `wrangler secret put
       LOCKDOWN` with the value `1` (3.6, when D1 or the bot cannot be
       trusted); the emergency wipe and `wrangler d1 delete` (7); the token
-      re-issue (7).
+      re-issue (7). A Cancel on a notice whose approval is not recorded
+      yet changes nothing and says so, until the notice is five minutes
+      old, when it settles the notice as cancelled; on the Node port a
+      send slower than five minutes could settle a notice before its
+      approval lands, and the admins' Cancel in the venue still works.
 - [ ] Reads every alert: the approval notices with their Cancel and
       Lockdown buttons, the `needs_attention` alerts from reconciliation,
       the lockdown alert, the cap alerts.
@@ -114,7 +118,7 @@ the bot, or transfer it. Held by the keyholder. Requirements:
 | `LOCKDOWN`, the keyholder's override (the value `1`; a secret change is itself a new deployment, global within about a minute, with no code deploy); no Telegram command clears it | the secret store, set by the keyholder with `wrangler secret put LOCKDOWN` (value `1`) and cleared with `wrangler secret delete LOCKDOWN` | VCS; never set or cleared by an admin |
 | Chat ids: the admin review venue (`ADMIN_CHAT_ID`), the membership chat (`MEMBERSHIP_CHAT_ID`), the broadcast channel (`BROADCAST_CHAT_ID`, a channel the keyholder owns, with the bot as its only posting administrator) | deployment configuration validated by the zod schema | VCS |
 | The bot's numeric id and username (`BOT_ID`, `BOT_USERNAME`), which spare every update a `getMe` call; set again if the bot is ever re-created | deployment configuration validated by the zod schema | |
-| The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), retention days (90 by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default) | deployment configuration validated by the zod schema | |
+| The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), retention days (90 by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default), the review venue's one language (`VENUE_LOCALE`, `fa` by default, or `en`) | deployment configuration validated by the zod schema | |
 | Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file | copied into any backup containing per-user tables |
 
 The commit gate's secret-shape scan (`.claude/hooks/secret-shape-scan.sh`)

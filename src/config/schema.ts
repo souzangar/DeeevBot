@@ -20,7 +20,9 @@
 //   copies every variable and secret into process.env, so DEBUG would switch
 //   on grammY's own console lines, past the redacting logger.
 // The posts go to one channel, BROADCAST_CHAT_ID, and only to links on the
-// exact hosts of ALLOWED_LINK_HOSTS. LOCKDOWN is the keyholder's override
+// exact hosts of ALLOWED_LINK_HOSTS. VENUE_LOCALE is the one language of
+// every message the bot writes in the admin review venue, whoever acts, so
+// the venue's text reveals no admin's client language. LOCKDOWN is the keyholder's override
 // (`wrangler secret put LOCKDOWN` with the value 1), which no Telegram
 // command can clear.
 // The Worker reads its configuration through configFor(env) in
@@ -139,6 +141,7 @@ const envSchema = z.object({
   ALLOWED_LINK_HOSTS: hostList.default([...DEFAULT_LINK_HOSTS]),
   LOCKDOWN: z.literal('1').optional(),
   APPROVAL_GRACE_MINUTES: integer(1, 1440).default(30),
+  VENUE_LOCALE: z.enum(['fa', 'en']).default('fa'),
   MARKS_PER_DAY: integer(0, 1_000_000).default(20_000),
   MARKS_PER_REPORT: integer(0, 1_000_000).default(5_000),
 });
@@ -162,6 +165,7 @@ const REQUIREMENTS: Readonly<Record<VariableName, string>> = {
     'optional; comma-separated exact lowercase hostnames of a-z, 0-9, dots and hyphens, with no scheme, path or port',
   LOCKDOWN: 'optional; 1, or nothing',
   APPROVAL_GRACE_MINUTES: 'an integer from 1 to 1440 (default 30)',
+  VENUE_LOCALE: 'optional; fa or en (default fa), the language of the admin review venue',
   MARKS_PER_DAY: 'an integer from 0 to 1000000 (default 20000)',
   MARKS_PER_REPORT: 'an integer from 0 to 1000000 (default 5000)',
 };
@@ -207,6 +211,8 @@ export interface Config {
   /** The keyholder's LOCKDOWN override: true when the secret is set to 1. */
   readonly lockdown: boolean;
   readonly approvalGraceMinutes: number;
+  /** The one language of the bot's messages in the admin review venue. */
+  readonly venueLocale: 'fa' | 'en';
   /** The daily cap on recorded "I reported it" presses, all reports together. */
   readonly marksPerDay: number;
   /** The cap on recorded "I reported it" presses for one report. */
@@ -276,6 +282,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     allowedLinkHosts: Object.freeze([...values.ALLOWED_LINK_HOSTS]),
     lockdown: values.LOCKDOWN === '1',
     approvalGraceMinutes: values.APPROVAL_GRACE_MINUTES,
+    venueLocale: values.VENUE_LOCALE,
     marksPerDay: values.MARKS_PER_DAY,
     marksPerReport: values.MARKS_PER_REPORT,
     // Own enumerable properties on purpose: a spread or Object.assign copy

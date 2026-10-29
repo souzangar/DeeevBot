@@ -29,3 +29,10 @@ export const systemClock: Clock = {
 
 /** The UTC day of `ms`, `YYYY-MM-DD`, as the `day` and `*_day` columns hold it. */
 export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * The UTC minute of `ms`, `YYYY-MM-DD HH:MM UTC`, as the review's messages
+ * name an approval's start (the seconds dropped, never rounded up: a post
+ * goes out at the start or after it).
+ */
+export const utcMinute = (ms: number): string => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;

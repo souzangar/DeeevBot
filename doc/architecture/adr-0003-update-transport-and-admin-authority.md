@@ -172,6 +172,18 @@ reduced to `message` and `callback_query`; the keyholder allowlist and
 its commands; the two-layer lockdown; the exact shape of the webhook
 boundary.
 
+Amended 2026-10-28 (Phase 3, unit U4, the review): the admin commands are
+accepted in the review venue only, typed there by an id on `ADMIN_IDS`
+(`isVenueAdminCommand`): since unit U3 every message the bot receives in a
+private chat is deleted on receipt, so an admin's command typed in their
+private chat with the bot falls to the intake's unknown-command answer and
+is deleted, like anyone's; a keyholder's own commands, `/open` among them,
+stay in their private chat and are kept. Every admin command, admin button,
+admin reply to a prompt and keyholder command or button of the review is
+registered through one helper, `src/telegram/registry.ts`, which applies
+these gates (and, for an admin's button, the venue), and the always-run
+lockdown spec drives every registration it records.
+
 Amended 2026-10-28 (Phase 3, unit U2, the implementation): the boundary
 takes a POST only, never reads the body before both checks, answers a body
 that is not an update 200 without the bot and a configuration that does not

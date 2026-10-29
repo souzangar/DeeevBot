@@ -82,39 +82,89 @@ the deployment are in
 
 ## 2. What a review card shows
 
-- A reporter reference (an opaque keyed value), never the reporter's id,
-  username or name. You cannot identify the reporter from it and must not
-  try; the key that could re-identify it is never exported from the secret
-  store.
-- The platform, the reporter's category label (a hint only), the reported
-  URL or URLs as non-tappable code text whatever their host, the
-  reporter's comment as escaped plain text, and the "I am the affected
-  person" flag. The comment and the flag exist for your review only; the
-  bot nulls both at your decision.
+The bot posts one review card per report into the venue as soon as the
+reporter submits it. A second report of the same open target is merged
+into the first and gets no card of its own: you decide once per target.
+The card shows:
+
+- The report's id, the one `/open` lists and the later commands take, and
+  the platform.
+- The reporter's category label, marked as a hint only. After an approval
+  that was cancelled, the card shows that approval's category instead,
+  marked as a cancelled approval's, and the reporter's original label is
+  no longer shown (the approval wrote the admin's category over it); the
+  category step then marks that category ✓.
+- The reported URL, and the account's link when it differs, as
+  non-tappable code text whatever their host; a URL longer than 1,000
+  characters is cut short and marked. The account's link is "not given"
+  when the reporter answered "I don't know": if you approve, the bot asks
+  you for it; find it from the post while you verify it.
 - The URLs are normalised at intake: the platform's canonical host (for
   example `www.instagram.com`, `x.com`, `t.me`), no query, no tracking
   parameters, no fragment. The account's link is derived from the post's
   URL where it names the account (X, TikTok, Telegram, an Instagram link
-  with the username); otherwise the reporter was asked for it, and it is
-  missing when they answered "I don't know": find the account from the
-  post while you verify it.
-- "Previously reported, outcome X" when the keyed link hash matches an
-  earlier aggregate row. This line is on the admin card only; the reporter
-  is never told.
+  with the username); otherwise the reporter was asked for it.
+- The reporter's comment, as code text so that nothing written in it can
+  become a link, and the "I am the affected person" flag. Both exist for
+  your review only: the bot nulls both at your decision, on this report and
+  on every report merged into it. After a cancelled approval the flag reads
+  "cleared", and the post can then carry the account link only.
+- A reporter reference (an opaque keyed value, 64 characters), never the
+  reporter's id, username or name. You cannot identify the reporter from it
+  and must not try; the key that could re-identify it is never exported
+  from the secret store.
+- "Previously reported: <outcome>" when an earlier report of the same
+  target was decided, from the keyed link hash: rejected or routed (shown
+  at once), or taken down, closed without result, retracted or expired
+  (shown from the aggregate row once that report was finalized). This line
+  is on the admin card only; the reporter is never told.
 - Buttons: Approve, Reject, Route as suspected CSAM, Block reporter. After
-  Approve, a Cancel button during the 30-minute grace period, and a status
-  card for the report with its id and outcome buttons.
+  an approval, the card shows when the post goes out and a Cancel button
+  for the 30-minute grace period, and a status card for the report follows
+  it: its id, platform, category and state, how many keyholders received
+  the approval notice, and the buttons Cancel and Block reporter.
+
+How the card behaves:
+
+- Everything the bot writes in the venue (the card and its steps, the
+  prompts and their refusals, the routing card, the status card, the
+  answers to the venue's commands) and every answer to a press there is in
+  one language, the deployment's `VENUE_LOCALE`, Persian unless it is set
+  to English, whatever the language of your own Telegram app: a card never
+  changes language, and the venue reveals nobody's app language. Outside
+  the venue, a keyholder's approval notice is in both languages, and the
+  answers to a keyholder's presses and commands in their own chat are in
+  the keyholder's own app language.
+- Every press is checked on its own: your numeric id must be on
+  `ADMIN_IDS`, the press must sit on the report's current card (or its
+  status card) in the venue, and the bot must not be locked down. A press
+  on an older card of the report is answered "This card is out of date".
+- If a report has no card (`/open` marks it "no card", say because the
+  venue refused the first one), `/card <id>` posts it again; the old card,
+  if there is one, is deleted, or marked out of date when it is older than
+  Telegram's 48 hours. A card the report could not take (decided while
+  the card went out, or its id not stored) is deleted at once, or edited to
+  the outcome without links or buttons, so no card with live buttons stays
+  that its report does not know of.
+- The admin commands, `/open`, `/block <ref>`, `/unblock <ref>` and
+  `/card <id>`, are typed in the venue. Typed in your private chat with
+  the bot, a command is no command: the bot deletes it and answers as it
+  answers any unknown command.
 - Intake is text-only. A reporter's message carrying media or a forwarded
   post is refused with a reply and deleted at intake, never stored,
   forwarded or copied; you never receive media through the bot. A reporter
   who wants to point at a post sends its link.
 - First decision wins. If both admins act on the same card, exactly one
-  decision goes through (a conditional update) and the other admin's card
-  is edited to show the outcome. Do not re-decide a card that shows an
-  outcome.
+  decision goes through (a conditional update), and the other admin's press
+  is answered "Already decided" with the report's state, its card edited to
+  that state. Do not re-decide a card that shows an outcome.
 - Duplicate reports of the same open target are merged automatically into
-  the first report. You decide once per target; no reporter is told
-  anything at the decision.
+  the first report, keeping no comment and no flag of their own; when a
+  duplicate's reporter says they are the affected person while the report
+  is still pending, the first report's flag is raised, and the card shows
+  it at your next step. A duplicate arriving after your approval changes
+  nothing of the approved post: if it should, Cancel. No reporter is told
+  anything at any decision.
 
 ## 3. Step 0: the suspected-CSAM gate
 
@@ -169,8 +219,11 @@ Work through every step; approve only when every step passes.
    consent; impersonation; other (the post uses a fixed generic
    instruction block, drawn from
    [platform-reporting-other.md](../reference/platform-reporting-other.md);
-   you write no instructions of your own). The bot asks you to confirm the
-   category when you press Approve.
+   you write no instructions of your own). When you press Approve the bot
+   shows the seven categories, the reporter's label marked ✓, and you
+   confirm one; "Suspected CSAM" there leads to the routing card (section
+   6), never to an approval. The category you confirm is what the post and
+   the statistics use.
 6. **Write the recommended comment as points, in your own words.** It is
    what members will say, in their own words, in their one report: the
    kind of violation, who is targeted in general terms (a private person,
@@ -191,32 +244,83 @@ Work through every step; approve only when every step passes.
    [Facebook](../reference/platform-reporting-facebook.md),
    [TikTok](../reference/platform-reporting-tiktok.md),
    [Telegram](../reference/platform-reporting-telegram.md)).
-7. **Pick the link mode** from the routing table (section 5): account
-   only, or account and post where the table allows it by your explicit
-   opt-in recorded with the approval; never the post for intimate images.
-   The affected-person flag forces account only. For a private-data report
-   you report the specific post yourself, from the isolated profile, before
-   or right after approving.
-8. **Approve, and answer the prompts.** Approve asks you to confirm the
-   category, to pick the link mode, and to reply to the recommended-comment
-   prompt (a force reply; the bot matches your reply by your allowlisted
-   id and the prompt it answers, then deletes both). The bot validates the
-   rendered post in both languages against Telegram's length limit and the
-   link allowlist before it writes anything; a Telegram target is rendered
-   as code text, never as a link, and a link whose host is not allowlisted
-   is dropped from an "other" post.
+7. **Pick the link mode** from the routing table (section 5): "The
+   account link only", or "The account link and the post" where the table
+   allows it, by your explicit opt-in recorded with the approval; never the
+   post for intimate images. The bot offers only the modes the report
+   allows: the account link alone when the reporter is the affected person
+   (or the flag was cleared by a cancelled approval), and when the report
+   has no post URL of its own (the reported link is the account). For a
+   private-data report you report the specific post yourself, from the
+   isolated profile, before or right after approving.
+8. **Approve, and answer the prompts.** In order, each step on the card:
+   - confirm the category (step 5);
+   - when the report has no account link, the bot posts a prompt under the
+     card, "The account link": reply to it with the link of the account
+     (the profile) on the same platform. The bot takes it only through the
+     link policy (the platform's own host, https, no shortener, redirect,
+     port, Telegram invite or app link) and only as an account of the
+     report's platform, and stores it on the report;
+   - pick the link mode (step 7);
+   - the bot posts the prompt "Recommended points": reply to it with your
+     points (step 6). Only you can answer a prompt you started: a reply by
+     anyone else, the other admin included, is ignored; and you hold one
+     prompt per report at a time, a new one replacing the old.
+
+   A reply the bot refuses (not a text, empty, a link, a domain name or a
+   full stop with no space after it, an `@` mention, `t.me`, a phone number
+   or another run of seven digits, more than 300 characters) gets a fresh
+   prompt that starts with the reason; the old prompt and your reply are
+   deleted and nothing is written. Back, on the card, returns it to its
+   first state and deletes your open prompt. With your points accepted, the
+   bot renders the post in Persian and English, as the channel will show
+   it, and checks it, together with the notice that carries it to the
+   keyholders, against Telegram's 4,096 characters and the link policy; a
+   Telegram target is rendered as code text, never as a link, and a link of
+   another site whose host is not allowlisted is left out of the post,
+   which says so. Then it sends the notice to every keyholder (step 9),
+   and only once at least one of them has it does it write the approval,
+   in one step with the post's schedule; the prompt and your reply are
+   deleted.
 9. **The grace period.** Approval starts the 30-minute grace period; the
-   card and the status card show Cancel. Cancel returns the report to
-   pending and voids the approval record. Every keyholder receives the
-   rendered post with a Cancel button and a Lockdown button of their own,
-   so someone outside the admins' reach sees each post before it goes out;
-   a keyholder's Cancel works like yours. `/halt` holds every post and
-   closure edit for every report until `/resume` (operations runbook).
-   After the grace period the bot posts once into the channel.
-10. **Reject** with the reason code the bot offers (internal, shown to
-    nobody). The reporter gets no message. Rejections feed the reporter's
-    throttle (3 rejections in 30 days limit that reference to 1 report per
-    day).
+   card and the status card show Cancel, and the status card says how many
+   keyholders received the notice ("Keyholders notified: 2 of 2"). Cancel
+   returns the report to pending, voids the approval record and deletes the
+   scheduled post; the card returns to review, the status card is deleted.
+   Every keyholder receives the rendered post with a Cancel button and a
+   Lockdown button of their own, so someone outside the admins' reach sees
+   each post before it goes out; a keyholder's Cancel works like yours, and
+   the notices are edited to "Cancelled" without links. Cancel works until
+   the bot starts sending the post; after that it is too late, and a wrong
+   post is retracted (section 8). An approval after a Cancel is a new
+   approval, under a new approval id. `/halt` holds every post and closure
+   edit for every report until `/resume` (operations runbook). After the
+   grace period the bot posts once into the channel.
+
+   If the notice reached no keyholder (each send failed: a keyholder who
+   never sent `/start`, one who blocked the bot, a timeout), nothing is
+   approved, since nobody outside your reach could see the post: the bot
+   writes nothing and answers your reply as it answers any refused one, by
+   a fresh prompt that starts "Refused: no keyholder could be notified, so
+   nothing was approved". Ask the keyholders to send `/start` to the bot,
+   then reply to the fresh prompt again. One keyholder reached of several
+   is enough; the status card then says how many were. If another admin's
+   decision landed while the notices went out, the notices are edited to
+   "Cancelled" and your prompt ends; so are they when a keyholder taps
+   Lockdown in that moment, and then nothing is approved and the venue
+   gets nothing more. A keyholder who presses Cancel in the moment between
+   the notice and the approval's record is told that the approval is not
+   recorded yet, and presses again once it is; a notice more than five
+   minutes old whose approval was never recorded is settled as
+   "Cancelled" instead.
+10. **Reject** with one of the reasons the bot offers, internal codes
+    shown to nobody: "No visible violation", "Dead link or wrong target",
+    "The reported account may be the victim", "Another reason". The card
+    is deleted (edited to "rejected" when it is older than 48 hours). The
+    reporter gets no message. Rejections feed the reporter's throttle (3
+    rejections in 30 days limit that reference to 1 report per day); a
+    rejection counts once on the reference of every report of the target,
+    the merged ones included.
 
 ## 5. Per-category routing table
 
@@ -240,11 +344,15 @@ code text, never as a link; see section 11.
 
 ## 6. Suspected CSAM: the routing card
 
-When you press Route as suspected CSAM, the bot replaces the review card
-with a routing card, visible only in the review venue. It carries the
-reported URL as code text and the routes from
-[csam-hotlines.md](../reference/csam-hotlines.md). Work through them in
-order, then confirm.
+When you press Route as suspected CSAM on the card, or confirm the
+category "Suspected CSAM" after Approve, the bot replaces the review card
+with a routing card, an edit of the card in the review venue and never a
+message anywhere else. It carries the reported URL, and the account's
+link when it differs, as code text; the platform's own path; the hotline
+links from [csam-hotlines.md](../reference/csam-hotlines.md); the wording
+for your hotline report; and the buttons Confirm routing and Back (which
+returns the review card). It does not show the reporter's comment. Work
+through the routes in order, then confirm.
 
 1. **The platform's own child-exploitation path, one report by you.**
    Platforms deduplicate; volume buys nothing. Instagram and Facebook:
@@ -274,15 +382,18 @@ order, then confirm.
 3. **Telegram-hosted target: also email stopCA@telegram.org** with the
    t.me link and, when the post shows "Forwarded from <bot>", the bot's
    @username. Use an NGO address, not a personal one.
-4. **Confirm the routing on the card.** The bot then records your admin id
-   and the timestamp, nulls the report's URL, account URL and comment at
-   once, on the report and on every report merged into it (only the
-   aggregate row and the keyed link hash remain), and deletes the card
-   from the venue. Neither you nor the bot messages the reporter at
-   routing: a reporter who used the label "sexual content involving a
-   minor" already received the public hotline links at intake, so they
-   can report directly too. The report's status becomes routed; there is
-   no closure step for you later.
+4. **Confirm the routing on the card** (Confirm routing). The bot then
+   records your admin id and the timestamp and the category "suspected
+   CSAM", nulls the report's URL, account URL, comment and affected-person
+   flag at once, in one step, on the report and on every report merged
+   into it (only the aggregate fields and the keyed link hash remain), and
+   deletes the card from the venue (edits it to "routed" without links
+   when it is older than 48 hours). Neither you nor the bot messages the
+   reporter at routing: a reporter who used the label "sexual content
+   involving a minor" already received the public hotline links at intake,
+   so they can report directly too. The report's status becomes routed;
+   there is no closure step for you later, and no approval can exist for
+   it.
 5. **Nothing else, ever.** Not to the channel, not to the other admin's
    direct messages, not to the NGO's group, not to a contact in law
    enforcement or another NGO. INHOPE: "never share links or files with
@@ -409,9 +520,18 @@ Lockdown button on an approval notice, or the `LOCKDOWN` secret set with
 wrangler); it is the answer to an admin's arrest or a seized admin
 account. While it is set:
 
-- every admin action is refused: Approve, Reject, Route, Cancel, Block,
-  `/close`, `/retract`, `/repost`, `/halt`, `/resume`; you see a refusal
-  and nothing else;
+- every admin action is refused: every button of the review card, the
+  routing card and the status card (Approve, Reject, Route, Cancel, Block
+  reporter and every step between), your replies to the prompts, and the
+  commands `/open`, `/block`, `/unblock`, `/card`, `/close`, `/retract`,
+  `/repost`, `/halt`, `/resume`; you see "This action is refused right
+  now." and nothing else, and nothing is written;
+- a keyholder's Cancel on an approval notice still works, and so does the
+  Lockdown button beside it; under lockdown it edits only the keyholders'
+  own chats, never the venue, so the card may still show the approval
+  after a keyholder cancelled it: your next press on it, after the
+  lockdown is lifted, brings it to the report's real state; a keyholder
+  also finds the open reports with `/open` in their own chat;
 - intake answers reporters "temporarily unavailable" and stores nothing;
   "I reported it" presses are ignored; no post goes out and no closure
   edit runs; a keyholder's retraction edit still runs;

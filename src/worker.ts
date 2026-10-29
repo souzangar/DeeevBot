@@ -4,7 +4,8 @@
 // - fetch: the webhook boundary (src/telegram/webhook.ts; ADR 0003): the
 //   path and the constant-time secret check before any bot object exists
 //   or the body is read, 404 with an empty body otherwise; then the update
-//   goes to the bot under waitUntil and Telegram gets 200 at once. The
+//   goes to the bot, with the review in its slot of features
+//   (defaultFeatures()), under waitUntil, and Telegram gets 200 at once. The
 //   configuration comes from configFor(env), parsed once per env object; a
 //   configuration that does not load is logged by class and answered 500,
 //   with no bot and no body read, and Telegram keeps the update for later.
@@ -19,7 +20,7 @@ import { configFor } from './config/memo';
 import type { Config } from './config/schema';
 import { d1SqlDb } from './db/d1';
 import { consoleLogger, type Logger } from './privacy/logger';
-import { createBot } from './telegram/bot';
+import { createBot, defaultFeatures, type BotDeps } from './telegram/bot';
 import { handleWebhook } from './telegram/webhook';
 
 /** The bindings declared in wrangler.jsonc. Secrets are read through src/config/. */
@@ -41,7 +42,10 @@ export function createWorker(fetchImpl: typeof fetch, logger: Logger = consoleLo
       return handleWebhook(request, ctx, {
         config,
         logger,
-        bot: () => createBot({ config, db: d1SqlDb(env.DB), clock: systemClock, logger, fetch: fetchImpl }),
+        bot: () => {
+          const deps: BotDeps = { config, db: d1SqlDb(env.DB), clock: systemClock, logger, fetch: fetchImpl };
+          return createBot(deps, defaultFeatures(deps));
+        },
       });
     },
     // The one-minute job cron arrives with the scheduling unit (U5).

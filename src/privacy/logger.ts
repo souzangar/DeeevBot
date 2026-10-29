@@ -57,6 +57,27 @@ export const LOG_EVENTS = [
   'intake.message_not_deleted',
   'intake.ack_not_deleted',
   'intake.prompt_not_edited',
+  // The review (unit U4, src/review/): a submitted report's card was not
+  // posted to the venue (src/review/card-post.ts); a venue message (a card,
+  // a prompt, an admin's reply, a status card) could not be deleted, or
+  // edited after its decision committed (src/review/venue.ts); the status
+  // card was not posted after an approval; the approval notice reached
+  // only some keyholders (with the counts), or none could be sent, or one
+  // could not be edited to its outcome (src/review/notify.ts); a reply was
+  // refused because its approval's notice reached no keyholder, with the
+  // counts, or the approval's batch failed and a read could not tell
+  // whether it landed, or showed that it had landed after all, the approval
+  // going on (src/review/approve.ts).
+  'review.card_not_sent',
+  'review.message_not_deleted',
+  'review.message_not_edited',
+  'review.status_card_not_sent',
+  'review.notice_incomplete',
+  'review.notice_failed',
+  'review.notice_not_edited',
+  'review.notice_unreached',
+  'review.approval_unknown',
+  'review.approval_landed',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 

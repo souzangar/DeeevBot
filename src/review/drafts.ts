@@ -14,7 +14,8 @@
 // The submit is ONE batch, one transaction on D1 and on node:sqlite, of
 // four statements chained by SQLite's changes(), the number of rows the
 // batch's previous statement changed (the press counter relies on the
-// same, src/telegram/presses.ts, and both are tested on D1):
+// same, src/telegram/presses.ts, and both are tested on D1), and a fifth
+// that reads what the third inserted:
 // 1. the draft deleted, only from the comment step: a second submit of the
 //    same draft changes nothing, and everything after it is skipped;
 // 2. the reference's `reporter_stats` row written (open_count, day,
@@ -28,8 +29,15 @@
 //    to keep a counter right;
 // 3. the report inserted, only if the row was written: `merged` into the
 //    oldest open target with the same keyed link hash (src/privacy/link-hash.ts),
-//    `pending` otherwise; it carries the reporter reference, never an id;
-// 4. the day's non-member count raised, for a non-member's report only.
+//    `pending` otherwise; it carries the reporter reference, never an id. A
+//    merged report stores no comment and no affected-person flag: nobody
+//    ever reads them (the admins decide on the target's card), so a merge
+//    into a target already decided leaves nothing of them behind;
+// 4. the day's non-member count raised, for a non-member's report only;
+// 5. when the merged report's reporter is the affected person, the
+//    target's flag raised, while the target is still pending and never on
+//    a decided one, so the review offers the account link alone (after an
+//    approval the post stands as approved; Cancel is the admin's).
 // A refused submit deletes the draft too and writes nothing else: a
 // refused report is not kept for later.
 import { utcDay, type Clock } from '../clock';
@@ -70,8 +78,9 @@ const REMEMBER_LOCALE = sql`INSERT INTO drafts (draft_key, step, locale, created
 
 const TAKE_DRAFT = sql`DELETE FROM drafts WHERE draft_key = ? AND step = 'comment'`;
 const WRITE_STATS = sql`INSERT INTO reporter_stats (reporter_ref, open_count, day, day_count, last_seen) SELECT ?, (SELECT count(*) FROM reports WHERE reporter_ref = ? AND status = 'pending') + (CASE WHEN EXISTS (SELECT 1 FROM reports WHERE link_hash = ? AND status IN ('pending', 'approved', 'posting', 'posted')) THEN 0 ELSE 1 END), ?, 1, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM reporter_stats WHERE reporter_ref = ? AND (blocked = 1 OR (day = ? AND day_count >= (CASE WHEN rejections_30d >= ? THEN ? ELSE ? END)))) AND (? = 0 OR (SELECT count(*) FROM reports WHERE reporter_ref = ? AND status = 'pending') < ?) AND (? = 1 OR COALESCE((SELECT count FROM counters WHERE day = ? AND key = ?), 0) < ?) ON CONFLICT (reporter_ref) DO UPDATE SET open_count = excluded.open_count, day_count = CASE WHEN reporter_stats.day = excluded.day THEN reporter_stats.day_count + 1 ELSE 1 END, day = excluded.day, last_seen = excluded.last_seen`;
-const INSERT_REPORT = sql`INSERT INTO reports (id, status, platform, category, url, account_url, comment, affected_person, reporter_ref, merged_into, link_hash, created_at) SELECT ?, CASE WHEN target.id IS NULL THEN 'pending' ELSE 'merged' END, ?, ?, ?, ?, ?, ?, ?, target.id, ?, ? FROM (SELECT (SELECT id FROM reports WHERE link_hash = ? AND status IN ('pending', 'approved', 'posting', 'posted') ORDER BY created_at, id LIMIT 1) AS id) AS target WHERE changes() = 1`;
+const INSERT_REPORT = sql`INSERT INTO reports (id, status, platform, category, url, account_url, comment, affected_person, reporter_ref, merged_into, link_hash, created_at) SELECT ?, CASE WHEN target.id IS NULL THEN 'pending' ELSE 'merged' END, ?, ?, ?, ?, CASE WHEN target.id IS NULL THEN ? ELSE NULL END, CASE WHEN target.id IS NULL THEN ? ELSE NULL END, ?, target.id, ?, ? FROM (SELECT (SELECT id FROM reports WHERE link_hash = ? AND status IN ('pending', 'approved', 'posting', 'posted') ORDER BY created_at, id LIMIT 1) AS id) AS target WHERE changes() = 1`;
 const COUNT_NON_MEMBER = sql`INSERT INTO counters (day, key, count) SELECT ?, ?, 1 WHERE ? = 0 AND changes() = 1 ON CONFLICT (day, key) DO UPDATE SET count = count + 1`;
+const RAISE_TARGET_FLAG = sql`UPDATE reports SET affected_person = 1 WHERE id = (SELECT merged_into FROM reports WHERE id = ? AND status = 'merged') AND status = 'pending' AND ? = 1`;
 
 const asNumber = (value: SqlValue): number | null => (typeof value === 'number' ? value : null);
 
@@ -186,7 +195,7 @@ export interface SubmitInput {
  */
 export type SubmitOutcome = 'submitted' | 'limited' | 'stale';
 
-/** The submit's four statements (see the header). */
+/** The submit's five statements (see the header). */
 export function submitStatements(input: SubmitInput, now: number): SqlStatement[] {
   const day = utcDay(now);
   const member = input.member ? 1 : 0;
@@ -233,6 +242,8 @@ export function submitStatements(input: SubmitInput, now: number): SqlStatement[
       ],
     },
     { sql: COUNT_NON_MEMBER, params: [day, NON_MEMBER_COUNTER, member] },
+    // Last: the statements above are chained by changes(), which this one would break.
+    { sql: RAISE_TARGET_FLAG, params: [input.reportId, input.affectedPerson ? 1 : 0] },
   ];
 }
 

@@ -258,6 +258,19 @@ describe('loadConfig', () => {
     });
   });
 
+  describe('VENUE_LOCALE', () => {
+    it('is Persian by default, when absent or empty, and English for en', () => {
+      expect(load({ VENUE_LOCALE: undefined }).venueLocale).toBe('fa');
+      expect(load({ VENUE_LOCALE: '' }).venueLocale).toBe('fa');
+      expect(load({ VENUE_LOCALE: 'fa' }).venueLocale).toBe('fa');
+      expect(load({ VENUE_LOCALE: 'en' }).venueLocale).toBe('en');
+    });
+
+    it.each(['FA', 'En', 'fa-IR', 'de', ' fa', 'fa,en', 'persian'])('rejects %j: fa and en are the only values', (value) => {
+      expect(rejectedVariables({ VENUE_LOCALE: value })).toEqual(['VENUE_LOCALE']);
+    });
+  });
+
   describe('numeric bounds', () => {
     it.each([
       ['APPROVAL_GRACE_MINUTES', 'approvalGraceMinutes', 1, 1440],

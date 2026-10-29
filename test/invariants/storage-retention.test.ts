@@ -107,6 +107,7 @@ const COLUMNS: Readonly<Record<string, Readonly<Record<string, Fate>>>> = {
     kind: 'state',
     link_mode: 'state',
     created_at: 'state',
+    category: 'state',
   },
   reporter_stats: {
     reporter_ref: 'row',

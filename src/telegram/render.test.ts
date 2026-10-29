@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { escapeHtml, telegramHtmlProblems } from '../i18n/html';
 import { t } from '../i18n/index';
-import { bidiIsolate, codeUrl, escape, FSI, PDI, withLinks } from './render';
+import { bidiIsolate, codeText, codeUrl, escape, FSI, PDI, safeText, withLinks } from './render';
 
 const URL = 'https://www.instagram.com/reported.account/';
 
@@ -67,5 +67,20 @@ describe('withLinks', () => {
 
   it('yields valid Telegram HTML for hostile URLs too', () => {
     expect(telegramHtmlProblems(withLinks('fa', text, ['https://x.test/<b>&', URL]))).toEqual([]);
+  });
+});
+
+describe('safeText and codeText', () => {
+  it('escape free text, so it is text and never markup, and keep its line breaks', () => {
+    expect(safeText('a <b>bold</b> & "quoted"\nnext line')).toBe('a &lt;b&gt;bold&lt;/b&gt; &amp; &quot;quoted&quot;\nnext line');
+    expect(codeText('see https://x.test/ <a href="https://evil.test/">')).toBe(
+      '<code>see https://x.test/ &lt;a href=&quot;https://evil.test/&quot;&gt;</code>',
+    );
+    expect(telegramHtmlProblems(codeText('</code><b>&'))).toEqual([]);
+  });
+
+  it('show control characters and bidi controls as U+FFFD, and keep the joiners Persian needs', () => {
+    expect(safeText('a\u202Eb\u2066c\u0007d\te')).toBe('a\uFFFDb\uFFFDc\uFFFDd\uFFFDe');
+    expect(safeText('می\u200Cخواهم\u200D')).toBe('می\u200Cخواهم\u200D');
   });
 });

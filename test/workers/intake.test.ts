@@ -1,11 +1,14 @@
 // Workers tier: the intake store's submit on the local D1 that miniflare
 // runs (src/review/drafts.ts over src/db/d1.ts). The submit is one batch of
-// four statements chained by SQLite's changes(), which this checks on D1
-// itself, as test/workers/webhook.test.ts does for the press counter: a new
-// report is pending, a duplicate of an open target is merged into it, a
-// refused submit writes nothing but the draft's deletion, and a second
-// submit of the same draft writes nothing. Keys and hashes are unique to
-// this file, so it shares the database with the other files safely.
+// four statements chained by SQLite's changes() and a fifth that reads the
+// inserted row, which this checks on D1 itself, as
+// test/workers/webhook.test.ts does for the press counter: a new report is
+// pending, a duplicate of an open target is merged into it with no comment
+// and no flag of its own, its affected reporter raising the pending
+// target's flag, a refused submit writes nothing but the draft's deletion,
+// and a second submit of the same draft writes nothing. Keys and hashes
+// are unique to this file, so it shares the database with the other files
+// safely.
 import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -31,7 +34,7 @@ const draftAtComment = async (key: string): Promise<void> => {
   await setAffected(db, clock, key, false);
 };
 
-const input = (key: string, linkHash: string, member: boolean): SubmitInput => ({
+const input = (key: string, linkHash: string, member: boolean, fields: Partial<SubmitInput> = {}): SubmitInput => ({
   reporterRef: key,
   reportId: randomId(),
   member,
@@ -42,6 +45,7 @@ const input = (key: string, linkHash: string, member: boolean): SubmitInput => (
   affectedPerson: false,
   comment: null,
   linkHash,
+  ...fields,
 });
 
 describe('the intake submit on D1', () => {
@@ -64,6 +68,17 @@ describe('the intake submit on D1', () => {
       open_count: 0,
       day_count: 1,
     });
+  });
+
+  it("stores no comment or flag on a merged report, its affected reporter raising the pending target's flag in the same batch", async () => {
+    await draftAtComment(ref(7));
+    expect(await submitReport(db, input(ref(7), hash(7), true, { comment: 'the first view' }), NOW)).toBe('submitted');
+    await draftAtComment(ref(8));
+    expect(await submitReport(db, input(ref(8), hash(7), true, { comment: 'it is my data', affectedPerson: true }), NOW + 1)).toBe('submitted');
+    expect(await db.all(sql`SELECT status, comment, affected_person FROM reports WHERE link_hash = ? ORDER BY created_at`, [hash(7)])).toEqual([
+      { status: 'pending', comment: 'the first view', affected_person: 1 },
+      { status: 'merged', comment: null, affected_person: null },
+    ]);
   });
 
   it("refuses a non-member's second report of the day, writing nothing but the draft's deletion", async () => {

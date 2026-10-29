@@ -1,5 +1,5 @@
 // The expected D1 schema, as test/support/schema-description.ts describes
-// it: what migrations/ builds, checked on node:sqlite
+// it: what migrations/ builds (0001_init.sql, then 0002_prompt_category.sql), checked on node:sqlite
 // (src/db/d1-schema.test.ts) and on D1 (test/workers/d1.test.ts), so the
 // two runtimes provably build the same tables. A schema change updates this
 // file in the same change, which is the point: the reviewer sees every
@@ -18,6 +18,7 @@ export const D1_SCHEMA: readonly TableDescription[] = [
       'kind TEXT NOT NULL',
       'link_mode TEXT',
       'created_at INTEGER NOT NULL',
+      'category TEXT',
     ],
     checks: ['admin_id > 0'],
     indexes: [

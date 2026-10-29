@@ -1,0 +1,54 @@
+// @critical-path
+// The status card (critical invariants 1, 3 and 5; the MVP plan, section 4,
+// "Review"): the message the approval posts in the admin review venue for
+// the report's life after its decision, while the review card, which shows
+// the URLs and goes within 48 hours, is gone. It shows the report's id (the
+// one the admin commands take), its platform and category, its state and,
+// in the grace, its start time and how many keyholders got the approval
+// notice; never a URL, a comment or a reporter's reference. Its buttons:
+// Cancel while the approval is in its grace, and Block reporter while the
+// report still holds the reference; the later units add their own (taken
+// down, no result, retract) to the posted report's card.
+import type { InlineKeyboardButton } from 'grammy/types';
+import { utcMinute } from '../clock';
+import { t, type Locale } from '../i18n/index';
+import { PLATFORM_NAME_KEYS } from '../platforms/instructions';
+import { reviewData, type ReviewAction } from './callbacks';
+import { CATEGORY_NAME_KEYS, STATUS_NAME_KEYS } from './names';
+import type { ApprovalRecord, ReviewReport } from './reports';
+import type { CardView } from './venue';
+
+/** How many keyholders the approval notice reached. */
+export interface NoticeCount {
+  readonly sent: number;
+  readonly total: number;
+}
+
+const button = (text: string, action: ReviewAction): InlineKeyboardButton.CallbackButton => ({
+  text,
+  callback_data: reviewData(action),
+});
+
+/** The status card of `report` (see the header); `approval` is its live approval, if it has one. */
+export function statusCard(
+  report: Pick<ReviewReport, 'id' | 'status' | 'platform' | 'category' | 'reporterRef'>,
+  approval: Pick<ApprovalRecord, 'approvalId' | 'startsAt' | 'voidedAt'> | null,
+  locale: Locale,
+  notified?: NoticeCount,
+): CardView {
+  const inGrace = report.status === 'approved' && approval !== null && approval.voidedAt === null;
+  const lines = [
+    t(locale, 'review.status_card.title', { id: report.id }),
+    `${t(locale, PLATFORM_NAME_KEYS[report.platform])} · ${t(locale, CATEGORY_NAME_KEYS[report.category])}`,
+    inGrace
+      ? t(locale, 'review.status_card.in_grace', { time: utcMinute(approval.startsAt) })
+      : t(locale, 'review.status_card.state', { state: t(locale, STATUS_NAME_KEYS[report.status]) }),
+  ];
+  if (inGrace && notified !== undefined) lines.push(t(locale, 'review.status_card.notified', { sent: notified.sent, total: notified.total }));
+  const rows: InlineKeyboardButton.CallbackButton[][] = [];
+  if (inGrace) {
+    rows.push([button(t(locale, 'review.button.cancel'), { kind: 'cancel', reportId: report.id, approvalId: approval.approvalId })]);
+  }
+  if (report.reporterRef !== null) rows.push([button(t(locale, 'review.button.block'), { kind: 'block', reportId: report.id })]);
+  return rows.length === 0 ? { text: lines.join('\n') } : { text: lines.join('\n'), keyboard: { inline_keyboard: rows } };
+}

@@ -28,7 +28,8 @@ therefore the only store
 
 ### Conventions
 
-The DDL is authoritative: `migrations/0001_init.sql`, pinned by
+The DDL is authoritative: `migrations/0001_init.sql` and the files after
+it (`0002_prompt_category.sql`), pinned by
 `test/support/expected-schema.ts` on node:sqlite and on D1 (columns, CHECK
 constraints, keys, indexes and the trigger). A time
 (`*_at`) is INTEGER milliseconds since the epoch, a day (`day`, `*_day`,
@@ -100,9 +101,13 @@ deployment configuration: `approvals.admin_id`, `reports.decided_by`,
   start before it was given; Cancel sets `voided_at`, and a re-approval
   upserts over the voided row with a new `approval_id`.
 - `admin_prompts(chat_id, prompt_message_id, admin_id, report_id, kind,
-  link_mode, created_at)`, keyed `(chat_id, prompt_message_id)` because
-  message ids are per chat: the force-reply prompts awaiting an admin's
-  or a keyholder's reply (the recommended comment, the retraction text);
+  link_mode, created_at, category)`, keyed `(chat_id, prompt_message_id)`
+  because message ids are per chat: the force-reply prompts awaiting an
+  admin's or a keyholder's reply (the account link a report lacks, the
+  recommended comment, the retraction text), with what the admin chose
+  before the prompt (`category`, added by `0002_prompt_category.sql`, and
+  `link_mode`), so the reply completes the approval without the report's
+  category, the reporter's label, being overwritten before the decision;
   deleted on completion and after 24 hours.
 - `reporter_stats(reporter_ref PK, open_count, day, day_count,
   rejections_30d, blocked, last_seen)`.
@@ -118,7 +123,8 @@ deployment configuration: `approvals.admin_id`, `reports.decided_by`,
   its kind and report, which keeps its payload, attempts and due time; a
   job goes on completion and with its report.
 - `meta(key PK, value)`: `schema_version` (set by each migration that
-  changes the schema; 1 for `0001_init.sql`), `halted` (/halt),
+  changes the schema; 1 for `0001_init.sql`, 2 for
+  `0002_prompt_category.sql`), `halted` (/halt),
   `paused_until` (the global 429 pause) and `lockdown` (the keyholder's
   switch, set by `/lockdown` and cleared only by `/unlock` from a
   keyholder; the `LOCKDOWN` secret is its override outside D1). An absent
@@ -154,8 +160,8 @@ a pending report expires after 30 days (`expired`, outcome
 |---|---|
 | `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers, keyholder alerts |
 | `src/auth/` | `isAdmin`, `isKeyholder`, the membership check with the member definition, the two-layer lockdown check |
-| `src/review/` | categories and routing as data, the report state machine with its conditional updates, approval records, grace and cancel, the admin prompts, the admin free-text validator |
-| `src/broadcast/` | the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render |
+| `src/review/` | categories and routing as data, the review card, the routing card and the status card, the report state machine with its conditional updates (approve, cancel, reject, route), approval records, grace and cancel, the admin prompts, the post's renderer, the keyholders' approval notice, the block list, the admin free-text validator |
+| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render |
 | `src/privacy/` | HMAC references, log redaction, the retention job, the emergency wipe |
 | `src/config/` | the zod schema and loaders (a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap is refused) |
 | `src/db/` | the `SqlDb` port and its D1 and node:sqlite adapters, the Node migrations runner, the random ids |
@@ -256,3 +262,9 @@ final shape: `src/auth/` with `isKeyholder` and the lockdown check,
 the emergency wipe, the entries and the clock; then, from unit U2, the admin
 free-text validator in `src/review/` (`src/review/text-policy.ts`), and
 `src/telegram/` with the port, the gates and the failure classification.
+
+Amended 2026-10-28 (Phase 3, unit U4): `admin_prompts.category`, added by
+`migrations/0002_prompt_category.sql` (schema version 2), which carries
+the category an admin confirmed to the force-reply prompt that completes
+the approval; the review's modules in `src/review/` and the post job's
+enqueue, `src/broadcast/jobs.ts`.

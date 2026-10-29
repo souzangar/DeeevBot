@@ -40,13 +40,21 @@ Before approving a non-CSAM report the admin:
 ## The approve prompts and the admin free-text validator
 
 Approve runs a short conversation in the venue, each step re-checking the
-numeric allowlist: category confirmation; the link mode within the
-category's set (the affected-person flag forces account only; suspected
-CSAM offers Route only); the recommended-comment prompt, a force reply
-recorded in `admin_prompts` and matched on the replier's allowlisted id
-plus `reply_to_message.message_id`, the replier being the approving admin,
-prompt and reply deleted after capture. "Other" uses the catalog's fixed
-generic instruction block; there is no custom-instructions prompt.
+numeric allowlist, the venue and the lockdown switch: category
+confirmation (suspected CSAM offers Route only); when the report has no
+account link, a force-reply prompt for it, which the link policy screens
+and which must be an account on the report's platform; the link mode
+within the category's set (the affected-person flag, or a flag a
+cancelled approval cleared, forces account only, and so does a report
+without a post URL of its own); the recommended-comment prompt, a force
+reply recorded in `admin_prompts` with the confirmed category and the link
+mode, and matched on the replier's allowlisted id plus
+`reply_to_message.message_id`, the replier being the approving admin,
+prompt and reply deleted after capture; a refused reply gets a fresh
+prompt saying why. "Other" uses the catalog's fixed generic instruction
+block; there is no custom-instructions prompt. The procedure, step by
+step, is in the [admin review runbook](../guides/admin-review-runbook.md),
+sections 2 and 4.
 
 Admin free text, the recommended comment and a retraction's correction,
 is validated at the prompt and refused when it contains a URL, a bare
@@ -104,8 +112,13 @@ A keyed hash of the normalised URL identifies a target. A second report of
 the same open target (a report pending, approved, posting or posted)
 becomes its own row merged into the first; the admin decides once per
 target, and a routing nulls the links and comment of the merged rows in
-the same batch. The acknowledgement is identical for new and merged
-reports, so nobody can probe whether a target was already reported. For a
+the same batch. A merged report stores no comment and no affected-person
+flag; when its reporter is the affected person and the target is still
+pending, the target's flag is raised, so its post can carry the account
+link only. A duplicate reported by the affected person after the approval
+does not change the approved post; the admin's Cancel does. The
+acknowledgement is identical for new and merged reports, so nobody can
+probe whether a target was already reported. For a
 target that was reported and closed before, the keyed link hash in the
 aggregate row lets the admin's card say "previously reported, outcome X";
 the reporter is never told.
@@ -115,6 +128,9 @@ the reporter is never told.
 - A block list keyed by the reporter reference: the "Block reporter"
   button on the review and status cards (so nobody types a 64-character
   reference), `/block <ref>` and `/unblock <ref>`; blocked rows persist.
+  Only the primary report's reference is shown, so a merged report's
+  reporter can be blocked only by `/block` with a reference taken from
+  their own primary report.
 - A rejection counter per reference: 3 rejections in 30 days throttle the
   reporter to 1 report per day. Counters expire after 90 days without
   activity.
@@ -164,7 +180,15 @@ goes to anyone. `/halt` holds closure edits; retraction edits still run.
 ## Review venue
 
 Review cards, status cards and the routing card go to the configured
-private admin supergroup (`ADMIN_CHAT_ID`), where the bot is an
+private admin supergroup (`ADMIN_CHAT_ID`), and so do the admin commands,
+`/open`, `/block`, `/unblock` and `/card <id>` (which posts a report's card
+again when it is missing), typed there. Everything the bot writes in the
+venue, and every answer to a press there, is in one language,
+`VENUE_LOCALE` (Persian by default), whoever acts, so a card never changes
+language and the venue's text reveals no admin's client language; a
+keyholder's notice is in both languages, and the answers in a keyholder's
+own chat are in the keyholder's client language. The bot
+is an
 administrator holding `can_delete_messages` and auto-delete is enabled.
 Cards and prompts are deleted within 48 hours of their message (the Bot
 API's limit, which binds administrator bots as well); a decision older

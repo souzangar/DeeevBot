@@ -15,11 +15,16 @@
 // - rule 3: nothing the bot sends a reporter echoes a reported URL, an
 //   account link, a comment, or anyone's id, username, name or reporter
 //   reference; the acknowledgement is byte for byte the same for a new and
-//   a merged report;
-// - rule 5: every message goes to the reporter's own chat, a press causes no
-//   new message (its callback answer and an edit of its own prompt only),
-//   every deletion is in the reporter's own chat, and membership is looked
-//   up in the membership chat only, for the update's own user;
+//   a merged report; the review card a submit posts to the admin review
+//   venue carries no reporter's id, username or name (its reference, the
+//   URLs and the comment as code text are what the admins review by);
+// - rule 5: every message goes to the reporter's own chat but one, the
+//   review card of a submitted pending report, which goes to the venue and
+//   nowhere else, once per report (none for a merged duplicate); a press
+//   causes no new message (its callback answer and an edit of its own
+//   prompt only), every deletion is in the reporter's own chat, and
+//   membership is looked up in the membership chat only, for the update's
+//   own user;
 // - rule 8: no table holds a plaintext Telegram id of a reporter, in any
 //   column, as a number or a text; drafts and reports are keyed by the
 //   reporter reference; a draft is gone after its submit and its /cancel;
@@ -179,6 +184,10 @@ describe('critical invariant 3: nothing the bot sends a reporter exposes anyone'
   it('echoes no reported URL, account link, comment, id, username, name or reference', async () => {
     const { harness } = await battery();
     const refs = await Promise.all(REPORTERS.map((id) => reporterRef(id, harness.config.reporterRefKey)));
+    const toReporters = harness.telegram.calls.filter(
+      (recorded) => SENT_TO_REPORTERS.includes(recorded.method) && (REPORTERS as readonly unknown[]).includes(recorded.chatId),
+    );
+    expect(toReporters.length).toBeGreaterThan(50);
     const forbidden = [
       ...Object.values(LINKS),
       'LeakPost123',
@@ -194,8 +203,20 @@ describe('critical invariant 3: nothing the bot sends a reporter exposes anyone'
       NAMES.firstName,
       ...refs,
     ];
-    for (const call of harness.telegram.calls.filter((recorded) => SENT_TO_REPORTERS.includes(recorded.method))) {
+    for (const call of toReporters) {
       for (const fragment of forbidden) expect(String(call.payload.text), fragment).not.toContain(fragment);
+    }
+  });
+
+  it('posts each pending report\'s review card to the venue with its reference, never a reporter\'s id, username or name', async () => {
+    const { harness } = await battery();
+    const cards = harness.telegram.calls.filter((call) => call.chatId === IDS.adminChat);
+    const pending = harness.connection.prepare("SELECT reporter_ref FROM reports WHERE status = 'pending'").all();
+    expect(cards.map((call) => call.method)).toEqual(pending.map(() => 'sendMessage'));
+    for (const card of cards) {
+      const text = String(card.payload.text);
+      for (const fragment of [...REPORTERS.map(String), NAMES.username, NAMES.firstName]) expect(text, fragment).not.toContain(fragment);
+      expect(pending.some((row) => text.includes(String(row.reporter_ref)))).toBe(true);
     }
   });
 
@@ -214,8 +235,16 @@ describe('critical invariant 5: the intake answers in the reporter\'s own chat o
     const { byUpdate } = await battery();
     for (const { update, calls } of byUpdate) {
       const own = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+      const cards = calls.filter((call) => call.chatId === IDS.adminChat);
+      // The one message outside the reporter's chat: a submit's review card, to the venue, with its buttons.
+      expect(cards.length).toBeLessThanOrEqual(1);
+      for (const card of cards) {
+        expect(update.message).toBeDefined();
+        expect(card.method).toBe('sendMessage');
+        expect(JSON.stringify(card.payload.reply_markup)).toContain('"callback_data":"rv:ap:');
+      }
       for (const call of calls) {
-        if (call.method === 'answerCallbackQuery') continue;
+        if (call.method === 'answerCallbackQuery' || cards.includes(call)) continue;
         if (call.method === 'getChatMember') {
           expect(call.chatId).toBe(IDS.membershipChat);
           expect(call.payload.user_id).toBe(update.message?.from?.id);
