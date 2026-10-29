@@ -78,6 +78,57 @@ export const LOG_EVENTS = [
   'review.notice_unreached',
   'review.approval_unknown',
   'review.approval_landed',
+  // The scheduling unit (U5, src/broadcast/): a cron run that failed
+  // unexpectedly, that a storage failure stopped, the keyholders alerted
+  // of that failure, a cron expression this Worker does not run; the post:
+  // sent, its claim lost to another run or a hold, a 429 (with the wait),
+  // Telegram's refusal, an ambiguous send, a stored text the send-time check
+  // refused, a send whose record failed, a record another path wrote first;
+  // an edit job's failure or 429, or a job row it cannot read (its report
+  // flagged for the alert); reconciliation's re-enqueued edit jobs and
+  // its alert (incomplete when a keyholder did not get it); the once-only
+  // lockdown alert (likewise); a retention pass, a snapshot or a
+  // finalization that failed (src/broadcast/maintenance.ts); /attach
+  // recorded, refused (a message it cannot edit; a text that is not the
+  // post; a date outside the send window or another claim in it), a probe it
+  // could not undo, and a verified post whose keyboard it could not put
+  // back; /repost;
+  // /halt and /resume; the deployed probe's counts, and its one-time check
+  // of the text comparison against Telegram (src/probe.ts).
+  'tick.failed',
+  'tick.storage_failed',
+  'tick.storage_alerted',
+  'cron.unknown',
+  'post.sent',
+  'post.claim_lost',
+  'post.rate_limited',
+  'post.refused',
+  'post.ambiguous',
+  'post.text_refused',
+  'post.not_recorded',
+  'post.resolved_elsewhere',
+  'edit.failed',
+  'edit.rate_limited',
+  'edit.unreadable',
+  'reconcile.reenqueued',
+  'reconcile.alerted',
+  'reconcile.alert_incomplete',
+  'lockdown.alerted',
+  'lockdown.alert_incomplete',
+  'retention.failed',
+  'snapshot.failed',
+  'finalize.failed',
+  'attach.recorded',
+  'attach.refused',
+  'attach.text_mismatch',
+  'attach.window_mismatch',
+  'attach.revert_failed',
+  'attach.restore_failed',
+  'repost.done',
+  'halt.set',
+  'halt.cleared',
+  'probe.invocation',
+  'probe.fidelity',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 
@@ -96,8 +147,11 @@ export const API_METHODS = [
 ] as const;
 export type ApiMethod = (typeof API_METHODS)[number];
 
-/** The counts a line may carry. Each unit adds its own here. */
-export const COUNT_FIELDS = ['count', 'sent', 'failed', 'attempts'] as const;
+/**
+ * The counts a line may carry. Each unit adds its own here: the deployed
+ * probe's D1 queries and Bot API calls per invocation (src/probe.ts).
+ */
+export const COUNT_FIELDS = ['count', 'sent', 'failed', 'attempts', 'queries', 'apiCalls'] as const;
 export type CountField = (typeof COUNT_FIELDS)[number];
 
 /** Everything a line may carry besides its level and event. */
@@ -230,6 +284,8 @@ const RENDER: Readonly<Record<keyof LogFields, Render>> = {
   sent: count,
   failed: count,
   attempts: count,
+  queries: count,
+  apiCalls: count,
 };
 
 const isEvent = (value: unknown): value is LogEvent => inList(LOG_EVENTS)(value);

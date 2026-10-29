@@ -16,6 +16,7 @@
     "test:invariants": "vitest run --project invariants",
     "dev": "wrangler dev",
     "dry-run": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "probe:dry-run": "wrangler deploy --dry-run --config wrangler.probe.jsonc --outdir .wrangler/probe-dry-run",
     "migrate:local": "wrangler d1 migrations apply div-report --local"
   },
   "dependencies": {

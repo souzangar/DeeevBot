@@ -13,7 +13,11 @@
 //   answerCallbackQuery. Any other method, getChat among them, is answered
 //   404 "Not Found" and recorded like the rest, so a test can assert it was
 //   never called.
-// - Messages the bot sends are kept per chat, so edits and deletes behave:
+// - Messages the bot sends are kept per chat, by the text it sent, or, with
+//   the `telegramTexts` option, by the text Telegram keeps once it has
+//   parsed the HTML (plainText(), src/review/render-post.ts), which a probe
+//   of the deployed bot checks against Telegram itself (src/probe.ts).
+// - Messages are kept so that edits and deletes behave:
 //   an unknown message answers "message to edit not found" or "message to
 //   delete not found", an edit to the same text and keyboard "message is
 //   not modified". seedMessage() puts a message there, a post sent before
@@ -21,13 +25,16 @@
 //   chat's next id, as Telegram numbers a private chat's messages.
 // - Scripted failures, per chat id and/or method, for a number of calls or
 //   for every one: the Bot API's 400s and 403s, a 429 with retry_after, a
-//   5xx, a timeout, a network failure, and a request that never answers.
+//   5xx, a timeout, a network failure, a request that never answers, and a
+//   request Telegram carried out whose answer was lost on the way back (the
+//   change made, the fetch failing as a network failure does).
 // - A request to any other host is refused as a network failure and kept in
 //   `foreignRequests`: a test asserts it stays empty, so no reported URL is
 //   ever fetched.
 // Fixture values are never secret-shaped (the secret-shape scan reads test
 // files too).
 import type { Update, UserFromGetMe } from 'grammy/types';
+import { plainText } from '../../src/review/render-post';
 
 /** One call the code under test made. */
 export interface RecordedCall {
@@ -50,7 +57,9 @@ export type FakeOutcome =
   /** The fetch rejects with a TypeError, as a refused or lost connection does. */
   | { readonly kind: 'network' }
   /** The fetch never settles, unless its signal aborts. */
-  | { readonly kind: 'hang' };
+  | { readonly kind: 'hang' }
+  /** The call is carried out as Telegram would, then the fetch rejects with a TypeError: the answer was lost. */
+  | { readonly kind: 'lost' };
 
 /** A scripted answer of the Bot API's own: an error envelope. */
 export type ErrorOutcome = Extract<FakeOutcome, { readonly kind: 'error' }>;
@@ -76,6 +85,7 @@ export const FAILURES = {
   timeout: { kind: 'timeout' },
   networkFailure: { kind: 'network' },
   hang: { kind: 'hang' },
+  lostResponse: { kind: 'lost' },
 } as const satisfies Record<string, FakeOutcome>;
 
 /** A 429 asking to wait `seconds`. */
@@ -116,6 +126,8 @@ export interface FakeBotApiOptions {
   readonly now?: () => number;
   /** Chat ids whose messages are a channel's (the broadcast channel, say). */
   readonly channelIds?: readonly number[];
+  /** Keep an HTML message's text as Telegram does once parsed (plainText()), not as sent. */
+  readonly telegramTexts?: boolean;
 }
 
 export interface FakeBotApi {
@@ -217,6 +229,9 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
   let hung = 0;
 
   const key = (chatId: number, messageId: number): string => `${chatId}:${messageId}`;
+  /** A sent text as the fake keeps it (see the header). */
+  const keptText = (payload: Record<string, unknown>): string =>
+    options.telegramTexts === true && payload.parse_mode === 'HTML' ? plainText(String(payload.text)) : String(payload.text);
   const seconds = (): number => Math.floor(now() / 1000);
   const chatOf = (chatId: number) => ({
     id: chatId,
@@ -242,8 +257,11 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     return rule.outcome;
   };
 
-  const settle = (outcome: FakeOutcome, signal: AbortSignal | null | undefined): Promise<Response> => {
+  const settle = (outcome: FakeOutcome, signal: AbortSignal | null | undefined, carryOut: () => Response): Promise<Response> => {
     switch (outcome.kind) {
+      case 'lost':
+        carryOut();
+        return Promise.reject(new TypeError('fetch failed'));
       case 'error':
         return Promise.resolve(failed(outcome));
       case 'timeout':
@@ -290,7 +308,7 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
         const id = Number(chatId);
         const message = store(id, {
           message_id: (lastMessageId.get(id) ?? 0) + 1,
-          text: String(payload.text),
+          text: keptText(payload),
           ...(payload.reply_markup === undefined ? {} : { reply_markup: payload.reply_markup }),
         });
         return ok(message);
@@ -300,7 +318,7 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
         const id = Number(chatId);
         const current = messages.get(key(id, Number(messageId)));
         if (current === undefined) return failed(FAILURES.messageToEditNotFound);
-        const text = method === 'editMessageText' ? String(payload.text) : current.text;
+        const text = method === 'editMessageText' ? keptText(payload) : current.text;
         const markup = payload.reply_markup;
         if (text === current.text && sameMarkup(markup, current.reply_markup)) {
           return failed(FAILURES.messageNotModified);
@@ -334,7 +352,7 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     const chatId = payload.chat_id as number | string | undefined;
     calls.push({ method, chatId, payload });
     const outcome = scripted(method, chatId);
-    if (outcome !== undefined) return settle(outcome, init?.signal);
+    if (outcome !== undefined) return settle(outcome, init?.signal, () => respond(method, payload));
     return Promise.resolve(respond(method, payload));
   };
 

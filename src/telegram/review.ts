@@ -17,12 +17,19 @@
 //   in the venue's one language, VENUE_LOCALE, whatever the admin's app's.
 // - In a keyholder's own chat, under lockdown too: /open, and the Cancel
 //   and Lockdown buttons of an approval notice (NOTICE_PREFIXES), answered
-//   in the keyholder's own locale; the notice itself is in both.
+//   in the keyholder's own locale; the notice itself is in both. The
+//   Lockdown button goes through lockdownNow() (src/broadcast/maintenance.ts),
+//   as /lockdown does, so either entry point runs the immediate retention
+//   pass.
+// - The scheduler's commands, /attach, /repost, /halt and /resume in the
+//   venue and /attach and /halt in a keyholder's chat, register on this same
+//   surface (src/telegram/posting.ts), so one surface holds every
+//   registration and its checks.
 // An admin's command typed in a private chat is not one of these: it falls
 // to the intake's unknown-command answer, deleted on receipt. Nothing here
 // ever messages a reporter, a member or the channel.
 import type { Context, Middleware } from 'grammy';
-import { setLockdown } from '../auth/lockdown';
+import { lockdownNow, type RetentionPass } from '../broadcast/maintenance';
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import { isId } from '../db/ids';
@@ -49,6 +56,7 @@ import { readPrompt } from '../review/prompts';
 import { reject, showReasons } from '../review/reject';
 import { confirmRoute, showRouting } from '../review/route';
 import { checkedText, type Actor, type Pressed, type PressOutcome, type ReviewDeps } from '../review/venue';
+import { POSTING_ADMIN_COMMANDS, POSTING_KEYHOLDER_COMMANDS, registerPosting } from './posting';
 import { adminSurface, type AdminSurface } from './registry';
 import { answerPress } from './respond';
 
@@ -59,12 +67,18 @@ export interface ReviewFeatureDeps {
   readonly logger: Logger;
   /** The keyholder notices' memory: the isolate's own unless given (tests pass a fresh one). */
   readonly notices?: NoticeMemory;
+  /** The retention pass a lockdown runs: runRetentionNow unless given (tests pass a spy). */
+  readonly retentionNow?: RetentionPass;
 }
 
-/** The venue's admin commands. */
+/** The venue's admin commands of the review. */
 export const REVIEW_ADMIN_COMMANDS = ['open', 'block', 'unblock', 'card'] as const;
 /** The keyholders' commands of the review, in their own chat. */
 export const REVIEW_KEYHOLDER_COMMANDS = ['open'] as const;
+/** Every admin command the surface registers, in order: the review's, then the scheduler's. */
+export const ADMIN_COMMANDS = [...REVIEW_ADMIN_COMMANDS, ...POSTING_ADMIN_COMMANDS] as const;
+/** Every keyholder command the surface registers, in order. */
+export const KEYHOLDER_COMMANDS = [...REVIEW_KEYHOLDER_COMMANDS, ...POSTING_KEYHOLDER_COMMANDS] as const;
 
 /**
  * Who acts: the update's own sender, whom the gates checked. In the venue
@@ -187,6 +201,7 @@ export function reviewSurface(deps: ReviewFeatureDeps): AdminSurface {
   surface.keyholderCommand('open', async (ctx) => {
     await reply(ctx, await openReportsText(deps.db, keyholder(ctx).locale));
   });
+  registerPosting(surface, { config: deps.config, db: deps.db, clock: deps.clock, logger: deps.logger, notices });
 
   for (const kind of Object.keys(REVIEW_PREFIXES) as ReviewActionKind[]) {
     surface.adminButton(
@@ -211,8 +226,14 @@ export function reviewSurface(deps: ReviewFeatureDeps): AdminSurface {
     NOTICE_PREFIXES.lockdown,
     press(async (ctx, data) => {
       if (parseNoticeData(data)?.kind !== 'lockdown') return {};
-      const set = await setLockdown(deps.db, deps.clock);
-      if (set) deps.logger.log('lockdown.set');
+      const set = await lockdownNow({
+        api: ctx.api,
+        config: deps.config,
+        db: deps.db,
+        clock: deps.clock,
+        logger: deps.logger,
+        ...(deps.retentionNow === undefined ? {} : { retentionNow: deps.retentionNow }),
+      });
       return { answer: t(keyholder(ctx).locale, set ? 'keyholder.lockdown_is_on' : 'lockdown.already_on') };
     }),
   );

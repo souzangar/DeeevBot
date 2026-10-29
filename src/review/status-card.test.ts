@@ -55,3 +55,27 @@ describe('statusCard', () => {
     expect(statusCard({ ...REPORT, status: 'rejected', reporterRef: null }, null, 'en').keyboard).toBeUndefined();
   });
 });
+
+describe('statusCard with a note of the scheduler', () => {
+  it('says what needs a human in place of the grace line, keeping Cancel while the report is approved', () => {
+    for (const note of ['refused', 'held', 'reposted'] as const) {
+      const view = statusCard(REPORT, APPROVAL, 'en', { sent: 2, total: 2 }, note);
+      expect(view.text, note).toBe(
+        [
+          t('en', 'review.status_card.title', { id: REPORT.id }),
+          `${t('en', 'platform.instagram')} · ${t('en', 'review.category.private_data')}`,
+          t('en', 'review.status_card.state', { state: t('en', 'status.approved') }),
+          t('en', `review.status_card.note.${note}`, { id: REPORT.id }),
+        ].join('\n'),
+      );
+      expect(actions(view)[0], note).toEqual({ kind: 'cancel', reportId: REPORT.id, approvalId: APPROVAL.approvalId });
+    }
+  });
+
+  it('shows a post that may or may not be in the channel without Cancel, and without a link', () => {
+    const view = statusCard({ ...REPORT, status: 'posting' }, APPROVAL, 'fa', undefined, 'unknown');
+    expect(view.text).toContain(t('fa', 'review.status_card.note.unknown', { id: REPORT.id }));
+    expect(actions(view)).toEqual([{ kind: 'block', reportId: REPORT.id }]);
+    expect(view.text).not.toContain('https://');
+  });
+});

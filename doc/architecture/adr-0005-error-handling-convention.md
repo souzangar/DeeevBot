@@ -71,8 +71,10 @@ the edits of that post.
   failure that changes state. The tick isolates failures per job: one
   failed job never stops the others, and each failure is recorded on its
   row (`attempts`, `needs_attention`) and alerted once (`alert_sent_at`).
-  A failed keyholder alert is logged by class and retried by the next
-  reconciliation, never dropped. A failed deletion of a reporter's
+  A failed keyholder alert is logged by class and counted; an alert
+  counts as delivered once one keyholder got it (one delivered of several
+  suffices, as for the approval notice), and one that reached no keyholder
+  is sent again by the next reconciliation. A failed deletion of a reporter's
   message is retried once, then surfaced in the reply and logged by class.
 - Tests. Every code path that maps an error has a unit test. "The
   boundary never leaks a URL or an id" is a regression test with a real

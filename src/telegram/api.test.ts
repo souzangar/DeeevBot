@@ -173,6 +173,17 @@ describe('createBotApi and installTransformer', () => {
     expect(clientOptions(telegram.fetch)).toEqual({ fetch: telegram.fetch, sensitiveLogs: false });
   });
 
+  it("bounds each request when asked to, the scheduler's client among them", async () => {
+    const { telegram } = setup();
+    expect(clientOptions(telegram.fetch, 20)).toEqual({ fetch: telegram.fetch, sensitiveLogs: false, timeoutSeconds: 20 });
+    const bounded = createBotApi(config, telegram.fetch, { timeoutSeconds: 1 });
+    expect(bounded.config.installedTransformers()).toEqual([htmlWithoutPreviews]);
+    telegram.fail({ method: 'sendMessage' }, FAILURES.hang);
+    const caught: unknown = await bounded.sendMessage(CHAT, 'x').catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(HttpError);
+    expect(telegram.hanging()).toBe(0);
+  });
+
   it('satisfies the port, which refuses previews by type', async () => {
     const { telegram, api } = setup();
     const port: BotApiPort = api;

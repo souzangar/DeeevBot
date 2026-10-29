@@ -55,10 +55,10 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | `pending` | `approved` | an allowlisted admin presses Approve, confirms the category (suspected CSAM leads to the routing card instead), enters the account link when the report has none, picks the link mode and replies to the recommended-comment prompt; the allowlist, the venue and the lockdown switch are re-checked at every step, and only the admin who was prompted can answer the prompt; the rendered post is validated in both locales, together with the keyholders' notice that carries it, against 4096 characters and the link allowlist before anything is written; then, still before anything is written, every keyholder is sent the notice by direct message under the new approval's id: the rendered post text, a Cancel button for the whole grace and a Lockdown button beside it. An approval whose notice reaches no keyholder (every send failed, a timeout included) is never written: the reply is refused like any other, by a fresh prompt saying that the keyholders must send `/start` to the bot before the admin replies again; one delivered notice of several suffices | in one batch, every statement bound to the new approval: the approval row (a random `approval_id`, `admin_id`, `approved_at`, `link_mode`, `recommended_comment`, `starts_at`, now plus the grace), written only while the report is pending and the lockdown switch is not set (the switch bound in the statement itself, since the notices and their Lockdown button go out after the gates read it), and over a voided row only; the conditional status change, with the admin's category, the link mode and the rendered post (`broadcast_text`); a `post` job due at `starts_at` carrying that `approval_id` (the plan's `INSERT OR IGNORE`, as `ON CONFLICT (kind, report_id) DO NOTHING`, so a refused row fails rather than vanishes); `comment` and `affected_person` nulled on the report and its merged rows; the report's prompts deleted. Then the card edited to show Cancel; a status card saying how many keyholders got the notice; the prompts and the reply deleted from the venue. When the batch loses (another decision won after the notices went out, or a keyholder locked the bot down meanwhile, when the batch writes nothing but the answered prompt's deletion), the notices are edited to "cancelled" without links, and the prompt is ended in the venue unless the bot is locked down. When it fails, a read decides: the approval did not land, and the notices are edited so; it landed after all, and the failure is logged by class and the approval goes on as if the batch had answered, since a live approval's notice never says "cancelled"; the read fails too, and the notices are left as they are |
 | `approved` | `pending` | an admin presses Cancel on the card or the status card, or a keyholder presses Cancel on the notice, before the tick claims the report; the button names its approval's id, so a stale one cancels nothing; under lockdown only a keyholder's Cancel works; a keyholder's Cancel on a notice whose approval is not recorded (the notice goes out before the batch, which has not landed yet or never will) changes nothing, leaves the notice and its buttons as they are and answers that the approval is not recorded yet, until the notice is more than five minutes old (no approval's batch takes that long on Workers): then the notice is edited to "cancelled" and the answer says so | in one batch: `voided_at` set on the approval, the post job deleted, the status back to `pending` with the rendered post, the link mode and the status card's id cleared; then the keyholder notices edited to "cancelled" without links, the card back to its review state and the status card deleted (under lockdown only the notices are edited, never the venue) |
 | `approved` | `posting` | the tick finds the due `post` job and claims the report with one conditional update (below) | `posting_started_at`; the send follows in the same invocation |
-| `posting` | `posted` | the send succeeded | `post_message_id` (unique), `posted_at`, the job deleted, in one batch; the keyholder notice edited to "posted" without links |
+| `posting` | `posted` | the send succeeded | `post_message_id` (unique), `posted_at`, the attention flags cleared, the job deleted, in one batch; then the keyholder notices the bot remembers edited to "posted" without links, the status card to "posted", and the review card, which shows the links, deleted (edited to the outcome when it cannot be) |
 | `posting` | `approved` | an unambiguous failure of the send: a 429 (the job rescheduled for now plus `retry_after`, `meta.paused_until` set), or a 400 or 403 such as no post rights or chat not found (`needs_attention` set, the keyholders alerted, the job abandoned) | the claim reverted and `posting_started_at` cleared in the same batch |
-| `posting` | `posted` | `/attach <id> <message id or t.me/c/... link of the broadcast channel>` by an admin or a keyholder (under lockdown a keyholder only) who found the post in the channel after an ambiguous failure; the bot verifies the message first (below) | `post_message_id`, `posted_at` |
-| `posting` | `approved` | `/repost <id>` by an admin (never under lockdown) who found no post in the channel; admitted only while no `post_message_id` exists | `posting_started_at` cleared; the job re-enqueued |
+| `posting` | `posted` | `/attach <id> <message id or t.me/c/... link of the broadcast channel>` by an admin in the venue or a keyholder in their own chat (under lockdown a keyholder only) who found the post in the channel after an ambiguous failure; the bot verifies the message first (below) | `post_message_id`, `posted_at`, the attention flags cleared, the job deleted; then the notices, the status card and the review card as after a send |
+| `posting` | `approved` | `/repost <id>` by an admin in the venue (never under lockdown) who found no post in the channel; admitted only while no `post_message_id` exists, and only two minutes or more after the claim (a send inside that window may still be under way) | `posting_started_at` and the attention flags cleared; the job kept (an ambiguous send leaves it, under the same approval) or re-enqueued |
 | `posted` | `closing` | `/close <id> <outcome>` or a status-card button; the outcomes "taken down" and "closed without result" | `outcome`; an `edit` job |
 | `posted` (or `posting` once `/attach` supplied the id) | `retracting` | `/retract <id>` by an admin, or by a keyholder (also under lockdown), with the correction by prompt | `correction_text`, written before the status change; an `edit` job |
 | `closing` | `closed` | the edit job appended the outcome line and removed the button | the terminal status and the finalization batch together: the aggregate row upserted, every personal and content field nulled, `approvals`, `admin_prompts`, merged rows and the job deleted, `data_deleted_at` set |
@@ -69,7 +69,8 @@ routed and pending-expired reports have no post and finalize in D1 alone.
 | `pending` | `expired` | the retention job, 30 days after intake with no decision | outcome `no_decision`; finalized in D1 |
 
 A `/repost` is also admitted from `approved` when no job exists after an
-abandoned 400 or 403, again only while no `post_message_id` exists.
+abandoned 400 or 403, or after a stored post the send-time check refused
+(below), again only while no `post_message_id` exists.
 
 ### The claim statement
 
@@ -101,24 +102,51 @@ lockdown set in that instant is the stated residual.
 Only unambiguous failures are retried. A 429, a 400 or a 403 means
 Telegram did not accept the send, so the claim is reverted as in the table
 above. A timeout, a network error or a 5xx is ambiguous: Telegram may have
-accepted the send, so the report stays `posting` without an id, is never
-re-sent automatically, and is alerted once; so is a tick that died between
-the send and the second write (reconciliation finds a `posting` row older
-than two minutes with no id; a `posting` row whose job is still present
-and within its window is in progress, not stuck). A human then checks the
-channel:
+accepted the send, so the report stays `posting` without an id, keeps its
+job, which no run picks again, is never re-sent automatically, and is
+alerted once; so is a tick that died between the send and the second write
+(reconciliation finds a `posting` row older than two minutes with no id; a
+`posting` row whose job is still present and within its window is in
+progress, not stuck). Before any claim, the stored post is checked again
+as at the approval (Telegram's 4096 characters, every tappable link on the
+lists); one that fails is never sent: the report stays `approved`, is
+flagged, its job abandoned, and the keyholders are alerted, so an admin
+cancels it and approves it again. A human then checks the channel:
 
 - If the post is there, `/attach <id> <message id or t.me/c/... link of
   the broadcast channel>` records `post_message_id` and moves the report
-  to `posted`, after verification: the bot calls `editMessageReplyMarkup`
-  on that message with this report's own keyboard and accepts the attach
-  only if the returned message carries the callback data
-  `mark:<this report id>` (a message the bot did not send fails to edit;
-  another report's post carries another id). `post_message_id` is
-  unique, and `/attach` is the only way a message id enters the row other
-  than the bot's own write.
+  to `posted`, after verification, which rests on facts Telegram returns
+  about the message and never on its keyboard. A message another report
+  holds is refused at once. Otherwise the bot calls
+  `editMessageReplyMarkup` on that message with a probe keyboard, whose
+  button carries no press data, in one of two variants ("message is not
+  modified" means the message carries that variant already, a probe's
+  leftover, and only switches to the other variant, so the probe always
+  gets the message back). The returned message is accepted only when its
+  text is the plain text of the stored post, it was sent between 10 seconds
+  before `posting_started_at` and 60 seconds after it, and no other report
+  was claimed in that window; then the post's own keyboard (the button
+  `mark:<this report id>`) is put back before anything is written, and a
+  post it cannot be put back on is not recorded. Anything else, and a probe
+  Telegram answered ambiguously, has the probe keyboard removed again
+  (tried twice), and the answer says which test failed, the text or the
+  date (a bot post whose text a human edited can never be attached, and
+  must not be re-posted). The residual: a removal that is cut off can leave a probe
+  keyboard on a wrong message until the next `/attach` of it removes it; the
+  message's text and date, not its keyboard, decide. This refines the
+  plan's wording (accept "if the returned message carries the callback
+  data"): Telegram returns the message as just edited, so that test alone
+  would accept any message the bot can edit, and it answers the post itself
+  "not modified"; the check does not rest on the bot being unable to edit
+  other users' messages either. `post_message_id` is unique, and `/attach`
+  is the only way a message id enters the row other than the bot's own
+  write. A run whose send went out after `/attach` had recorded the post
+  finds its record changing no row: the second message is reported to the
+  keyholders by its id, to delete.
 - If it is not, `/repost <id>` clears `posting_started_at`, returns the
-  report to `approved` and re-enqueues the job.
+  report to `approved` and lets the job run again (the one the ambiguous
+  send left, under the same approval), at the next minute's run; it is
+  admitted only two minutes or more after the claim.
 
 Authority: admins and keyholders may `/attach`; admins may `/repost`;
 under lockdown only keyholders may `/attach` and nobody may `/repost`.

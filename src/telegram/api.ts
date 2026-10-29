@@ -57,10 +57,26 @@ export const htmlWithoutPreviews: Transformer = (prev, method, payload, signal) 
     ? prev(method, enforceFormat(payload) as unknown as typeof payload, signal)
     : prev(method, payload, signal);
 
-/** The grammY client options every Api and Bot of the project is built with. */
-export const clientOptions = (fetchImpl: typeof fetch): ApiClientOptions => ({
+/**
+ * How long the bot's own client waits for one Bot API request, in seconds:
+ * a handler's work runs under the webhook's waitUntil, which the runtime
+ * ends about 30 seconds after the answer, so a probe of /attach and its
+ * undo fit inside it (src/telegram/bot.ts).
+ */
+export const BOT_TIMEOUT_SECONDS = 10;
+
+/**
+ * The grammY client options every Api and Bot of the project is built with;
+ * `timeoutSeconds` bounds each request when given (grammY's own default,
+ * 500 seconds, otherwise). The scheduler's client takes a short one, so a
+ * post's send has ended, one way or the other, long before /repost may
+ * touch the report (src/broadcast/tick.ts), and the bot's client takes
+ * BOT_TIMEOUT_SECONDS.
+ */
+export const clientOptions = (fetchImpl: typeof fetch, timeoutSeconds?: number): ApiClientOptions => ({
   fetch: fetchImpl,
   sensitiveLogs: false,
+  ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
 });
 
 /** Installs the one transformer on `api`, once: a second call adds nothing. */
@@ -71,10 +87,16 @@ export function installTransformer(api: Api): Api {
   return api;
 }
 
+/** What a client may be built with besides its transport. */
+export interface BotApiOptions {
+  /** Each request's bound, in seconds (see clientOptions()). */
+  readonly timeoutSeconds?: number;
+}
+
 /**
  * The project's Bot API client: grammY's Api for the configured token, over
  * `fetchImpl`, with the one transformer installed. It satisfies BotApiPort.
  */
-export function createBotApi(config: Pick<Config, 'botToken'>, fetchImpl: typeof fetch): Api {
-  return installTransformer(new Api(config.botToken, clientOptions(fetchImpl)));
+export function createBotApi(config: Pick<Config, 'botToken'>, fetchImpl: typeof fetch, options: BotApiOptions = {}): Api {
+  return installTransformer(new Api(config.botToken, clientOptions(fetchImpl, options.timeoutSeconds)));
 }

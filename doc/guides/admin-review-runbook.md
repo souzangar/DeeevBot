@@ -452,12 +452,16 @@ acts on a wrong post, so decide fast.
 4. A report shown as `posting` with no message id (an ambiguous send: a
    timeout, a network error or a 5xx; the bot never re-sends on its own):
    look in the channel. If the post is there, `/attach <id> <message id or
-   t.me/c/... link of the broadcast channel>`; the bot verifies that the
-   message is this report's own post before accepting, and then you can
-   `/retract`. If it is not there, `/repost <id>` returns the report to
-   `approved` and the bot posts at the next tick; `/repost` is admitted
-   only while no message id exists and never under lockdown. There is no
-   blind "post again".
+   t.me/c/... link of the broadcast channel>`, typed in the venue; the bot
+   verifies that the message is this report's own post before accepting
+   (a message that is not is refused and left as it was, the answer saying
+   whether its text or its date did not fit), and then you can
+   `/retract`. A bot post must never be edited by a human: an edited post
+   cannot be attached and must not be re-posted. If it is not there, `/repost <id>` returns the report to
+   `approved` and the bot posts at the next minute's run; `/repost` is
+   admitted only while no message id exists, only two minutes or more
+   after the bot started the send (the status card says when it needs
+   you), and never under lockdown. There is no blind "post again".
 5. Tell the other admin. If the retraction follows a weaponised report,
    apply section 9 (block the reporter reference).
 6. Retraction closes the report; its data is deleted as in section 7.
@@ -524,7 +528,7 @@ account. While it is set:
   routing card and the status card (Approve, Reject, Route, Cancel, Block
   reporter and every step between), your replies to the prompts, and the
   commands `/open`, `/block`, `/unblock`, `/card`, `/close`, `/retract`,
-  `/repost`, `/halt`, `/resume`; you see "This action is refused right
+  `/attach`, `/repost`, `/halt`, `/resume`; you see "This action is refused right
   now." and nothing else, and nothing is written;
 - a keyholder's Cancel on an approval notice still works, and so does the
   Lockdown button beside it; under lockdown it edits only the keyholders'

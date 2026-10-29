@@ -3,8 +3,9 @@
 // every update's api, the update filter (private chats, the venue and
 // presses only), the error boundary (the localised answer, the class-only
 // log line, never a message into the channel) and the empty answer for an
-// unknown press.
-import { Bot, BotError, Composer, GrammyError, type Context } from 'grammy';
+// unknown press; and the bound on its client, BOT_TIMEOUT_SECONDS, which
+// bot.api and every update's api share.
+import { Bot, BotError, Composer, GrammyError, HttpError, type Context } from 'grammy';
 import { describe, expect, it, vi } from 'vitest';
 import { FAILURES, fakeBotApi } from '../../test/fakes/bot-api';
 import { recordingLogger } from '../../test/fakes/logger';
@@ -20,7 +21,7 @@ import {
 import type { SqlDb } from '../db/sql';
 import { AppError } from '../errors/app-error';
 import { t } from '../i18n/index';
-import { clientOptions, htmlWithoutPreviews, installTransformer } from './api';
+import { BOT_TIMEOUT_SECONDS, clientOptions, htmlWithoutPreviews, installTransformer } from './api';
 import { acceptedUpdates, botInfoFor, createBot, errorBoundary, failureKey } from './bot';
 
 const config = testConfig();
@@ -258,5 +259,37 @@ describe('failureKey', () => {
     expect(failureKey(new AppError('STORAGE_FAILURE', 'x'))).toBe('error.unexpected');
     expect(failureKey(new Error('x'))).toBe('error.unexpected');
     expect(failureKey('thrown string')).toBe('error.unexpected');
+  });
+});
+
+describe("the bot's client bound", () => {
+  it('gives up on a request after BOT_TIMEOUT_SECONDS, ten, on bot.api and on an update\'s api alike', async () => {
+    expect(BOT_TIMEOUT_SECONDS).toBe(10);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const harness = botHarness();
+      harness.telegram.fail({ method: 'sendMessage' }, FAILURES.hang);
+      const direct = harness.bot.api.sendMessage(IDS.reporter, 'x').then(
+        () => null,
+        (error: unknown) => error,
+      );
+      // A handler's own call: /start's reply, on the update's api, hangs too.
+      const handled = harness.send(privateMessage(IDS.keyholder, '/start'));
+      await vi.advanceTimersByTimeAsync(BOT_TIMEOUT_SECONDS * 1000 - 1);
+      expect(harness.telegram.hanging()).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await direct).toBeInstanceOf(HttpError);
+      // The handler's reply gave up too; the error boundary's own answer hangs as well, and is bounded the same way.
+      expect(harness.telegram.hanging()).toBe(1);
+      await vi.advanceTimersByTimeAsync(BOT_TIMEOUT_SECONDS * 1000);
+      await handled;
+      expect(harness.telegram.hanging()).toBe(0);
+      expect(harness.log.records()).toEqual([
+        { level: 'error', event: 'update.failed', errorClass: 'HttpError' },
+        { level: 'error', event: 'reply.failed', errorClass: 'HttpError' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

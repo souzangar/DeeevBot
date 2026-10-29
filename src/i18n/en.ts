@@ -274,6 +274,48 @@ export const en = {
   'card.usage': 'Send /card followed by a report id: 20 letters.',
   'card.not_found': 'No open report has that id.',
   'card.not_pending': 'That report is not waiting for a decision.',
+  // The scheduling unit (U5, src/broadcast/): the "I reported it" button of
+  // every post (plain text, labelled in both locales on the button), the
+  // keyholder notice once the report is posted, the status card's notes,
+  // the replies of /attach, /repost, /halt and /resume (in the venue's one
+  // language, or a keyholder's own), and the alerts: to the keyholders in
+  // both locales, Persian first, and to the venue in its language.
+  'post.button.reported': 'I reported it',
+  'notice.posted': '<b>Posted.</b> Report <code>{id}</code> is in the channel.',
+  'review.status_card.note.refused': 'Needs attention: Telegram refused the post. Check that the bot may post in the channel, then /repost {id}, or Cancel.',
+  'review.status_card.note.unknown': 'Needs attention: the post may or may not be in the channel. Check it, then /attach {id} with its message id or link, or /repost {id} if it is not there.',
+  'review.status_card.note.held': 'Needs attention: the stored post no longer passes the link policy or the length bound. Cancel it and approve it again.',
+  'review.status_card.note.reposted': "Posting again: report <code>{id}</code> goes out at the next minute's run.",
+  'attach.usage': "Send /attach with the report id and its post: the post's message id in the channel, or its <code>t.me/c/</code> link. For example: <code>/attach &lt;id&gt; 123</code>",
+  'attach.not_found': 'No report has that id.',
+  'attach.not_posting': 'Report <code>{id}</code> is not waiting for a message id: /attach takes only a report shown as posting, without one.',
+  'attach.other_channel': 'That link is not of the broadcast channel.',
+  'attach.taken': 'That message is already the post of another report.',
+  'attach.not_verified': 'That message is not the post of report <code>{id}</code> in the channel, so nothing was recorded. Check the message id.',
+  'attach.text_mismatch': "Nothing was recorded: the message's text is not the post of report <code>{id}</code>. Check the message id. A post whose text was edited by hand can never be attached, and must not be posted again.",
+  'attach.window_mismatch': "Nothing was recorded: the message's date lies outside the seconds report <code>{id}</code> was being posted, or another report was being posted then. Check the message id.",
+  'attach.unavailable': 'Telegram did not answer clearly, so nothing was recorded. Try again in a minute.',
+  'attach.done': '<b>Recorded.</b> Report <code>{id}</code> is posted, as message {message} of the channel.',
+  'repost.usage': 'Send /repost followed by a report id: 20 letters.',
+  'repost.not_found': 'No report has that id.',
+  'repost.refused': 'Report <code>{id}</code> cannot be posted again: it has a message id, it is still being posted, or it is not waiting for a post.',
+  'repost.done': "<b>Approved again.</b> Report <code>{id}</code> goes out at the next minute's run.",
+  'halt.on': '<b>Posting is halted.</b> No post and no closure edit goes out until an admin sends /resume; retractions still run.',
+  'halt.already_on': 'Posting was already halted.',
+  'halt.off': '<b>Posting resumed.</b> Posts and closure edits go out again.',
+  'halt.was_off': 'Posting was not halted.',
+  'alert.post_refused': '<b>Post refused.</b> Report <code>{id}</code> was not posted: Telegram refused it (the bot may have lost its right to post in the channel, or the channel id is wrong), so nothing went out. Fix the channel, then an admin sends /repost {id}, or cancels it.',
+  'alert.post_unknown': '<b>Post uncertain.</b> Report <code>{id}</code>: Telegram did not answer clearly, so the post may or may not be in the channel, and the bot never sends it again by itself. Check the channel: if the post is there, send /attach {id} with its message id or link; if it is not, an admin sends /repost {id}.',
+  'alert.post_held': '<b>Post held.</b> Report <code>{id}</code> was not posted: its stored text no longer passes the link policy or the length bound (the configuration changed since the approval). An admin cancels it and approves it again.',
+  'alert.post_unrecorded': '<b>Posted, not recorded.</b> Report <code>{id}</code> went out as message {message} of the channel, but the bot could not record it. Once its storage works again, send /attach {id} {message}.',
+  'alert.post_orphan': '<b>A second message.</b> Report <code>{id}</code> was already recorded with its post, yet the run sent it again, as message {message} of the channel. That message is not its post and its button counts nothing: delete it in the channel.',
+  'alert.attention.title': '<b>Reports that need attention</b>',
+  'alert.attention.posting': '<code>{id}</code>: the post may or may not be in the channel. Check it, then /attach {id} with its message id, or /repost {id} if it is not there.',
+  'alert.attention.approved': '<code>{id}</code>: approved and not posted (refused, held or overdue). Check the bot in the channel, /halt and the alerts before this one, then /repost {id}, or cancel it.',
+  'alert.attention.edit': '<code>{id}</code> ({state}): its post still waits for its closing or retraction edit. See the alerts before this one.',
+  'alert.attention.other': '<code>{id}</code> ({state}): it needs a human. See the alerts before this one.',
+  'alert.lockdown': "<b>The bot is locked down.</b> Reports are not taken, presses are not counted, every admin action is refused, and nothing is posted or edited but a keyholder's retraction. A keyholder lifts the switch with /unlock; the <code>LOCKDOWN</code> override only with wrangler.",
+  'alert.storage': '<b>Storage refused.</b> The bot could not read or write its database, so nothing is posted or edited until it works again; a Free-plan daily cap resets at 00:00 UTC. To stop the bot without the database, set the <code>LOCKDOWN</code> override with wrangler.',
 } as const;
 
 /** A key of the message catalogs. */

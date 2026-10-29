@@ -192,8 +192,9 @@ on an approval's notice before the approval is written leaves nothing
 approved: its notices are edited to "cancelled". The tick alerts the
 keyholders once (`meta.lockdown_alerted_at`) and still runs retention,
 which reduces exposure, and `/lockdown` triggers an immediate retention
-pass. A keyholder may still run `/open`, `/stats`, `/attach <id> ...` and
-`/retract <id>`, and the Cancel and Lockdown buttons on the approval
+pass (the Lockdown button triggers it too). A keyholder may still run
+`/open`, `/stats`, `/attach <id> ...`, `/halt` and `/retract <id>`, and the
+Cancel and Lockdown buttons on the approval
 notices still work (the status cards sit in a venue the keyholder is not
 in, so `/open` is how an id is found); nobody may `/repost` under
 lockdown. Alerts go to the keyholders by direct message, never to the
@@ -233,13 +234,15 @@ bot first), and a keyholder's Cancel pressed before the approval's record
 lands writes nothing and says so, never "cancelled" (a notice more than
 five minutes old is settled as cancelled, its approval never to be
 recorded); and may run
-`/lockdown`, `/unlock`, `/retract` and `/attach`, in their private chat
-with the bot only. A keyholder id is never also an admin id: the
+`/lockdown`, `/unlock`, `/retract`, `/attach` and `/halt` (which only an
+admin's `/resume` lifts), in their private chat with the bot only. A keyholder id is never also an admin id: the
 configuration refuses a load whose `KEYHOLDER_IDS` and `ADMIN_IDS`
 overlap. A bot cannot start a private chat, so every keyholder sends
 `/start` once at go-live and the bot confirms "you will receive alerts";
-a failed alert is logged by class and retried by the next
-reconciliation, never dropped. Admins have no Cloudflare access and
+a failed alert is logged by class and counted, an alert counting as
+delivered once one keyholder got it (one delivered of several suffices, as
+for the approval notice), and one that reached no keyholder is sent again by
+the next reconciliation. Admins have no Cloudflare access and
 cannot override a keyholder.
 
 ### 7. The 30-minute grace

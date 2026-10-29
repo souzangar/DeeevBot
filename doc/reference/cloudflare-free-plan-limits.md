@@ -48,7 +48,7 @@ number and record the date.
 | DO SQLite rows read per day | 5,000,000 | DO pricing and limits | not used |
 | D1 database size | 500 MB | D1 pricing | minimisation keeps it tiny |
 | DO storage per object | 10 GB (an FAQ entry still says 1 GB on Free) | DO pricing and limits | not used |
-| Cron Triggers per account | 5 | Workers limits | three planned: the one-minute job cron (which also replaces the stall detector), the nightly retention job and the monthly snapshot |
+| Cron Triggers per account | 5 | Workers limits | one: `* * * * *`, whose run posts, edits and, by the minute, reconciles (every 15th minute), runs the retention job (00:15 UTC) and the monthly snapshot (ADR 0004) |
 | Queues (Free) | 10,000 ops/day | Queues pricing | not used |
 
 ## Over-limit behaviour
@@ -56,7 +56,9 @@ number and record the date.
 On the Free plan an operation over a daily cap fails until 00:00 UTC. The
 design response is in ADR 0001 and ADR 0004: a cron run that meets a cap
 error stops without writing, the next minute's run picks the due work up
-again once the reset has passed, and the admin chat is alerted once. The
+again once the reset has passed, and the keyholders are alerted: at most
+once a UTC day from one Worker instance, on a 15th minute (the venue never:
+with the store down the bot cannot read its lockdown switch). The
 Paid plan (minimum 5 USD/month) removes the caps if the NGO ever has a
 payment path.
 

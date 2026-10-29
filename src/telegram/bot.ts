@@ -33,12 +33,15 @@
 // The bot knows itself from the configuration (`botInfo`), so no update
 // costs a getMe call, and its Api carries the one transformer
 // (src/telegram/api.ts): every handler's ctx.api inherits it, since grammY
-// copies bot.api's transformers onto each update's Api. No webhookCallback:
+// copies bot.api's transformers onto each update's Api. Its client gives up
+// on a request after BOT_TIMEOUT_SECONDS, which every update's Api shares,
+// so no handler's call outlives the webhook's waitUntil. No webhookCallback:
 // the Worker's own boundary hands updates to handleUpdate
 // (src/telegram/webhook.ts).
 import { Bot, Composer, type Context, type Middleware, type MiddlewareFn } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import type { MembershipCache } from '../auth/membership';
+import type { RetentionPass } from '../broadcast/maintenance';
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import type { SqlDb } from '../db/sql';
@@ -46,7 +49,7 @@ import { isAppError } from '../errors/app-error';
 import { isPlainKey, type PlainMessageKey } from '../i18n/index';
 import type { Logger } from '../privacy/logger';
 import type { NoticeMemory } from '../review/notify';
-import { clientOptions, installTransformer } from './api';
+import { BOT_TIMEOUT_SECONDS, clientOptions, installTransformer } from './api';
 import { keyholderCommands, publicCommands } from './commands';
 import { intakeEntry } from './intake-entry';
 import { presses } from './presses';
@@ -64,6 +67,8 @@ export interface BotDeps {
   readonly membershipCache?: MembershipCache;
   /** The keyholder notices' memory: the isolate's own unless given (tests pass a fresh one). */
   readonly notices?: NoticeMemory;
+  /** The retention pass a lockdown runs: runRetentionNow unless given (tests pass a spy). */
+  readonly retentionNow?: RetentionPass;
 }
 
 /** The bot's own identity, from BOT_ID and BOT_USERNAME: grammY never calls getMe. */
@@ -134,7 +139,7 @@ export const defaultFeatures = (deps: BotDeps): Middleware<Context>[] => [review
 export function createBot(deps: BotDeps, features: readonly Middleware<Context>[] = []): Bot {
   const bot = new Bot(deps.config.botToken, {
     botInfo: botInfoFor(deps.config),
-    client: clientOptions(deps.fetch),
+    client: clientOptions(deps.fetch, BOT_TIMEOUT_SECONDS),
   });
   installTransformer(bot.api);
   bot.catch((err) => deps.logger.logError('update.failed', err.error));

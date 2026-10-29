@@ -1,0 +1,36 @@
+// wrangler.probe.jsonc: the deployed per-update probe, a THROWAWAY Worker
+// (src/probe.ts; the MVP plan, section 7; ADR 0004, "The deployed probe").
+// The owner deploys it once, from the keyholder's machine through the VPN,
+// to measure the CPU time and the subrequests of one webhook update and of
+// one cron run, and deletes it afterwards. It never uses the bot's own
+// Worker name, database, token or webhook: its own name below, its own D1
+// database (created for the probe, empty but for the migrations), and its
+// own throwaway bot from @BotFather, so the real bot's webhook is never
+// moved. The procedure is in ADR 0004.
+//
+// No secret ever lives here (critical invariant 6): every value is set with
+// `wrangler secret put <NAME> --config wrangler.probe.jsonc`. The all-zero
+// database_id is a placeholder for the probe database's own id.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "div-report-probe",
+  "main": "src/probe.ts",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "send_metrics": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "div-report-probe",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // The bot's one cron, as wrangler.jsonc has it.
+  "triggers": { "crons": ["* * * * *"] },
+  // Off, as for the bot (doc/guides/operations-and-security.md, section 4):
+  // the probe's counts are read with `wrangler tail`, its CPU time from the
+  // Worker's metrics.
+  "observability": { "enabled": false },
+  "vars": {}
+}

@@ -165,7 +165,8 @@ stuck in `posting` without an id is first checked in the channel:
 `/attach <id> <message id or t.me/c/... link>` if the post is there (the
 bot verifies the message is this report's post before accepting), then
 `/retract`; `/repost <id>` if it is not, admitted only while no message
-id exists. `/open` lists the open reports with their ids.
+id exists and two minutes or more after the bot started the send. `/open`
+lists the open reports with their ids.
 
 ## Closure
 
@@ -213,7 +214,7 @@ Route, Cancel, `/close`, `/block`, `/halt` and `/resume` included; no
 post or edit job runs except a retraction edit ordered by a keyholder;
 alerts go to the keyholders by direct message and never to the venue,
 which is compromised by assumption. A keyholder may still run `/open`,
-`/stats`, `/attach` and `/retract <id>`; nobody may `/repost`. Only a
+`/stats`, `/attach`, `/halt` and `/retract <id>`; nobody may `/repost`. Only a
 keyholder's `/unlock` clears the D1 layer, and only `wrangler secret put`
 clears the secret. Admins see refusals and nothing else; the procedure is
 in the [operations and security runbook](../guides/operations-and-security.md)

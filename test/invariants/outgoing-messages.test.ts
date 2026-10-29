@@ -150,10 +150,21 @@ describe.each(SCENARIOS)('critical invariants 4 and 5, %s', (_label, make) => {
 describe('critical invariant 5: alerts reach the keyholders, and the venue only when not locked down', () => {
   const deliver = async (harness: BotHarness) => {
     const deps = { api: createBotApi(harness.config, harness.telegram.fetch), config: harness.config, logger: harness.log.logger, db: harness.db };
-    await alertKeyholders(deps, `An alert about ${REPORTED_URL}`);
-    await alertVenue(deps, `An alert about ${REPORTED_URL}`);
+    await alertKeyholders(deps, `An alert about <code>${REPORTED_URL}</code>`);
+    await alertVenue(deps, `An alert about <code>${REPORTED_URL}</code>`);
     return harness.telegram.callsOf('sendMessage').map((call) => call.chatId);
   };
+
+  it('never with a tappable link off the lists, to anyone: the alerts are the choke point (critical invariant 4)', async () => {
+    const harness = botHarness();
+    const deps = { api: createBotApi(harness.config, harness.telegram.fetch), config: harness.config, logger: harness.log.logger, db: harness.db };
+    for (const text of [`An alert about ${REPORTED_URL}`, 'See <a href="https://evil.example/">this</a>', 'Mail someone@example.org now']) {
+      await expect(alertKeyholders(deps, text), text).rejects.toMatchObject({ code: 'UNEXPECTED' });
+      await expect(alertVenue(deps, text), text).rejects.toMatchObject({ code: 'UNEXPECTED' });
+    }
+    await expect(alertKeyholders(deps, 'An alert', { links: ['https://evil.example/path'] })).rejects.toMatchObject({ code: 'UNEXPECTED' });
+    expect(harness.telegram.count('sendMessage')).toBe(0);
+  });
 
   it('to every keyholder and the venue, with the lockdown off', async () => {
     expect(await deliver(botHarness())).toEqual([IDS.keyholder, IDS.secondKeyholder, IDS.adminChat]);

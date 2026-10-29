@@ -26,8 +26,9 @@ reviewed against the plan recorded in
 `doc/audits/2026-10-28-planning-review.md`; the core modules (errors,
 configuration, the redacting logger, i18n, the clock) and the storage
 (the SQL port with its D1 and node:sqlite adapters, the D1 migrations)
-exist; Telegram wiring, intake, review, the single post with its jobs
-and the Node port follow. On 2026-10-28 the owner narrowed the scope: no
+exist, as do the Telegram wiring, the intake, the admin review and the
+scheduler with its single post; the closure and retention unit, the
+Node port and the hardening follow. On 2026-10-28 the owner narrowed the scope: no
 direct-message broadcasts and no member or reporter identity in storage;
 an approved report is posted once into a configured group or channel
 (ADR 0004, ADR 0006).
@@ -45,6 +46,7 @@ npm run test:workers              # Workers runtime via @cloudflare/vitest-plugi
 npm run test:invariants           # always-run "must never happen" specs (the gate runs them last)
 npm run dev                       # wrangler dev; local secrets in .dev.vars (template .dev.vars.example)
 npm run dry-run                   # bundle the Worker into .wrangler/dry-run, offline, no account
+npm run probe:dry-run             # bundle the deployed probe (src/probe.ts, wrangler.probe.jsonc), offline
 npm run migrate:local             # apply the D1 migrations in migrations/ to the local database
 # Stack-independent:
 bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline, globs completeness, tripwire patterns)
@@ -60,7 +62,11 @@ node scripts/okf/build-index.mjs  # regenerate doc indexes after adding/moving/r
 Cloudflare Workers (Free plan) with a Node port as the fallback; TypeScript
 strict ESM, grammY, zod, D1 as the only store (ADRs 0001, 0002, 0004 under
 `doc/architecture/`). The Worker entry is `src/worker.ts` (HTTP handler,
-cron handler); the Node port's entry, `src/node.ts`, comes later. Module map
+cron handler); `src/probe.ts` is the deployed per-update probe, the same
+Worker with its D1 calls and Bot API requests counted, deployed once by the
+owner under `wrangler.probe.jsonc` and never with the bot's own
+configuration (ADR 0004); the Node port's entry, `src/node.ts`, comes
+later. Module map
 (`doc/architecture/adr-0006-data-model-and-module-layout.md`); the
 modules land unit by unit, `src/errors/`, `src/config/`, `src/privacy/`
 (logger and reporter reference), `src/i18n/` and `src/clock.ts` first,
@@ -81,7 +87,7 @@ then `src/db/` and `migrations/`:
 | `src/platforms/` | URL parsing, per-platform instruction keys | yes (4) |
 
 Critical paths are the globs in `.claude/devil/critical-globs.conf`
-(`src/worker.ts` and `src/node.ts` included). Anchor convention: every file
+(`src/worker.ts`, `src/probe.ts` and `src/node.ts` included). Anchor convention: every file
 on a critical path carries the comment line `// @critical-path` (TypeScript)
 or `-- @critical-path` (SQL) near its top, and
 `selftest/critical-globs-completeness.sh` fails when an anchored file under

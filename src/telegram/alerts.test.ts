@@ -1,7 +1,10 @@
-// Unit tests for the alerts (src/telegram/alerts.ts; critical invariants 2
-// and 5): every keyholder by direct message, under lockdown too, each
+// Unit tests for the alerts (src/telegram/alerts.ts; critical invariants 2,
+// 4 and 5): every keyholder by direct message, under lockdown too, each
 // failure logged by class and counted for reconciliation's retry, never
-// thrown; the venue only while the bot is not locked down.
+// thrown; the venue only while the bot is not locked down; and the choke
+// point for every link an alert carries: a text with a tappable link off
+// the lists, or a link of `links` off them, is never sent to anyone, and a
+// link that passes is rendered as code text after the text.
 import { describe, expect, it } from 'vitest';
 import { FAILURES, fakeBotApi, rateLimited } from '../../test/fakes/bot-api';
 import { fakeClock } from '../../test/fakes/clock';
@@ -11,7 +14,8 @@ import { migratedDatabase } from '../../test/support/database';
 import { setLockdown } from '../auth/lockdown';
 import type { SqlDb } from '../db/sql';
 import { AppError } from '../errors/app-error';
-import { alertKeyholders, alertVenue } from './alerts';
+import { alertKeyholders, alertText, alertVenue } from './alerts';
+import { FSI, PDI } from './render';
 import { createBotApi } from './api';
 
 const ALERT = '<b>Attention.</b> A post is waiting for a check.';
@@ -127,5 +131,46 @@ describe('alertVenue', () => {
     expect(log.records()).toEqual([
       { level: 'error', event: 'alert.failed', errorClass: 'GrammyError', telegramErrorCode: 400, apiMethod: 'sendMessage' },
     ]);
+  });
+});
+
+describe('the choke point for an alert\'s links', () => {
+  it('sends a link of `links` that passes the policy as code text, after the text', async () => {
+    const { deps, telegram } = setup();
+    await alertKeyholders(deps, ALERT, { links: ['https://x.com/someone', 'https://report.cybertip.org/'] });
+    expect(telegram.callsOf('sendMessage').map((call) => call.payload.text)).toEqual(
+      Array.from({ length: 2 }, () => `${ALERT}\n${FSI}<code>https://x.com/someone</code>${PDI}\n${FSI}<code>https://report.cybertip.org/</code>${PDI}`),
+    );
+  });
+
+  it('refuses, sending nothing to anyone, a link off the lists, a redirector or a Telegram target', async () => {
+    const { deps, telegram } = setup();
+    for (const link of ['https://evil.example/page', 'https://t.co/abc', 'https://t.me/somechannel', 'http://x.com/someone', 'https://x.com/someone?ref=1']) {
+      await expect(alertKeyholders(deps, ALERT, { links: [link] }), link).rejects.toMatchObject({ code: 'UNEXPECTED' });
+      await expect(alertVenue(deps, ALERT, { links: [link] }), link).rejects.toMatchObject({ code: 'UNEXPECTED' });
+    }
+    expect(telegram.calls).toEqual([]);
+  });
+
+  it('refuses, sending nothing, a text with a tappable link off the lists or over 4096 characters', async () => {
+    const { deps, telegram, config } = setup();
+    for (const text of ['Check https://evil.example/ now', 'See <a href="https://evil.example/">it</a> there', 'Mail someone@example.org', `${'x'.repeat(4097)}`]) {
+      await expect(alertKeyholders(deps, text), text.slice(0, 30)).rejects.toMatchObject({ code: 'UNEXPECTED' });
+      expect(() => alertText(config, text), text.slice(0, 30)).toThrow(AppError);
+    }
+    expect(telegram.calls).toEqual([]);
+    expect(alertText(config, 'A <code>https://evil.example/</code> shown as code')).toBe('A <code>https://evil.example/</code> shown as code');
+  });
+
+  it('names neither the text nor the link in its refusal', () => {
+    const { config } = setup();
+    const caught: unknown = (() => {
+      try {
+        return alertText(config, 'ok', ['https://evil.example/secret-path']);
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(String((caught as Error).message)).not.toContain('evil.example');
   });
 });

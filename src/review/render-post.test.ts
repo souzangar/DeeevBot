@@ -5,7 +5,8 @@
 // the post; the instruction block, the warning line and the points under
 // their heading, in both locales; nothing of the reporter; suspected CSAM
 // never rendered; the length Telegram counts, and the problems that keep a
-// text from being sent.
+// text from being sent; the plain text Telegram holds once it has parsed a
+// post, which /attach compares (src/broadcast/attach.ts).
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LINK_HOSTS } from '../config/schema';
 import { telegramHtmlProblems } from '../i18n/html';
@@ -13,17 +14,22 @@ import { t, type Locale } from '../i18n/index';
 import { instructionKey } from '../platforms/instructions';
 import { linksIn, outgoingLinkProblems } from '../platforms/link-policy';
 import { CATEGORIES } from './categories';
+import { PLATFORMS } from '../platforms/platforms';
 import {
+  plainText,
   POST_DIVIDER,
   postProblems,
   renderBilingualPost,
   renderPost,
+  samePlainText,
   sendable,
   TELEGRAM_TEXT_LIMIT,
   visibleLength,
   type PostSubject,
   type PostTerms,
 } from './render-post';
+import { isPostedCategory } from './categories';
+import { FSI, PDI } from '../telegram/render';
 
 const HOSTS: readonly string[] = DEFAULT_LINK_HOSTS;
 const X: PostSubject = {
@@ -184,5 +190,49 @@ describe('visibleLength, postProblems and sendable', () => {
     const linked = postProblems('see https://evil.test/ now', HOSTS);
     expect(linked.links.map((problem) => problem.reason)).toEqual(['not_listed']);
     expect(sendable(linked)).toBe(false);
+  });
+});
+
+describe('plainText and samePlainText', () => {
+  it('removes every tag, then decodes each entity, then trims, as Telegram does', () => {
+    expect(plainText('<b>A &amp; B</b> <i>said</i> <code>x &lt;y&gt; &quot;z&quot;</code>')).toBe('A & B said x <y> "z"');
+    expect(plainText('&#1588;&#x645; &#128512; <a href="https://help.x.com/a?b=1&amp;c=2">help</a>')).toBe('شم 😀 help');
+    expect(plainText('  \n<b>title</b>\n\nbody\n  ')).toBe('title\n\nbody');
+    // Decoded after the tags are gone: an escaped tag is text, and stays.
+    expect(plainText('&lt;b&gt;not bold&lt;/b&gt;')).toBe('<b>not bold</b>');
+    expect(plainText('&amp;lt;')).toBe('&lt;');
+  });
+
+  it('gives every post of the catalog exactly the characters Telegram counts, with no markup left', () => {
+    for (const platform of PLATFORMS) {
+      for (const category of CATEGORIES.filter(isPostedCategory)) {
+        const subject: PostSubject =
+          platform === 'telegram'
+            ? { platform, category, url: 'https://t.me/somechannel/42', accountUrl: 'https://t.me/somechannel' }
+            : platform === 'other'
+              ? { platform, category, url: 'https://example.org/page', accountUrl: 'https://example.org/someone' }
+              : { ...X, platform, category, url: `https://${platform === 'x' ? 'x' : platform}.com/someone/status/1234567890`, accountUrl: `https://${platform === 'x' ? 'x' : platform}.com/someone` };
+        const rendering = renderBilingualPost(subject, { linkMode: 'account', recommendedComment: 'Say it is harassment & "worse", 3 < 4.' }, HOSTS);
+        if (!rendering.ok) continue;
+        const text = plainText(rendering.text);
+        expect(text.length, `${platform} ${category}`).toBe(visibleLength(rendering.text));
+        expect(text, `${platform} ${category}`).not.toMatch(/<\/?(?:b|i|code|a)\b/);
+        expect(text, `${platform} ${category}`).toContain('Say it is harassment & "worse", 3 < 4.');
+        expect(samePlainText(text, rendering.text), `${platform} ${category}`).toBe(true);
+      }
+    }
+  });
+
+  it('compares every visible character, leaving out only format characters, which Telegram may clean', () => {
+    const rendering = renderBilingualPost(X, { linkMode: 'account', recommendedComment: 'Say it is harassment.' }, HOSTS);
+    if (!rendering.ok) throw new Error('the post does not render');
+    const text = plainText(rendering.text);
+    expect(text).toContain(`${FSI}`);
+    expect(samePlainText(text.replaceAll(FSI, '').replaceAll(PDI, ''), rendering.text)).toBe(true);
+    expect(samePlainText(text.normalize('NFD'), rendering.text)).toBe(true);
+    expect(samePlainText(`${text} `, rendering.text)).toBe(true);
+    expect(samePlainText(text.replace('someone', 'someone2'), rendering.text)).toBe(false);
+    expect(samePlainText(text.slice(0, -1), rendering.text)).toBe(false);
+    expect(samePlainText(rendering.text, rendering.text)).toBe(false);
   });
 });

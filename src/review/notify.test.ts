@@ -21,6 +21,7 @@ import {
   noticeKeyboard,
   noticeText,
   notifyKeyholders,
+  postedNoticeText,
   type NoticeFacts,
 } from './notify';
 import { POST_DIVIDER } from './render-post';
@@ -64,6 +65,13 @@ describe('noticeText and the buttons', () => {
         ],
       ],
     });
+  });
+
+  it('says "posted" without links, in both locales', () => {
+    const text = postedNoticeText(FACTS.reportId);
+    expect(text).toBe(`${t('fa', 'notice.posted', { id: FACTS.reportId })}\n${t('en', 'notice.posted', { id: FACTS.reportId })}`);
+    expect(text).not.toContain('https://');
+    expect(outgoingLinkProblems(text, [])).toEqual([]);
   });
 
   it('says "cancelled" without links', () => {

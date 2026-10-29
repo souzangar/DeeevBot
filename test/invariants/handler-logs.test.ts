@@ -8,7 +8,13 @@
 // deletion or edit, the status card, a keyholder notice and its edit
 // failing; an approval whose notice reaches no keyholder or cannot be sent
 // at all, one whose batch fails with the read after it, and one whose
-// batch fails after committing).
+// batch fails after committing), and the scheduler (a post's send answered
+// 429, refused or ambiguously, its alerts failing too; a stored post the
+// send-time check refuses; a send whose record fails; reconciliation's
+// alert failing; an edit job failing; the lockdown alert reaching a
+// keyholder short; a storage failure that stops a run, and its alert; any
+// other failure of a run; /attach's refusals and a probe it cannot undo; a
+// lockdown's retention pass failing; an unknown cron; the probe's counts).
 // Each is driven with updates and texts that carry a reported URL, a
 // comment, the reporter's, the admins', the keyholders' and the chats'
 // Telegram ids, and with Bot API failures whose GrammyError payloads carry
@@ -35,6 +41,17 @@ import { AppError } from '../../src/errors/app-error';
 import { sql } from '../../src/db/sql';
 import { IDS, TEST_VARIABLES } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
+import type { RecordedLine } from '../fakes/logger';
+import { plantApproved, TICK_AT, tickHarness, type TickHarness } from '../support/tick-harness';
+import { attachPost } from '../../src/broadcast/attach';
+import { enqueueEditStatement } from '../../src/broadcast/jobs';
+import { lockdownNow } from '../../src/broadcast/maintenance';
+import { postKeyboard } from '../../src/broadcast/post';
+import { handleScheduled } from '../../src/broadcast/tick';
+import { createProbe } from '../../src/probe';
+import type { SqlStatement } from '../../src/db/sql';
+import { insertReport } from '../support/review-rows';
+import { plainText } from '../../src/review/render-post';
 
 const REPORTED_URL = 'https://www.instagram.com/reported.account.for.logs/';
 const COMMENT = 'reporter comment that must never be logged';
@@ -72,6 +89,8 @@ const ALLOWED_KEYS = new Set([
   'sent',
   'failed',
   'attempts',
+  'queries',
+  'apiCalls',
   'unknownFields',
 ]);
 
@@ -159,8 +178,9 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
     harness.telegram.fail({ chatId: IDS.adminChat }, FAILURES.networkFailure);
     const deps = { api, config: harness.config, clock: harness.clock, logger: harness.log.logger, db: harness.db };
     expect(await membershipOf({ ...deps, cache: createMembershipCache() }, IDS.reporter)).toBe(false);
-    await alertKeyholders(deps, `Check ${REPORTED_URL}: ${COMMENT}`);
-    await alertVenue(deps, `Check ${REPORTED_URL}: ${COMMENT}`);
+    // As an alert carries a reported URL: code text, which the alerts' link check passes.
+    await alertKeyholders(deps, `Check <code>${REPORTED_URL}</code>: ${COMMENT}`);
+    await alertVenue(deps, `Check <code>${REPORTED_URL}</code>: ${COMMENT}`);
     expect(harness.log.records().map((record) => record.event)).toEqual([
       'membership.failed',
       'alert.failed',
@@ -295,5 +315,185 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
       expectClean(harness.log.lines);
       expect(harness.log.text(), event).not.toContain('reporter_handle');
     }
+  });
+
+  it('the scheduler, when its sends, its alerts, its store and its probes fail', async () => {
+    const TEXT = `<b>A post</b>\n<code>${REPORTED_URL}</code>\n${COMMENT}`;
+    const lines: RecordedLine[] = [];
+    const events = new Set<string>();
+    const keep = (harness: TickHarness): void => {
+      lines.push(...harness.log.lines);
+      for (const record of harness.log.records()) events.add(String(record.event));
+    };
+    const unreachable = (harness: TickHarness): void => {
+      harness.telegram.fail({ chatId: IDS.keyholder }, FAILURES.cantInitiateConversation);
+      harness.telegram.fail({ chatId: IDS.adminChat }, FAILURES.botBlocked);
+    };
+    // A post's send answered 429, refused or ambiguously, every alert failing too.
+    for (const failure of [rateLimited(9), FAILURES.chatNotFound, FAILURES.timeout, FAILURES.serverError, FAILURES.networkFailure]) {
+      const harness = tickHarness();
+      await plantApproved(harness, { text: TEXT });
+      harness.telegram.fail({ method: 'sendMessage', chatId: IDS.broadcastChannel }, failure, 1);
+      unreachable(harness);
+      await harness.run();
+      keep(harness);
+    }
+    // A stored post the send-time check refuses.
+    const held = tickHarness();
+    await plantApproved(held, { text: `${TEXT}<a href="https://evil.example/${IDS.reporter}">more</a>` });
+    await held.run();
+    keep(held);
+    // A send whose record fails, by an error that carries the URL.
+    const unrecorded = tickHarness({
+      store: (db) => ({
+        ...db,
+        batch: (statements: readonly SqlStatement[]) =>
+          String(statements[0]?.sql).startsWith("UPDATE reports SET status = 'posted'")
+            ? Promise.reject(new AppError('STORAGE_FAILURE', `the record of ${REPORTED_URL}`))
+            : db.batch(statements),
+      }),
+    });
+    await plantApproved(unrecorded, { text: TEXT });
+    await unrecorded.run(Date.UTC(2027, 0, 15, 12, 15));
+    keep(unrecorded);
+    // Reconciliation's alert failing, an edit job failing, the lockdown alert reaching a keyholder short.
+    const busy = tickHarness({ edits: { close: () => Promise.reject(new Error(`an edit of ${REPORTED_URL} for ${IDS.reporter}`)) } });
+    const stuck = await plantApproved(busy, { text: TEXT, startsAt: TICK_AT - 30 * 60_000 });
+    await busy.db.run(sql`UPDATE reports SET status = 'posting', posting_started_at = ? WHERE id = ?`, [TICK_AT - 20 * 60_000, stuck.reportId]);
+    const closing = await insertReport(busy.db, { status: 'closing' });
+    const edit = enqueueEditStatement({ reportId: closing, status: 'closing', dueAt: TICK_AT, now: TICK_AT });
+    await busy.db.run(edit.sql, edit.params);
+    unreachable(busy);
+    await busy.run(Date.UTC(2027, 0, 15, 12, 15));
+    await busy.db.run(sql`INSERT INTO meta (key, value) VALUES ('lockdown', 1)`);
+    await busy.run(Date.UTC(2027, 0, 15, 12, 30));
+    keep(busy);
+    // A storage failure that stops a run, and its alert; any other failure of a run; an unknown cron.
+    const down = tickHarness({ store: (db) => ({ ...db, all: () => Promise.reject(new AppError('STORAGE_FAILURE', `a read of ${REPORTED_URL}`)) }) });
+    unreachable(down);
+    await down.run(Date.UTC(2027, 0, 15, 12, 15));
+    handleScheduled({ cron: `${REPORTED_URL} * * *`, scheduledTime: TICK_AT }, { waitUntil: () => undefined }, down.deps);
+    keep(down);
+    const broken = tickHarness({ store: (db) => ({ ...db, all: () => Promise.reject(new TypeError(`a bug about ${REPORTED_URL} and ${COMMENT}`)) }) });
+    await broken.run();
+    keep(broken);
+    // /attach: a refused probe, and a probe it cannot undo.
+    const attaching = tickHarness();
+    const posting = await plantApproved(attaching, { text: TEXT });
+    attaching.telegram.fail({ method: 'sendMessage', chatId: IDS.broadcastChannel }, FAILURES.timeout, 1);
+    await attaching.run();
+    await attachPost(attaching.deps, 'keyholder', posting.reportId, 9);
+    attaching.telegram.seedMessage(IDS.broadcastChannel, { message_id: 10, text: TEXT, reply_markup: postKeyboard(posting.reportId) });
+    // The probe and both tries of its removal time out.
+    attaching.telegram.fail({ method: 'editMessageReplyMarkup' }, FAILURES.timeout, 3);
+    await attachPost(attaching.deps, 'keyholder', posting.reportId, 10);
+    // Refused on the message's text, then on its date.
+    attaching.telegram.seedMessage(IDS.broadcastChannel, { message_id: 12, text: `${COMMENT} ${REPORTED_URL} ${IDS.reporter}` });
+    await attachPost(attaching.deps, 'keyholder', posting.reportId, 12);
+    attaching.clock.set(TICK_AT + 10 * 60_000);
+    attaching.telegram.seedMessage(IDS.broadcastChannel, { message_id: 13, text: plainText(TEXT) });
+    await attachPost(attaching.deps, 'keyholder', posting.reportId, 13);
+    // A verified post whose own keyboard cannot be put back.
+    const restoring = tickHarness();
+    const restored = await plantApproved(restoring, { text: TEXT });
+    restoring.telegram.fail({ method: 'sendMessage', chatId: IDS.broadcastChannel }, FAILURES.timeout, 1);
+    await restoring.run();
+    restoring.telegram.seedMessage(IDS.broadcastChannel, { message_id: 11, text: plainText(TEXT) });
+    const restoreApi = restoring.deps.api;
+    let restoreCalls = 0;
+    await attachPost(
+      {
+        ...restoring.deps,
+        api: Object.assign(Object.create(restoreApi) as typeof restoreApi, {
+          editMessageReplyMarkup: (...args: Parameters<typeof restoreApi.editMessageReplyMarkup>) => {
+            restoreCalls += 1;
+            return restoreCalls === 1
+              ? restoreApi.editMessageReplyMarkup(...args)
+              : Promise.reject(new Error(`the keyboard of ${REPORTED_URL} for ${IDS.reporter}`));
+          },
+        }),
+      },
+      'keyholder',
+      restored.reportId,
+      11,
+    );
+    keep(restoring);
+    keep(attaching);
+    // A send whose record changes no row: a second message, its alert failing too.
+    const orphaned = tickHarness({
+      store: (db) => ({
+        ...db,
+        batch: async (statements: readonly SqlStatement[]) => {
+          if (String(statements[0]?.sql).startsWith("UPDATE reports SET status = 'posted'")) {
+            await db.run(sql`UPDATE reports SET status = 'posted', post_message_id = 88, posted_at = posting_started_at WHERE id = ?`, [String(statements[0]?.params[2])]);
+          }
+          return db.batch(statements);
+        },
+      }),
+    });
+    await plantApproved(orphaned, { text: TEXT });
+    unreachable(orphaned);
+    await orphaned.run();
+    keep(orphaned);
+    // An edit job whose row cannot be read.
+    const unreadable = tickHarness();
+    const closingReport = await insertReport(unreadable.db, { status: 'closing' });
+    await unreadable.db.run(
+      sql`INSERT INTO jobs (id, kind, report_id, due_at, payload, attempts, created_at) VALUES ('unreadablejobxxxxxxx', 'edit', ?, 1, ?, 0, 1)`,
+      [closingReport, JSON.stringify({ action: `${REPORTED_URL} ${IDS.reporter}` })],
+    );
+    await unreadable.run();
+    keep(unreadable);
+    // A lockdown whose retention pass fails, by an error that carries the URL.
+    const locking = tickHarness();
+    await lockdownNow({ ...locking.deps, retentionNow: () => Promise.reject(new Error(`the pass over ${REPORTED_URL}`)) });
+    keep(locking);
+    // The probe's counts.
+    const probed = tickHarness();
+    const probe = createProbe(probed.telegram.fetch, probed.log.logger);
+    const waited: Promise<unknown>[] = [];
+    await probe.scheduled?.(
+      { cron: '* * * * *', scheduledTime: TICK_AT, noRetry: () => undefined },
+      { ...TEST_VARIABLES, DB: new Proxy({}, { get: () => { throw new Error(`no D1 here for ${REPORTED_URL}`); } }) } as unknown as Parameters<NonNullable<typeof probe.scheduled>>[1],
+      { waitUntil: (promise: Promise<unknown>) => void waited.push(promise), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext,
+    );
+    await Promise.all(waited);
+    // The probe's fidelity check, its texts parting, then the Bot API refusing it.
+    const fidelityRequest = (): Parameters<NonNullable<typeof probe.fetch>>[0] =>
+      new Request(`https://div-report-probe.test/${TEST_VARIABLES.WEBHOOK_PATH_SEGMENT}/fidelity`, { method: 'POST', headers: { [SECRET_HEADER]: TEST_VARIABLES.WEBHOOK_SECRET } });
+    const fidelityEnv = { ...TEST_VARIABLES, DB: {} } as unknown as Parameters<NonNullable<typeof probe.fetch>>[1];
+    const fidelityCtx = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    await probe.fetch?.(fidelityRequest(), fidelityEnv, fidelityCtx);
+    probed.telegram.fail({ method: 'sendMessage' }, FAILURES.botBlocked, 1);
+    await probe.fetch?.(fidelityRequest(), fidelityEnv, fidelityCtx);
+    keep(probed);
+    for (const event of [
+      'post.rate_limited',
+      'post.refused',
+      'post.ambiguous',
+      'post.text_refused',
+      'post.not_recorded',
+      'alert.failed',
+      'reconcile.alert_incomplete',
+      'edit.failed',
+      'lockdown.alert_incomplete',
+      'tick.storage_failed',
+      'tick.storage_alerted',
+      'tick.failed',
+      'cron.unknown',
+      'attach.refused',
+      'attach.text_mismatch',
+      'attach.window_mismatch',
+      'attach.revert_failed',
+      'attach.restore_failed',
+      'probe.fidelity',
+      'post.resolved_elsewhere',
+      'edit.unreadable',
+      'retention.failed',
+      'probe.invocation',
+    ]) {
+      expect(events.has(event), event).toBe(true);
+    }
+    expectClean(lines);
   });
 });

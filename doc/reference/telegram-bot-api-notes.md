@@ -108,8 +108,9 @@ receive `my_chat_member`. A 403 "bot was blocked by the user" is classified
 `TELEGRAM_BLOCKED`; a 403 "user is deactivated" and a 400 "chat not found" or
 "private chat not found" are `TELEGRAM_CHAT_GONE` (`src/telegram/errors.ts`,
 matching the code first, then these texts). On a reply each is logged by
-class and ignored; on a keyholder alert it is counted as failed, so
-reconciliation sends the alert again. A keyholder who never sent `/start`
+class and ignored; on a keyholder alert it is counted as failed, and an
+alert that reached no keyholder at all is sent again by the next
+reconciliation (one keyholder reached suffices). A keyholder who never sent `/start`
 answers 403 "bot can't initiate conversation with a user", an ordinary
 `TELEGRAM_PERMANENT`. The regression test for the log boundary uses a real
 GrammyError, whose payload carries the outgoing text and chat id.
@@ -206,6 +207,31 @@ Verified 2026-10-28 from the downloaded Bot API page [H].
   "Note that business messages that were not sent by the bot and do not
   contain an inline keyboard can only be edited within 48 hours from the
   time they were sent." The bot's own messages carry no stated age limit.
+- `editMessageReplyMarkup`, same page: "Use this method to edit only the
+  reply markup of messages. On success, if the edited message is not an
+  inline message, the edited Message is returned, otherwise True is
+  returned." The Message returned is the message as just edited, so its
+  keyboard is the one the call set. In the downloaded server source [G]
+  `telegram-bot-api/Client.cpp` (lines 110 to 113, verified 2026-10-28) the
+  error `MESSAGE_NOT_MODIFIED` becomes the 400 "message is not modified:
+  specified new message content and reply markup are exactly the same as a
+  current content and reply markup of the message": an edit to the keyboard
+  a message already carries is answered so.
+- `can_edit_messages`, same page, ChatAdministratorRights: "Optional. True,
+  if the administrator can edit messages of other users and can pin
+  messages; for channels only". A channel administrator holding it can edit
+  other users' posts, so "the bot cannot edit a message it did not send" is
+  no guarantee in a channel.
+
+Project use for `/attach` (ADR 0004, "The run as built"): since the
+returned Message shows the keyboard the call just set and the bot's rights
+may let it edit other users' posts, the verification never rests on a
+keyboard. It edits the message with a probe keyboard of no press data, in
+one of two variants so that "message is not modified" only ever switches
+the variant, and accepts the message Telegram returns only by its text (the
+stored post's plain text) and its date (inside the report's send window),
+then puts the post's own keyboard back; a refused probe has its keyboard
+removed again.
 
 Project use: the 48-hour limit binds an administrator bot as well, so
 review cards and prompts are deleted within 48 hours of their message; a

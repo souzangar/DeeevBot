@@ -17,6 +17,14 @@
 // statement that must not run under lockdown binds NOT_LOCKED_DOWN in its
 // own WHERE clause, so a switch set between a read and a write still stops
 // it. A failed read is an AppError STORAGE_FAILURE, never "not locked".
+// Both entry points that set the switch, a keyholder's /lockdown and the
+// Lockdown button of an approval notice, go through lockdownNow()
+// (src/broadcast/maintenance.ts), which also runs the immediate retention
+// pass. The scheduler's once-only lockdown alert keeps its marker,
+// `meta.lockdown_alerted_at`, here too: set once a keyholder got the
+// alert, cleared with the switch by /unlock, and forgotten by the scheduler
+// once neither layer holds the bot (the override lifted), so the next
+// lockdown alerts again.
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import { sql, type SqlDb } from '../db/sql';
@@ -36,6 +44,8 @@ const READ_SWITCH = sql`SELECT value FROM meta WHERE key = 'lockdown'`;
 const SET_SWITCH = sql`INSERT INTO meta (key, value) VALUES ('lockdown', ?) ON CONFLICT (key) DO NOTHING`;
 const CLEAR_SWITCH = sql`DELETE FROM meta WHERE key = 'lockdown'`;
 const CLEAR_ALERTED = sql`DELETE FROM meta WHERE key = 'lockdown_alerted_at'`;
+const MARK_ALERTED = sql`INSERT INTO meta (key, value) VALUES ('lockdown_alerted_at', ?) ON CONFLICT (key) DO NOTHING`;
+const FORGET_ALERTED = sql`DELETE FROM meta WHERE key = 'lockdown_alerted_at' AND NOT EXISTS (SELECT 1 FROM meta WHERE key = 'lockdown')`;
 
 /** Whether the switch is set in D1 (the override aside). */
 export async function lockdownSwitchSet(db: SqlDb): Promise<boolean> {
@@ -71,4 +81,21 @@ export async function clearLockdown(db: SqlDb): Promise<boolean> {
     { sql: CLEAR_ALERTED, params: [] },
   ]);
   return cleared?.changes === 1;
+}
+
+/**
+ * Records that the scheduler's lockdown alert reached a keyholder, at `now`
+ * (see the header). True when this call recorded it.
+ */
+export async function markLockdownAlerted(db: SqlDb, now: number): Promise<boolean> {
+  return (await db.run(MARK_ALERTED, [now])).changes === 1;
+}
+
+/**
+ * Forgets the lockdown alert's marker while the switch is not set (see the
+ * header), for the scheduler once neither layer holds the bot. True when
+ * there was one to forget.
+ */
+export async function forgetLockdownAlert(db: SqlDb): Promise<boolean> {
+  return (await db.run(FORGET_ALERTED)).changes === 1;
 }

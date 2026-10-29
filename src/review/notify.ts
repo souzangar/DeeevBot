@@ -25,10 +25,11 @@
 //   "cancelled", without links, so no target URL stays in a keyholder's
 //   chat (but a press on the notice of an approval not recorded, which
 //   edits nothing until the notice is five minutes old:
-//   src/review/cancel.ts); the scheduling unit edits them
-//   to "posted". A notice another isolate sent is not remembered, and
-//   keeps its text until its own Cancel is pressed: the stated cost of
-//   storing nothing.
+//   src/review/cancel.ts); the scheduler edits them to "posted"
+//   (postedNoticeText) once the post is recorded, by the tick or by
+//   /attach (src/broadcast/). A notice another isolate sent is not
+//   remembered, and keeps its text until its own Cancel is pressed: the
+//   stated cost of storing nothing.
 import type { InlineKeyboardMarkup } from 'grammy/types';
 import { utcMinute } from '../clock';
 import type { Config } from '../config/schema';
@@ -109,6 +110,10 @@ export function noticeText(facts: NoticeFacts, post: string): string {
 /** The notice of a cancelled approval: its report's id, in both locales, without links. */
 export const cancelledNoticeText = (reportId: string): string =>
   bothLocales((locale) => t(locale, 'notice.cancelled', { id: reportId }));
+
+/** The notice of a posted report: its id, in both locales, without links. */
+export const postedNoticeText = (reportId: string): string =>
+  bothLocales((locale) => t(locale, 'notice.posted', { id: reportId }));
 
 /** The notice's two buttons, labelled in both locales. */
 export function noticeKeyboard(reportId: string, approvalId: string): InlineKeyboardMarkup {

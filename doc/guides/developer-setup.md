@@ -65,6 +65,7 @@ needs the scripts approved. Nothing else warns on install.
 | `npm run dev` | `wrangler dev`: the Worker on a local server, with the variables from `.dev.vars` (section 6); it answers the webhook path as the deployed Worker does (section 7, "The webhook boundary") and 404 to anything else |
 | `npm run dry-run` | `wrangler deploy --dry-run --outdir .wrangler/dry-run`: bundles the Worker and lists its bindings (section 7) |
 | `npm run migrate:local` | `wrangler d1 migrations apply div-report --local`: applies `migrations/` to the local D1 database |
+| `npm run probe:dry-run` | `wrangler deploy --dry-run --config wrangler.probe.jsonc --outdir .wrangler/probe-dry-run`: bundles the deployed per-update probe (`src/probe.ts`), a throwaway Worker the owner runs once (ADR 0004, "The deployed probe"); offline, no account |
 | `bash selftest/run-all.sh` | stack-independent, like the rows below: the kit's tooling pins (devil.sh, the hooks, the statusline, the critical-globs completeness check, the tripwire patterns) |
 | `bash selftest-okf/run-all.sh` | the OKF docs-gate contracts |
 | `node scripts/okf/check.mjs` | the docs gate: frontmatter, links, prose references, index staleness |
@@ -291,11 +292,11 @@ and 2.1.
 
 | `wrangler.jsonc` | Setting |
 |---|---|
-| `main` | `src/worker.ts`: the HTTP handler, the webhook boundary below, and the cron handler, which stays empty until the scheduling unit (U5) |
+| `main` | `src/worker.ts`: the HTTP handler, the webhook boundary below, and the cron handler, which runs the scheduler's one-minute run (`src/broadcast/tick.ts`; ADR 0004, "The run as built") |
 | `compatibility_date` | 2026-10-28 (see below), with the `nodejs_compat` flag |
 | `send_metrics` | `false`: wrangler sends no usage metrics for this project, overriding each user's own telemetry setting (an explicit `WRANGLER_SEND_METRICS` in the environment still takes precedence); the owner's stance, not a rule-6 requirement |
 | `d1_databases` | binding `DB`, `database_name` `div-report`, an all-zero placeholder `database_id` (the real id is deployment configuration), `migrations_dir` `migrations/` at the repository root |
-| `triggers` | one cron, `5 0 * * *`, for the nightly retention job (00:05 UTC, after the Free plan's daily caps reset); the one-minute cron that drains the `jobs` table, and also replaces the stall detector, is added with the scheduling unit (U5; ADR 0004) |
+| `triggers` | one cron, `* * * * *`: each run posts the due approved report, runs the due edit jobs and, by the minute, reconciliation (every 15th minute), the retention job (00:15 UTC, after the Free plan's daily caps reset) and the monthly snapshot (ADR 0004); the Worker runs nothing for any other expression |
 | `observability` | disabled: the platform's invocation logs are logs (critical invariant 6); turned on only deliberately (runbook, section 4) |
 | `vars` | empty: no secret and no deployment value lives in this file |
 
@@ -309,7 +310,8 @@ later change adds a file rather than editing an applied one, as
 `npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its
 one binding (`env.DB`) with no Cloudflare account and no network access, and
 with `send_metrics` off it prints no telemetry notice. With the Telegram
-wiring the bundle is 971 KiB, 162 KiB gzipped (2026-10-28), most of it zod
+wiring, the review and the scheduler the bundle is 1,377 KiB, 227 KiB
+gzipped (2026-10-28), most of it zod
 and grammY's web build, unminified; the Free plan allows a Worker of 3 MB. `.wrangler/`, which also
 holds the local D1 state, is gitignored. There is no Durable Object. The
 `Broadcaster` class and its `v1` migration tag of Phase 2 were removed before

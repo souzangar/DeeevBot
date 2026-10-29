@@ -34,11 +34,13 @@
     }
   ],
 
-  // ADR 0001 and ADR 0004: the nightly retention job, at 00:05 UTC, after the
-  // Free plan's daily caps reset at 00:00 UTC. The one-minute cron that
-  // drains the jobs table, and also replaces the stall detector, is added
-  // with the scheduling unit (U5).
-  "triggers": { "crons": ["5 0 * * *"] },
+  // ADR 0004 ("Scheduling"): ONE cron, every minute. Its run
+  // (src/broadcast/tick.ts) posts the due approved report, runs the due edit
+  // jobs and, by the minute, reconciliation on every 15th minute, the
+  // retention job at 00:15 UTC (after the Free plan's daily caps reset at
+  // 00:00 UTC) and the monthly snapshot on the first day at 06:00 UTC; the
+  // Worker runs nothing for any other expression.
+  "triggers": { "crons": ["* * * * *"] },
 
   // Critical invariant 6: the platform's invocation logs are logs. Workers
   // observability stays off until it is turned on deliberately

@@ -4,7 +4,9 @@
 // channel is never one of these (src/telegram/guards.ts).
 // - /lockdown and /unlock, keyholders only, in their own private chat with
 //   the bot, the allowlist re-checked on every call. /lockdown sets the
-//   switch, `meta.lockdown`, with the time; /unlock clears it, the only
+//   switch, `meta.lockdown`, with the time, through lockdownNow()
+//   (src/broadcast/maintenance.ts), which also runs the immediate retention
+//   pass, as the notice's Lockdown button does; /unlock clears it, the only
 //   code path that does (src/auth/lockdown.ts), and says so when the
 //   deployment's LOCKDOWN override still holds the bot locked, which no
 //   Telegram command can clear. From anyone else either is not a command:
@@ -29,7 +31,8 @@
 // to the sender's own chat.
 import { Composer, type Context } from 'grammy';
 import { isKeyholder } from '../auth/allowlist';
-import { clearLockdown, isLockedDown, setLockdown } from '../auth/lockdown';
+import { clearLockdown, isLockedDown } from '../auth/lockdown';
+import { lockdownNow, type RetentionPass } from '../broadcast/maintenance';
 import type { Clock } from '../clock';
 import type { Config } from '../config/schema';
 import type { SqlDb } from '../db/sql';
@@ -45,6 +48,8 @@ export interface CommandDeps {
   readonly db: SqlDb;
   readonly clock: Clock;
   readonly logger: Logger;
+  /** The retention pass /lockdown runs: runRetentionNow unless given (tests pass a spy). */
+  readonly retentionNow?: RetentionPass;
 }
 
 const localeOf = (ctx: Context) => resolveLocale(ctx.from?.language_code);
@@ -55,8 +60,14 @@ export function keyholderCommands(deps: CommandDeps): Composer<Context> {
   const keyholder = composer.filter(isKeyholderCommand(deps.config));
 
   keyholder.command('lockdown', async (ctx) => {
-    const set = await setLockdown(deps.db, deps.clock);
-    if (set) deps.logger.log('lockdown.set');
+    const set = await lockdownNow({
+      api: ctx.api,
+      config: deps.config,
+      db: deps.db,
+      clock: deps.clock,
+      logger: deps.logger,
+      ...(deps.retentionNow === undefined ? {} : { retentionNow: deps.retentionNow }),
+    });
     await ctx.reply(t(localeOf(ctx), set ? 'lockdown.on' : 'lockdown.already_on'));
   });
 

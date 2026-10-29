@@ -6,9 +6,13 @@
 // one the admin commands take), its platform and category, its state and,
 // in the grace, its start time and how many keyholders got the approval
 // notice; never a URL, a comment or a reporter's reference. Its buttons:
-// Cancel while the approval is in its grace, and Block reporter while the
-// report still holds the reference; the later units add their own (taken
-// down, no result, retract) to the posted report's card.
+// Cancel while the report is approved under its live approval, and Block
+// reporter while the report still holds the reference; the later units add
+// their own (taken down, no result, retract) to the posted report's card.
+// The scheduler (src/broadcast/) edits it to "posted", or to its state with
+// a note saying what needs a human: a post Telegram refused, a post that
+// may or may not be in the channel, a stored post the send-time check
+// refused, a report /repost returned to approved.
 import type { InlineKeyboardButton } from 'grammy/types';
 import { utcMinute } from '../clock';
 import { t, type Locale } from '../i18n/index';
@@ -24,27 +28,45 @@ export interface NoticeCount {
   readonly total: number;
 }
 
+/** What the scheduler says needs a human, or that /repost is under way (see the header). */
+export type StatusNote = 'refused' | 'unknown' | 'held' | 'reposted';
+
+const NOTE_KEYS = Object.freeze({
+  refused: 'review.status_card.note.refused',
+  unknown: 'review.status_card.note.unknown',
+  held: 'review.status_card.note.held',
+  reposted: 'review.status_card.note.reposted',
+} as const satisfies Record<StatusNote, string>);
+
 const button = (text: string, action: ReviewAction): InlineKeyboardButton.CallbackButton => ({
   text,
   callback_data: reviewData(action),
 });
 
-/** The status card of `report` (see the header); `approval` is its live approval, if it has one. */
+/**
+ * The status card of `report` (see the header); `approval` is its live
+ * approval, if it has one; `note`, what the scheduler says of it, in place
+ * of the grace line.
+ */
 export function statusCard(
   report: Pick<ReviewReport, 'id' | 'status' | 'platform' | 'category' | 'reporterRef'>,
   approval: Pick<ApprovalRecord, 'approvalId' | 'startsAt' | 'voidedAt'> | null,
   locale: Locale,
   notified?: NoticeCount,
+  note?: StatusNote,
 ): CardView {
   const inGrace = report.status === 'approved' && approval !== null && approval.voidedAt === null;
   const lines = [
     t(locale, 'review.status_card.title', { id: report.id }),
     `${t(locale, PLATFORM_NAME_KEYS[report.platform])} · ${t(locale, CATEGORY_NAME_KEYS[report.category])}`,
-    inGrace
+    inGrace && note === undefined
       ? t(locale, 'review.status_card.in_grace', { time: utcMinute(approval.startsAt) })
       : t(locale, 'review.status_card.state', { state: t(locale, STATUS_NAME_KEYS[report.status]) }),
   ];
-  if (inGrace && notified !== undefined) lines.push(t(locale, 'review.status_card.notified', { sent: notified.sent, total: notified.total }));
+  if (note !== undefined) lines.push(t(locale, NOTE_KEYS[note], { id: report.id }));
+  if (inGrace && note === undefined && notified !== undefined) {
+    lines.push(t(locale, 'review.status_card.notified', { sent: notified.sent, total: notified.total }));
+  }
   const rows: InlineKeyboardButton.CallbackButton[][] = [];
   if (inGrace) {
     rows.push([button(t(locale, 'review.button.cancel'), { kind: 'cancel', reportId: report.id, approvalId: approval.approvalId })]);

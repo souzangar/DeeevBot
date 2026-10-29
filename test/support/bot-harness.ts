@@ -11,6 +11,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Bot, Context, Middleware } from 'grammy';
 import type { Update } from 'grammy/types';
 import { createMembershipCache } from '../../src/auth/membership';
+import type { RetentionPass } from '../../src/broadcast/maintenance';
 import type { Clock } from '../../src/clock';
 import type { Config } from '../../src/config/schema';
 import type { SqlDb } from '../../src/db/sql';
@@ -45,6 +46,8 @@ export interface BotHarness {
 export interface HarnessOptions {
   /** Configuration variables to override (LOCKDOWN: '1', say). */
   readonly variables?: Readonly<Record<string, string | undefined>>;
+  /** The retention pass a lockdown runs, in place of the real one (a spy). */
+  readonly retentionNow?: RetentionPass;
   /**
    * Composers for createBot()'s slot of the later units' features, built
    * with the harness's own deps, in place of defaultFeatures().
@@ -73,6 +76,7 @@ export function botHarness(options: HarnessOptions = {}): BotHarness {
     fetch: telegram.fetch,
     membershipCache: createMembershipCache(),
     notices,
+    ...(options.retentionNow === undefined ? {} : { retentionNow: options.retentionNow }),
   };
   const features = options.features?.({ config, db: database.db, clock, logger: log.logger, notices }) ?? defaultFeatures(deps);
   const bot = createBot(deps, features);

@@ -39,6 +39,13 @@
 //   approved: the approval row binds the switch in its own statement, so
 //   the batch writes nothing but the answered prompt's deletion, the
 //   notices are edited to "cancelled", and the venue gets nothing more.
+// - Both lockdown entry points, a keyholder's /lockdown and the notice's
+//   Lockdown button, run the immediate retention pass, through the one
+//   lockdownNow() (src/broadcast/maintenance.ts); in the source, setLockdown
+//   has that one caller, so no other entry point can leave the pass unrun.
+// - The scheduler's commands are on the real surface: under either layer an
+//   admin's /attach, /repost, /halt and /resume are refused like every admin
+//   command, while a keyholder's /attach and /halt keep working.
 // The commit gate runs this file on every commit (`npm run test:invariants`).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -59,7 +66,7 @@ import { NOTICE_PREFIXES, noticeData, REVIEW_PREFIXES, reviewData, type ReviewAc
 import { cancelledNoticeText } from '../../src/review/notify';
 import { createPrompt } from '../../src/review/prompts';
 import { markData } from '../../src/telegram/presses';
-import { REVIEW_ADMIN_COMMANDS, REVIEW_KEYHOLDER_COMMANDS, reviewSurface } from '../../src/telegram/review';
+import { ADMIN_COMMANDS, KEYHOLDER_COMMANDS, reviewSurface } from '../../src/telegram/review';
 import { botHarness, NOW, type BotHarness } from '../support/bot-harness';
 import { reviewIn } from '../support/review-driver';
 import { harnessOver, storeWith } from '../support/review-store';
@@ -197,6 +204,16 @@ describe('critical invariant 2: only a keyholder lifts the lockdown switch', () 
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
+  it('has one caller of setLockdown in the source, lockdownNow, which both entry points call', () => {
+    const callers = sources(SRC)
+      .filter((path) => /\bsetLockdown\(/.test(code(path).replace(/export async function setLockdown\(/, '')))
+      .map((path) => relative(SRC, path));
+    expect(callers).toEqual(['broadcast/maintenance.ts']);
+    expect(code(join(SRC, 'broadcast/maintenance.ts'))).toMatch(/export async function lockdownNow\([\s\S]*setLockdown\([\s\S]*retentionNow/);
+    expect(code(join(SRC, 'telegram/commands.ts'))).toMatch(/keyholder\.command\('lockdown'[\s\S]*lockdownNow\(/);
+    expect(code(join(SRC, 'telegram/review.ts'))).toMatch(/NOTICE_PREFIXES\.lockdown[\s\S]*lockdownNow\(/);
+  });
+
   it('has one caller of clearLockdown in the source, the /unlock handler', () => {
     const callers = sources(SRC)
       .filter((path) => /\bclearLockdown\(/.test(code(path).replace(/export async function clearLockdown\(/, '')))
@@ -303,7 +320,8 @@ describe.each(['switch', 'override'] as const)('critical invariant 2: under the 
   it('refuses every registered admin command in the venue, and writes nothing', async () => {
     const { harness } = await locked();
     const { adminCommands } = registrationsOf(harness);
-    expect(adminCommands).toEqual([...REVIEW_ADMIN_COMMANDS]);
+    expect(adminCommands).toEqual([...ADMIN_COMMANDS]);
+    expect(adminCommands).toEqual(expect.arrayContaining(['attach', 'repost', 'halt', 'resume']));
     const before = await snapshot(harness.db);
     for (const name of adminCommands) {
       const from = harness.telegram.calls.length;
@@ -352,11 +370,78 @@ describe.each(['switch', 'override'] as const)('critical invariant 2: under the 
   it("keeps a keyholder's Lockdown button and /open working", async () => {
     const { harness, pending } = await locked();
     const { keyholderCommands } = registrationsOf(harness);
-    expect(keyholderCommands).toEqual([...REVIEW_KEYHOLDER_COMMANDS]);
+    expect(keyholderCommands).toEqual([...KEYHOLDER_COMMANDS]);
     await harness.send(buttonPress(IDS.keyholder, noticeData({ kind: 'lockdown' }), { chatId: IDS.keyholder, messageId: 1, chatType: 'private' }));
     expect(await isLockedDown(harness.config, harness.db)).toBe(true);
     await harness.send(privateMessage(IDS.keyholder, '/open'));
     expect(harness.textsTo(IDS.keyholder).at(-1)).toContain(`<code>${pending}</code>`);
+  });
+});
+
+describe('critical invariant 2: each lockdown entry point runs the immediate retention pass', () => {
+  const spied = (variables: Readonly<Record<string, string>> = {}) => {
+    const passes: number[] = [];
+    const harness = botHarness({
+      variables,
+      retentionNow: (deps) => {
+        passes.push(deps.clock.now());
+        return Promise.resolve();
+      },
+    });
+    return { harness, passes };
+  };
+
+  it("a keyholder's /lockdown: the switch set, then the pass, and again when it was set already", async () => {
+    const { harness, passes } = spied();
+    await harness.send(privateMessage(IDS.keyholder, '/lockdown'));
+    expect(await isLockedDown(harness.config, harness.db)).toBe(true);
+    expect(passes).toEqual([NOW]);
+    await harness.send(privateMessage(IDS.secondKeyholder, '/lockdown'));
+    expect(passes).toEqual([NOW, NOW]);
+  });
+
+  it("the Lockdown button of an approval notice, under the override too", async () => {
+    for (const variables of [{}, { LOCKDOWN: '1' }]) {
+      const { harness, passes } = spied(variables);
+      harness.telegram.seedMessage(IDS.keyholder, { message_id: 1, text: 'a notice' });
+      await harness.send(buttonPress(IDS.keyholder, noticeData({ kind: 'lockdown' }), { chatId: IDS.keyholder, messageId: 1, chatType: 'private' }));
+      expect(await harness.db.first(LOCKDOWN_ROW)).toEqual({ rows: 1 });
+      expect(passes).toEqual([NOW]);
+    }
+  });
+
+  it('a pass that fails leaves the switch set, the failure logged by class', async () => {
+    const harness = botHarness({ retentionNow: () => Promise.reject(new Error(`a pass over ${REPORTED_URL}`)) });
+    await harness.send(privateMessage(IDS.keyholder, '/lockdown'));
+    expect(await isLockedDown(harness.config, harness.db)).toBe(true);
+    expect(harness.textsTo(IDS.keyholder)).toEqual([t('en', 'lockdown.on')]);
+    expect(harness.log.records()).toEqual([
+      { level: 'info', event: 'lockdown.set' },
+      { level: 'error', event: 'retention.failed', errorClass: 'Error' },
+    ]);
+  });
+
+  it("runs no pass for anyone else's /lockdown or Lockdown press", async () => {
+    const { harness, passes } = spied();
+    await harness.send(privateMessage(IDS.admin, '/lockdown'));
+    await harness.send(groupMessage(IDS.adminChat, IDS.keyholder, '/lockdown'));
+    await harness.send(buttonPress(IDS.admin, noticeData({ kind: 'lockdown' }), { chatId: IDS.admin, messageId: 1, chatType: 'private' }));
+    expect(passes).toEqual([]);
+    expect(await isLockedDown(harness.config, harness.db)).toBe(false);
+  });
+});
+
+describe.each(['switch', 'override'] as const)("critical invariant 2: under the lockdown %s, the scheduler's keyholder commands", (layer) => {
+  it("keep a keyholder's /halt and /attach working, in the keyholder's own chat", async () => {
+    const harness = botHarness(layer === 'override' ? { variables: { LOCKDOWN: '1' } } : {});
+    if (layer === 'switch') await setLockdown(harness.db, harness.clock);
+    await harness.send(privateMessage(IDS.keyholder, '/halt'));
+    expect(await harness.db.first(sql`SELECT count(*) AS n FROM meta WHERE key = 'halted'`)).toEqual({ n: 1 });
+    await harness.send(privateMessage(IDS.secondKeyholder, `/attach ${REPORT_ID} 5`));
+    expect(harness.textsTo(IDS.keyholder)).toEqual([t('en', 'halt.on')]);
+    expect(harness.textsTo(IDS.secondKeyholder)).toEqual([t('en', 'attach.not_found')]);
+    // Kept, as every keyholder command: the keyholder's chat is their operations log.
+    expect(harness.telegram.count('deleteMessage')).toBe(0);
   });
 });
 

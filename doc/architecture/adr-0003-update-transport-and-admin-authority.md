@@ -103,8 +103,10 @@ Both transports, one rule.
   reads the same `meta` row.
 - Keyholder alerts: a bot cannot start a private chat, so every keyholder
   sends `/start` once at go-live and the bot confirms "you will receive
-  alerts"; a failed alert is logged by class and retried by the next
-  reconciliation, never dropped.
+  alerts"; a failed alert is logged by class and counted: an alert counts
+  as delivered once one keyholder got it (one delivered of several
+  suffices, as for the approval notice), and one that reached no keyholder
+  is sent again by the next reconciliation.
 - Membership is not authority. The NGO-group membership check
   (`getChatMember` on the update's user id, the bot as a plain member in
   privacy mode, never a group admin) only selects a reporter's intake

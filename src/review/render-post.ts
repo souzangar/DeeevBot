@@ -32,7 +32,10 @@
 // as one character, UTF-16 units, which is never fewer), and postProblems()
 // says whether a text is too long or carries a tappable link off the two
 // lists (outgoingLinkProblems(); code text is not tappable, which is why
-// every target link is checked on its own above).
+// every target link is checked on its own above). plainText() is the text a
+// Message carries once Telegram has parsed the HTML (the tags gone, the
+// entities decoded, trimmed), which /attach compares with the stored post
+// (src/broadcast/attach.ts) through samePlainText().
 import { t, type Locale } from '../i18n/index';
 import { instructionKey, PLATFORM_NAME_KEYS } from '../platforms/instructions';
 import { isSendableTargetLink, outgoingLinkProblems, telegramTarget, type OutgoingLinkProblem } from '../platforms/link-policy';
@@ -154,6 +157,37 @@ const TAG = /<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
 
 /** The length Telegram counts for the Telegram-HTML `html`: tags removed, each entity one character. */
 export const visibleLength = (html: string): number => html.replace(TAG, '').replace(ENTITY, '_').length;
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = Object.freeze({ lt: '<', gt: '>', amp: '&', quot: '"' });
+
+/** The character an entity of the ENTITY form stands for; the entity itself when it names no code point. */
+const decodeEntity = (entity: string): string => {
+  const body = entity.slice(1, -1);
+  const named = NAMED_ENTITIES[body];
+  if (named !== undefined) return named;
+  const codePoint = body.startsWith('#x') ? Number.parseInt(body.slice(2), 16) : Number.parseInt(body.slice(1), 10);
+  return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+};
+
+/**
+ * The text a Message holds once Telegram has parsed the Telegram-HTML
+ * `html`: every tag removed, then each entity decoded (the four named ones
+ * Telegram supports, and every numeric one), then trimmed of white space at
+ * either end, as Telegram trims a message's text.
+ */
+export const plainText = (html: string): string => html.replace(TAG, '').replace(ENTITY, decodeEntity).trim();
+
+/** A text as samePlainText() compares it: its format characters (bidi isolates, joiners) left out, NFC, trimmed. */
+const comparable = (text: string): string => text.replace(/\p{Cf}/gu, '').normalize('NFC').trim();
+
+/**
+ * Whether `messageText`, a Message's text as Telegram returns it, is the
+ * text of the Telegram-HTML `html`: plainText(), compared on every visible
+ * character. Format characters (the bidi isolates around a Persian post's
+ * code text, joiners) are left out on both sides, since how Telegram's own
+ * input cleaning treats them is not established offline.
+ */
+export const samePlainText = (messageText: string, html: string): boolean => comparable(messageText) === comparable(plainText(html));
 
 /** What keeps a text from being sent (see the header); both empty when nothing does. */
 export interface TextProblems {

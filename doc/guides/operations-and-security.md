@@ -153,7 +153,7 @@ before polling (the two are mutually exclusive).
 | The broadcast channel (`BROADCAST_CHAT_ID`, a channel, negative id) | the only posting administrator; the keyholder owns the channel; no human admin is among its administrators | one post per approved report, edited at retraction and closure; joining is the consent and leaving the opt-out; a channel hides its subscribers from non-administrators, which a group never does, so a seized admin phone lists nobody; the bot stores no ids for its readers |
 | Admin review venue (`ADMIN_CHAT_ID`, a private supergroup) | administrator holding `can_delete_messages`; auto-delete enabled | review cards, prompts and replies are deleted within 48 hours of their message (the Bot API's limit); the keyholder is not in it |
 | The NGO's membership group (`MEMBERSHIP_CHAT_ID`) | a plain member in privacy mode, never an administrator; hidden members on; the admins out of its administrator list | an administrator bot receives every group message, which would route the members' chatter through the Worker and burn the request meter; membership is checked with `getChatMember` on the update's user id to set a reporter's limits, and never stored. The owner's go-live probe verifies that `getChatMember` answers for a plain-member bot; if it does not, `MEMBERSHIP_CHAT_ID` becomes the channel (a value change). Hidden members protect only people who never write: the group's history exposes its authors, which is outside the bot's control and the owner's decision |
-| Keyholders' private chats | ordinary private chats, opened by the keyholder's `/start` | alerts, the approval notices with Cancel and Lockdown, `/lockdown`, `/unlock`, `/retract`, `/attach`, `/open`, `/stats` |
+| Keyholders' private chats | ordinary private chats, opened by the keyholder's `/start` | alerts, the approval notices with Cancel and Lockdown, `/lockdown`, `/unlock`, `/retract`, `/attach`, `/halt`, `/open`, `/stats` |
 | Reporters' private chats | ordinary private chats | intake, its one self-deleting acknowledgement, the hotline links for a "sexual content involving a minor" label; nothing else, ever |
 
 There are no subscriptions and no direct-message broadcasts; members read
@@ -189,8 +189,13 @@ the channel.
 - `/halt` holds every post and every closure edit for every report until
   an admin's `/resume`; retraction edits still run, since they remove
   harm. Use it when a retraction is coming, when an alert is not
-  understood, or when anything about a post looks wrong. Neither command
-  touches a lockdown.
+  understood, or when anything about a post looks wrong. An admin types
+  both in the review venue; a keyholder may send `/halt` too, in their own
+  chat with the bot, under lockdown as well (useful before an `/unlock`,
+  to keep the posts held until the admins have looked), but only an
+  admin's `/resume` lifts it. The post's claim binds `/halt` in its own
+  statement, so a `/halt` sent while a run is under way still stops its
+  post. Neither command touches a lockdown.
 - No message about a report reaches the channel without an approval
   record carrying the approving admin's id, the timestamp and the start
   time (critical invariant 1); the grace period is that start time.
@@ -204,12 +209,43 @@ the channel.
   not found) reverts the claim, abandons the job, sets `needs_attention`
   and alerts the keyholders: check the bot's rights in the channel.
 - A timeout, a network error or a 5xx is ambiguous and is never retried:
-  the report stays `posting` without a message id and is alerted once. A
+  the report stays `posting` without a message id, its status card says
+  the post may or may not be in the channel, and it is alerted once. A
   human checks the channel: if the post is there, `/attach <id> <message
-  id or t.me/c/... link of the broadcast channel>` (the bot verifies the
-  message is this report's own post before accepting); if it is not,
-  `/repost <id>` (admins only, never under lockdown, and only while no
-  message id exists). There is no blind "post again".
+  id or t.me/c/... link of the broadcast channel>`, typed in the venue by
+  an admin or by a keyholder in their own chat (under lockdown by a
+  keyholder only); if it is not, `/repost <id>` (admins only, in the
+  venue, never under lockdown, only while no message id exists, and only
+  two minutes or more after the bot started the send, which has ended by
+  then). There is no blind "post again".
+- How `/attach` checks the message before it records anything: a message
+  that is already another report's post is refused at once; otherwise the
+  bot briefly sets a placeholder button ("…", which counts nothing) on that
+  message, which makes Telegram return the message, and accepts it only
+  when its text is exactly this report's post, it was sent within the
+  minute the bot was sending this report's post, and no other report was
+  being posted then. The post's own "I reported it" button is then put
+  back (which also repairs a post whose button was relabelled or removed);
+  anything else is refused and the placeholder taken off again, so the
+  message is left as it was. If that removal is cut off, the placeholder
+  can stay on a wrong message until the next `/attach` of it removes it;
+  the text and the date decide, never a button. The answer names the
+  message id it recorded, and a refusal says which test failed: the
+  message's text is not this report's post, or its date lies outside the
+  seconds the bot was sending it (or another report was being posted
+  then). Once recorded, the report is `posted`, its button counts, and its
+  closure or retraction edits that message.
+- The text comparison is validated against Telegram itself by the deployed
+  probe's fidelity check (ADR 0004, "The deployed probe", step 6): that
+  check must have passed before `/attach` is relied on, since a systematic
+  mismatch would refuse every real post as a text mismatch.
+- A bot post must never be edited by a human in the channel: an edited
+  post cannot be attached (its text no longer matches) and must not be
+  re-posted.
+- When the post is recorded, by the run or by `/attach`: the review card,
+  which shows the links, is deleted from the venue (edited to "posted"
+  when it cannot be), the status card says "posted", and each keyholder's
+  notice the bot remembers is edited to "posted" without links.
 - Retraction and closure edit the post in place; the terminal status is
   written only when the edit succeeds; an edit that cannot be made leaves
   the report in `closing` or `retracting` and alerts (admin review
@@ -223,10 +259,14 @@ the channel.
 On the Free plan an operation that hits a daily cap fails until 00:00
 UTC. The defined behaviour:
 
-1. A cron run that meets a cap error stops without writing; the next
-   minute's run picks the due work up again once the reset has passed;
-   the keyholders (and the venue, when not locked down) are alerted once.
-   Nothing is rescheduled to a fixed time of day.
+1. A cron run that meets a cap error, or any storage failure, stops
+   where it is without writing; the next minute's run picks the due work
+   up again once the reset has passed. The keyholders are alerted, and
+   never the venue (with the store down the bot cannot read whether it is
+   locked down, and never alerts the venue on a guess): at most once a
+   UTC day from one Worker instance, and only on a 15th minute, so a store
+   that stays down cannot flood them. Nothing is rescheduled to a fixed
+   time of day.
 2. A cap error between a post's send and its id write is the ambiguous
    case of 3.2: an alert, never a retry.
 3. Nobody does anything destructive: no re-approval, no restart.
@@ -291,12 +331,16 @@ Two layers, either of which locks the bot:
 
 Under either layer: intake answers reporters "temporarily unavailable"
 and stores nothing; presses are ignored; every admin action is refused;
-no post or edit job runs except a keyholder's retraction edit; the tick
-alerts the keyholders once and still runs retention, and `/lockdown`
-triggers an immediate retention pass, which reduces exposure; alerts go
+no post or edit job runs except a keyholder's retraction edit; the run
+alerts the keyholders once (within a minute of a keyholder's `/lockdown`
+or Lockdown button, and otherwise, the `LOCKDOWN` secret included, at the
+next quarter hour, again every quarter hour until a keyholder got it)
+and still runs retention, and both `/lockdown` and the Lockdown button
+trigger an immediate retention pass, which reduces exposure; alerts go
 to the keyholders by direct message, never to the venue, which is
 assumed compromised. A keyholder may still run `/open`, `/stats`,
-`/attach` and `/retract <id>`. The Node port reads the same `meta` row.
+`/attach`, `/halt` and `/retract <id>`; nobody may `/repost`. The Node port
+reads the same `meta` row.
 The admins see refusals and nothing else (admin review runbook, section
 10).
 
@@ -345,11 +389,17 @@ is throttled to 1 report per day; blocks persist.
   edits), then, by the minute: reconciliation every 15th minute, the
   retention job at 00:15 UTC, the monthly stats snapshot on the first day
   at 06:00 UTC. The Node port runs the same function on a timer.
-- Reconciliation re-enqueues a missing edit job, alerts a `posting` row
-  without an id past two minutes and every `needs_attention` row once,
-  finalizes a terminal row whose finalization batch failed, and never
-  finalizes a report whose post is unaddressed. Alerts go to the
-  keyholders and, when not locked down, to the venue too.
+- Reconciliation, every 15th minute: flags a `posting` row without an id
+  past two minutes, and an approved report whose post is 30 minutes
+  overdue unless `/halt`, the pause or a lockdown explains it;
+  re-enqueues a missing edit job; finalizes a terminal row whose
+  finalization batch failed; never finalizes a report whose post is
+  unaddressed; and sends ONE alert naming the flagged reports not yet
+  alerted, at most five at a time, to the keyholders and, when not locked
+  down, to the venue too. A report is alerted once: an alert counts as
+  delivered once one keyholder got it (a keyholder who blocked the bot or
+  never sent `/start` is counted and logged, and holds back nothing), and
+  one that reached no keyholder is sent again at the next quarter hour.
 - The retention job: drafts older than 24 hours; prompts older than 24
   hours; pending reports older than 30 days (expired, no decision);
   rejected and routed rows 30 days after the decision; posted reports 90
@@ -494,6 +544,9 @@ Go-live (blocked until the keyholder exists):
       `callback_query` only, low max_connections, pending updates dropped
       (2.1)
 - [ ] The single cron scheduled (5)
+- [ ] The deployed per-update probe run once on a throwaway Worker, its
+      fidelity check passed and its CPU time and subrequest counts
+      recorded (ADR 0004, "The deployed probe", which has the procedure)
 - [ ] Observability off unless debugging (4)
 - [ ] The lockdown and wipe procedures read by the keyholder (3.6, 7)
 
