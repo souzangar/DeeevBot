@@ -14,19 +14,25 @@
 // - rule 6: the loaded object is not printable (JSON.stringify and
 //   util.inspect both render it as CONFIG_REDACTED), and a failed load throws
 //   an AppError CONFIG_INVALID that names the offending variables without
-//   echoing any value. An environment that defines DEBUG, with any value,
-//   the empty one included, is refused: grammY bundles the `debug` package,
-//   which reads process.env.DEBUG, and under nodejs_compat the runtime
-//   copies every variable and secret into process.env, so DEBUG would switch
-//   on grammY's own console lines, past the redacting logger.
+//   echoing any value. An environment that defines DEBUG, NODE_DEBUG or
+//   NODE_DEBUG_NATIVE, with any value, the empty one included, is refused:
+//   grammY bundles the `debug` package, which reads process.env.DEBUG, and
+//   Node reads NODE_DEBUG and NODE_DEBUG_NATIVE for its own debug lines,
+//   NODE_DEBUG=fetch or undici printing every Bot API request line, the
+//   token in its path; under nodejs_compat the runtime copies every variable
+//   and secret into process.env, and the Node port hands process.env to this
+//   loader whole, so each of them would write to the console past the
+//   redacting logger. The port refuses before any request is made.
 // The posts go to one channel, BROADCAST_CHAT_ID, and only to links on the
 // exact hosts of ALLOWED_LINK_HOSTS. VENUE_LOCALE is the one language of
 // every message the bot writes in the admin review venue, whoever acts, so
 // the venue's text reveals no admin's client language. LOCKDOWN is the keyholder's override
 // (`wrangler secret put LOCKDOWN` with the value 1), which no Telegram
 // command can clear.
-// The Worker reads its configuration through configFor(env) in
-// src/config/memo.ts, which parses once per isolate per env object.
+// SQLITE_PATH is the Node port's alone (src/node.ts): the SQLite file it
+// keeps its database in; the Worker never reads it and never needs it.
+// The Worker and the Node port read their configuration through
+// configFor(env) in src/config/memo.ts, which parses once per env object.
 import { z } from 'zod';
 import { AppError } from '../errors/app-error';
 
@@ -48,6 +54,8 @@ const PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
 const BOT_USERNAME = /^[A-Za-z0-9_]{5,32}$/;
 /** At least one character that is not whitespace. */
 const NOT_BLANK = /\S/;
+/** Where the Node port keeps its SQLite file unless SQLITE_PATH says otherwise: relative to its working directory. */
+export const DEFAULT_SQLITE_PATH = './data/div-report.sqlite';
 /** One ALLOWED_LINK_HOSTS entry's alphabet: lowercase letters, digits, dots and hyphens; no scheme, path or port. */
 const HOST_ALPHABET = /^[a-z0-9.-]+$/;
 /** One label of a hostname: 1 to 63 characters, no hyphen at either end. */
@@ -144,6 +152,7 @@ const envSchema = z.object({
   VENUE_LOCALE: z.enum(['fa', 'en']).default('fa'),
   MARKS_PER_DAY: integer(0, 1_000_000).default(20_000),
   MARKS_PER_REPORT: integer(0, 1_000_000).default(5_000),
+  SQLITE_PATH: z.string().regex(NOT_BLANK).default(DEFAULT_SQLITE_PATH),
 });
 
 type VariableName = keyof typeof envSchema.shape;
@@ -168,6 +177,7 @@ const REQUIREMENTS: Readonly<Record<VariableName, string>> = {
   VENUE_LOCALE: 'optional; fa or en (default fa), the language of the admin review venue',
   MARKS_PER_DAY: 'an integer from 0 to 1000000 (default 20000)',
   MARKS_PER_REPORT: 'an integer from 0 to 1000000 (default 5000)',
+  SQLITE_PATH: `optional; the Node port's SQLite file, not blank (default ${DEFAULT_SQLITE_PATH}); the Worker never reads it`,
 };
 
 const isVariableName = (name: string): name is VariableName => Object.hasOwn(REQUIREMENTS, name);
@@ -175,6 +185,9 @@ const isVariableName = (name: string): name is VariableName => Object.hasOwn(REQ
 /** The variables an environment must not define at all, with why: any value is refused. */
 const FORBIDDEN: Readonly<Record<string, string>> = {
   DEBUG: "DEBUG would switch on grammY's own logging past the redacting logger",
+  NODE_DEBUG:
+    "NODE_DEBUG would switch on Node's own debug lines past the redacting logger, with fetch or undici every Bot API request and the token in its path",
+  NODE_DEBUG_NATIVE: "NODE_DEBUG_NATIVE would switch on Node's native debug lines past the redacting logger",
 };
 
 /** Why `name` must not be set, if it is one of FORBIDDEN. */
@@ -217,6 +230,8 @@ export interface Config {
   readonly marksPerDay: number;
   /** The cap on recorded "I reported it" presses for one report. */
   readonly marksPerReport: number;
+  /** The Node port's SQLite file (src/node.ts); the Worker never reads it. */
+  readonly sqlitePath: string;
   /** JSON.stringify calls this: the configuration serialises as CONFIG_REDACTED. */
   toJSON(): string;
 }
@@ -243,8 +258,9 @@ const configInvalid = (variables: readonly string[]): AppError => {
  * configuration. An empty value counts as absent, so an optional variable
  * left blank in .dev.vars takes its default. Throws an AppError
  * CONFIG_INVALID whose `variables` lists the offending names, sorted; an
- * environment that defines DEBUG, with any value, the empty one included,
- * is refused the same way, naming DEBUG and why; a configuration whose
+ * environment that defines DEBUG, NODE_DEBUG or NODE_DEBUG_NATIVE, with any
+ * value, the empty one included, is refused the same way, naming each and
+ * why; a configuration whose
  * ADMIN_IDS and KEYHOLDER_IDS share an id is refused the same way, naming
  * both.
  */
@@ -285,6 +301,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     venueLocale: values.VENUE_LOCALE,
     marksPerDay: values.MARKS_PER_DAY,
     marksPerReport: values.MARKS_PER_REPORT,
+    sqlitePath: values.SQLITE_PATH,
     // Own enumerable properties on purpose: a spread or Object.assign copy
     // carries them along and stays redacted.
     toJSON: (): string => CONFIG_REDACTED,

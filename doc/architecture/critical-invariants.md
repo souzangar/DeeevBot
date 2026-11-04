@@ -262,7 +262,15 @@ on a full store leaves the aggregate rows and `meta` alone), and extended
 the lockdown spec (a keyholder's `/retract` and `/stats` working under
 either layer, the retraction's edit running, the admin's closure commands
 and buttons refused, retention running, the snapshot kept from the venue)
-and the log spec (the closure unit's failure paths). The remaining tests are
+and the log spec (the closure unit's failure paths). Unit U7, the Node
+port, added `test/invariants/polling-authenticity.test.ts` (rule 2 on the
+port: only the webhook boundary and long polling hand updates to the bot,
+nothing in `src/` opens a server or listens on a port, the port composes the
+bot exactly as the Worker does, and the import graphs of the Worker's entry
+and of the deployed probe hold nothing of the port, each scan probed with
+planted sources) and extended `test/invariants/config-redaction.test.ts`
+(rule 6: `NODE_DEBUG` and `NODE_DEBUG_NATIVE`, Node's own debug switches,
+refused like `DEBUG`, with no value echoed). The remaining tests are
 written in the same change as the module that implements each rule, under
 the module map in ADR 0006; a rule whose test is still missing is listed
 in that change's commit body.

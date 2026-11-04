@@ -8,7 +8,7 @@
 // The later units' tests rest on this fake, so its behaviour is pinned here.
 import { Api, GrammyError, HttpError } from 'grammy';
 import type { Message, Update } from 'grammy/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FAILURES, fakeBotApi, rateLimited, type FakeOutcome } from '../../test/fakes/bot-api';
 import { API_METHODS } from '../privacy/logger';
 import { createBotApi } from './api';
@@ -119,6 +119,60 @@ describe('the fake Bot API: envelopes and recording', () => {
     expect(await api.deleteWebhook({ drop_pending_updates: true })).toBe(true);
   });
 
+  describe('long polling (getUpdates with a timeout)', () => {
+    const update = (id: number) => ({ update_id: id }) as Update;
+
+    it('holds a getUpdates until an update is queued, then answers with it at once', async () => {
+      const { telegram, api } = setup();
+      const held = api.getUpdates({ timeout: 30 });
+      await vi.waitFor(() => expect(telegram.waitingForUpdates()).toBe(1));
+      telegram.queueUpdates(update(7));
+      expect(await held).toEqual([update(7)]);
+      expect(telegram.waitingForUpdates()).toBe(0);
+    });
+
+    it('answers at once when an update is queued already, or without a timeout', async () => {
+      const { telegram, api } = setup();
+      telegram.queueUpdates(update(8));
+      expect(await api.getUpdates({ timeout: 30 })).toEqual([update(8)]);
+      expect(await api.getUpdates({ timeout: 0 })).toEqual([]);
+      expect(telegram.waitingForUpdates()).toBe(0);
+    });
+
+    it('answers nothing once the timeout passes with nothing queued', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const { telegram, api } = setup();
+        const held = api.getUpdates({ timeout: 5 });
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(telegram.waitingForUpdates()).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await held).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ends the wait when its request is aborted, as an aborted fetch does', async () => {
+      const { telegram, api } = setup();
+      const controller = new AbortController();
+      // grammY types the signal with its abort-controller polyfill; the runtime's own is what it receives.
+      const held = failureOf(api.getUpdates({ timeout: 30 }, controller.signal as unknown as Parameters<typeof api.getUpdates>[1]));
+      await vi.waitFor(() => expect(telegram.waitingForUpdates()).toBe(1));
+      controller.abort();
+      expect(await held).toBeInstanceOf(HttpError);
+      expect(telegram.waitingForUpdates()).toBe(0);
+    });
+
+    it('drops the updates below the offset, as Telegram confirms them, and answers at most `limit`', async () => {
+      const { telegram, api } = setup();
+      telegram.queueUpdates(update(1), update(2), update(3), update(4));
+      expect(await api.getUpdates({ offset: 2, limit: 2 })).toEqual([update(2), update(3)]);
+      expect(await api.getUpdates({ offset: 4 })).toEqual([update(4)]);
+      expect(await api.getUpdates()).toEqual([]);
+    });
+  });
+
   it('answers getChatMember as configured, "left" by default, and "user not found" on request', async () => {
     const { telegram, api } = setup();
     expect((await api.getChatMember(GROUP, USER)).status).toBe('left');
@@ -207,6 +261,20 @@ describe('the fake Bot API: scripted failures', () => {
     expect(error).toBeInstanceOf(GrammyError);
     expect((error as GrammyError).error_code).toBe(code);
     expect((error as GrammyError).description).toBe(description);
+  });
+
+  it.each([
+    ['409 another getUpdates', FAILURES.conflict, 409, 'Conflict: terminated by other getUpdates request; make sure that only one bot instance is running'],
+    ['409 a webhook is set', FAILURES.webhookActive, 409, "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first"],
+    ['401 the token refused', FAILURES.unauthorized, 401, 'Unauthorized'],
+  ])("surfaces getUpdates' %s as a GrammyError with Telegram code and text", async (_label, outcome, code, description) => {
+    const { telegram, api } = setup();
+    telegram.fail({ method: 'getUpdates' }, outcome, 1);
+    const error = await failureOf(api.getUpdates({ timeout: 30 }));
+    expect(error).toBeInstanceOf(GrammyError);
+    expect((error as GrammyError).error_code).toBe(code);
+    expect((error as GrammyError).description).toBe(description);
+    expect(await api.getUpdates()).toEqual([]);
   });
 
   it('surfaces a 429 with its retry_after', async () => {

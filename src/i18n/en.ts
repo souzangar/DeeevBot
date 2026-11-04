@@ -316,6 +316,11 @@ export const en = {
   'alert.attention.other': '<code>{id}</code> ({state}): it needs a human. See the alerts before this one.',
   'alert.lockdown': "<b>The bot is locked down.</b> Reports are not taken, presses are not counted, every admin action is refused, and nothing is posted or edited but a keyholder's retraction. A keyholder lifts the switch with /unlock; the <code>LOCKDOWN</code> override only with wrangler.",
   'alert.storage': '<b>Storage refused.</b> The bot could not read or write its database, so nothing is posted or edited until it works again; a Free-plan daily cap resets at 00:00 UTC. To stop the bot without the database, set the <code>LOCKDOWN</code> override with wrangler.',
+  // The Node port (unit U7, src/telegram/polling.ts): to the keyholders when
+  // a webhook set for the bot ends the port's long polling and the port
+  // yields to it.
+  'alert.port_yielded':
+    '<b>The fallback port has stopped.</b> A webhook was set for the bot, so Telegram now sends its updates there, and the port has yielded: it does not restart by itself. If the Worker took the bot back, nothing else is needed. If nobody meant to set a webhook, re-issue the token from the BotFather owner account.',
   // The closure and retraction unit (U6, src/broadcast/closure.ts,
   // retraction.ts, concluding.ts and stats.ts, src/privacy/retention.ts,
   // src/telegram/closing.ts): the status card's closure and retraction

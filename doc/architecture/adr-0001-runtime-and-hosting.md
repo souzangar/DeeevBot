@@ -107,7 +107,9 @@ model is [Threat model: seizure](../product/threat-model-seizure.md).
   SQLite file) is deployed with an empty database, because nothing in the
   recovery story may depend on a Cloudflare account that is already
   suspended. A yearly drill proves the port starts and receives updates
-  ([operations and security](../guides/operations-and-security.md)).
+  ([operations and security](../guides/operations-and-security.md); the
+  procedure and the drill are the
+  [fallback drill runbook](../guides/fallback-drill.md)).
 - Open measurement for the MVP plan: the CPU of the per-update work on
   the webhook path (configuration memo, HMAC, grammY parse, render), by a
   deployed probe.
@@ -133,3 +135,9 @@ same day (no direct-message broadcasts, no member or reporter identity, a
 single post per approved report): the meters' design consequences without
 a Durable Object, the over-limit behaviour as ADR 0004's cap contract, the
 capacity statement simplified, and the threat model of a seizure.
+
+Amended 2026-11-04 (Phase 3, unit U7): the Node port as built, `src/node.ts`
+in Docker (`Dockerfile`, `docker-compose.yml`): the same bot over long
+polling, a minute loop calling the same run, the same migrations on a
+SQLite file; its deployment, the switch back and the yearly drill are the
+[fallback drill runbook](../guides/fallback-drill.md).

@@ -5,12 +5,19 @@
 // load runs nothing), dispatches on the cron expression and hands the run to
 // waitUntil, which never rejects. The same entry runs in the Workers runtime
 // on D1 in test/workers/webhook.test.ts and test/workers/scheduled.test.ts.
+// Last, the module graph wrangler bundles from this entry (and from the
+// deployed probe's, src/probe.ts) holds nothing of the Node port: not its
+// entry or module hook, not long polling or the minute loop, not the
+// node:sqlite adapter or the migrations runner, not the runner package and
+// no Node-only built-in, read from the sources' own imports, type-only ones
+// included.
 import { describe, expect, it, vi } from 'vitest';
 import { enqueuePost } from './broadcast/jobs';
 import { SEND_TIMEOUT_SECONDS } from './broadcast/post';
 import { sql } from './db/sql';
 import { FAILURES } from '../test/fakes/bot-api';
 import { migratedDatabase } from '../test/support/database';
+import { importGraph, NODE_ONLY_MODULES, NODE_PORT_FILES } from '../test/support/module-graph';
 import { insertApproval, insertReport } from '../test/support/review-rows';
 import { fakeBotApi } from '../test/fakes/bot-api';
 import { recordingLogger } from '../test/fakes/logger';
@@ -161,5 +168,21 @@ describe('the cron handler', () => {
     expect(outcome).toMatchObject({ post: 'skipped', stopped: 'storage' });
     expect(telegram.calls).toEqual([]);
     expect(log.records()).toEqual([{ level: 'error', event: 'tick.storage_failed', errorClass: 'AppError', errorCode: 'STORAGE_FAILURE' }]);
+  });
+});
+
+describe("the Worker's module graph: nothing of the Node port", () => {
+  it.each(['worker.ts', 'probe.ts'])('%s imports none of the Node port\'s files and no Node-only module', (entry) => {
+    const { files, external } = importGraph(entry);
+    expect(files).toEqual(expect.arrayContaining([entry, 'telegram/bot.ts', 'broadcast/tick.ts', 'db/d1.ts']));
+    expect(files.filter((file) => NODE_PORT_FILES.includes(file))).toEqual([]);
+    expect(external.filter((name) => NODE_ONLY_MODULES.includes(name))).toEqual([]);
+  });
+
+  it("sees the Node port's own graph, so the check is not vacuous", () => {
+    const { files, external } = importGraph('node.ts');
+    expect(files).toEqual(expect.arrayContaining([...NODE_PORT_FILES.filter((file) => file !== 'node-hooks.ts'), 'telegram/bot.ts', 'broadcast/tick.ts']));
+    expect(external).toEqual(expect.arrayContaining(['@grammyjs/runner', 'node:sqlite', 'node:fs']));
+    expect(importGraph('node-hooks.ts').external).toEqual(['node:module']);
   });
 });

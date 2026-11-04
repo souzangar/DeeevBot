@@ -93,6 +93,13 @@ describe('classifyTelegramError', () => {
     expect(classifyTelegramError(grammyError(403, 'Forbidden: Bot was blocked by the user')).kind).toBe('blocked');
   });
 
+  it("tells getUpdates' two 409s apart by Telegram's text: a webhook set, or another poller", () => {
+    expect(classifyTelegramError(grammyError(409, FAILURES.webhookActive.description))).toEqual({ code: 'TELEGRAM_PERMANENT', kind: 'webhook_active', status: 409 });
+    expect(classifyTelegramError(grammyError(409, FAILURES.conflict.description))).toEqual({ code: 'TELEGRAM_PERMANENT', kind: 'polling_conflict', status: 409 });
+    expect(classifyTelegramError(grammyError(400, FAILURES.webhookActive.description)).kind).toBe('permanent');
+    expect(classifyTelegramError(grammyError(409, 'Conflict: something else')).kind).toBe('permanent');
+  });
+
   it('classifies every other 4xx as permanent', () => {
     for (const code of [400, 401, 403, 404, 409]) {
       expect(classifyTelegramError(grammyError(code, 'Something else')).code).toBe('TELEGRAM_PERMANENT');

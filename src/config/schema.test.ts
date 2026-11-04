@@ -2,7 +2,7 @@
 // redaction assertions live in test/invariants/config-redaction.test.ts.
 import { describe, expect, it } from 'vitest';
 import { AppError } from '../errors/app-error';
-import { DEFAULT_LINK_HOSTS, loadConfig } from './schema';
+import { DEFAULT_LINK_HOSTS, DEFAULT_SQLITE_PATH, loadConfig } from './schema';
 
 // Fixture values are deliberately not secret-shaped: the commit gate's
 // secret-shape scan covers test files too.
@@ -35,6 +35,29 @@ const rejectedVariables = (overrides: Overrides): readonly string[] => {
   throw new Error('expected loadConfig to reject the configuration');
 };
 
+/** Node's own debug switches: each case's values, and the reason a refusal names. */
+const NODE_DEBUG_CASES: [string, [string, string][], string][] = [
+  [
+    'NODE_DEBUG',
+    [
+      ['fetch', 'fetch'],
+      ['undici', 'undici'],
+      ['a list', 'http,net,fetch'],
+      ['the empty value', ''],
+    ],
+    "NODE_DEBUG must not be set: NODE_DEBUG would switch on Node's own debug lines past the redacting logger, with fetch or undici every Bot API request and the token in its path",
+  ],
+  [
+    'NODE_DEBUG_NATIVE',
+    [
+      ['a category', 'net'],
+      ['a list', 'net,http2'],
+      ['the empty value', ''],
+    ],
+    "NODE_DEBUG_NATIVE must not be set: NODE_DEBUG_NATIVE would switch on Node's native debug lines past the redacting logger",
+  ],
+];
+
 describe('loadConfig', () => {
   it('parses a complete configuration and applies the documented defaults', () => {
     const config = load();
@@ -64,6 +87,7 @@ describe('loadConfig', () => {
     expect(config.approvalGraceMinutes).toBe(30);
     expect(config.marksPerDay).toBe(20000);
     expect(config.marksPerReport).toBe(5000);
+    expect(config.sqlitePath).toBe('./data/div-report.sqlite');
   });
 
   it('ignores variables it does not know, the removed direct-message ones included', () => {
@@ -271,6 +295,24 @@ describe('loadConfig', () => {
     });
   });
 
+  describe("SQLITE_PATH (the Node port's alone)", () => {
+    it('is ./data/div-report.sqlite when absent or empty, so the Worker never needs it', () => {
+      expect(DEFAULT_SQLITE_PATH).toBe('./data/div-report.sqlite');
+      expect(load({ SQLITE_PATH: undefined }).sqlitePath).toBe(DEFAULT_SQLITE_PATH);
+      expect(load({ SQLITE_PATH: '' }).sqlitePath).toBe(DEFAULT_SQLITE_PATH);
+    });
+
+    it('keeps any other path as given', () => {
+      expect(load({ SQLITE_PATH: '/var/lib/div-report/bot.sqlite' }).sqlitePath).toBe('/var/lib/div-report/bot.sqlite');
+      expect(load({ SQLITE_PATH: ':memory:' }).sqlitePath).toBe(':memory:');
+    });
+
+    it('rejects a value of spaces only, naming it and what it must hold', () => {
+      expect(rejectedVariables({ SQLITE_PATH: '   ' })).toEqual(['SQLITE_PATH']);
+      expect(() => load({ SQLITE_PATH: '   ' })).toThrow(/SQLITE_PATH must be optional; the Node port's SQLite file, not blank/);
+    });
+  });
+
   describe('numeric bounds', () => {
     it.each([
       ['APPROVAL_GRACE_MINUTES', 'approvalGraceMinutes', 1, 1440],
@@ -363,6 +405,31 @@ describe('loadConfig', () => {
 
     it('loads when DEBUG is absent, or present only as undefined', () => {
       expect(load({ DEBUG: undefined }).botId).toBe(1000001);
+    });
+  });
+
+  describe.each(NODE_DEBUG_CASES)("%s (Node would log past the redacting logger)", (name, values, reason) => {
+    it.each(values)('refuses an environment that defines it, with %s', (_label, value) => {
+      expect(rejectedVariables({ [name]: value })).toEqual([name]);
+    });
+
+    it('says why, beside every other failing variable, and echoes no value', () => {
+      let caught: unknown;
+      try {
+        load({ [name]: 'leaky-node-debug-value', BOT_ID: 'not-a-number' });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ code: 'CONFIG_INVALID', variables: ['BOT_ID', name] });
+      const message = (caught as AppError).message;
+      expect(message).toContain(reason);
+      expect(message).toContain('BOT_ID must be a positive integer');
+      expect(message).not.toContain('leaky-node-debug-value');
+      expect(message).not.toContain('not-a-number');
+    });
+
+    it('loads when it is absent, or present only as undefined', () => {
+      expect(load({ [name]: undefined }).botId).toBe(1000001);
     });
   });
 

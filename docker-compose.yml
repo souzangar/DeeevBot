@@ -1,0 +1,49 @@
+# An example for running the Node fallback port (doc/guides/fallback-drill.md):
+#   cp .env.example .env     # fill .env in, never .env.example; chmod 600 .env
+#   docker compose up -d --build
+#   docker compose logs -f   # port.migrated, then port.started
+# Every value comes from .env when the container starts: .env is gitignored
+# and never part of the image (critical invariant 6). LOCKDOWN is read at
+# start only: changing it takes `docker compose up -d` again (a restart).
+# The SQLite database lives in the named volume div-report-data; destroying
+# it, and switching back to the Worker (stop the port FIRST: it deletes the
+# webhook every time it starts), are in the drill runbook. After a host
+# reboot, run `docker compose up -d` again (restart: on-failure, below).
+services:
+  div-report:
+    build: .
+    image: div-report-port:local
+    env_file: .env
+    environment:
+      SQLITE_PATH: /app/data/div-report.sqlite
+    volumes:
+      - div-report-data:/app/data
+    # Long polling only goes out to api.telegram.org: no port is published.
+    # tini as PID 1, so SIGTERM reaches the port and a second one ends it.
+    init: true
+    # on-failure, not unless-stopped: a webhook set while the port runs ends
+    # its polling, and the port alerts the keyholders and exits 0, yielding
+    # the bot to the webhook; restarting it would delete that webhook again,
+    # in a loop. A failure (exit code 1) is restarted. Docker does not bring
+    # an on-failure service back after a host reboot by itself.
+    restart: on-failure
+    # The port waits for the updates being handled and the running tick, at
+    # most 50 seconds (STOP_DEADLINE_MS in src/node.ts), then ends.
+    stop_grace_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # The lines are the redacting logger's (no report data, no id); kept
+    # bounded on the host all the same.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  div-report-data:

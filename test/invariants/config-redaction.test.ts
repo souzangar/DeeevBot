@@ -3,11 +3,14 @@
 // logger or an error reporter would use, and a configuration that fails to
 // load must never echo a supplied value (the admin and keyholder
 // allowlists, the broadcast channel and the link hosts included). And an
-// environment that defines DEBUG is refused, whatever its value: grammY's
-// bundled `debug` package reads it from process.env, which the runtime fills
-// with every variable and secret under nodejs_compat, and would then write
-// its own lines to the console, past the redacting logger. The commit gate
-// runs this file on every commit (`npm run test:invariants`).
+// environment that defines DEBUG, NODE_DEBUG or NODE_DEBUG_NATIVE is refused,
+// whatever its value: grammY's bundled `debug` package reads DEBUG from
+// process.env, which the runtime fills with every variable and secret under
+// nodejs_compat and the Node port hands to the loader whole, and Node reads
+// the other two for its own debug lines (with NODE_DEBUG=fetch or undici,
+// every Bot API request, the token in its path); each would write to the
+// console, past the redacting logger. The commit gate runs this file on
+// every commit (`npm run test:invariants`).
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_REDACTED, loadConfig } from '../../src/config/schema';
@@ -112,6 +115,8 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
     ['a webhook secret outside the alphabet', { ...ENV, WEBHOOK_SECRET: 'leaky secret value' }],
     ['a missing bot token', { ...ENV, BOT_TOKEN: undefined }],
     ['a DEBUG variable', { ...ENV, DEBUG: 'leaky-debug-value' }],
+    ['a NODE_DEBUG variable', { ...ENV, NODE_DEBUG: 'leaky-node-debug-value' }],
+    ['a NODE_DEBUG_NATIVE variable', { ...ENV, NODE_DEBUG_NATIVE: 'leaky-node-debug-native-value' }],
   ])('%s', (_label, env) => {
     const error = failure(env);
     const supplied = distinctive(Object.values(env).filter((value): value is string => value !== undefined));
@@ -130,4 +135,19 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
       expect(error.message).toContain("DEBUG would switch on grammY's own logging past the redacting logger");
     },
   );
+
+  it.each(['fetch', 'undici', 'http,net,fetch', '*', ''])(
+    "refuses NODE_DEBUG=%j: Node's own debug lines would print every Bot API request, the token in its path",
+    (value) => {
+      const error = failure({ ...ENV, NODE_DEBUG: value });
+      expect(error.variables).toEqual(['NODE_DEBUG']);
+      expect(error.message).toContain("NODE_DEBUG would switch on Node's own debug lines past the redacting logger");
+    },
+  );
+
+  it.each(['net', 'net,http2', ''])("refuses NODE_DEBUG_NATIVE=%j: Node's native debug lines would bypass the redacting logger", (value) => {
+    const error = failure({ ...ENV, NODE_DEBUG_NATIVE: value });
+    expect(error.variables).toEqual(['NODE_DEBUG_NATIVE']);
+    expect(error.message).toContain("NODE_DEBUG_NATIVE would switch on Node's native debug lines past the redacting logger");
+  });
 });

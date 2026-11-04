@@ -27,9 +27,10 @@ reviewed against the plan recorded in
 configuration, the redacting logger, i18n, the clock) and the storage
 (the SQL port with its D1 and node:sqlite adapters, the D1 migrations)
 exist, as do the Telegram wiring, the intake, the admin review, the
-scheduler with its single post, and the closure unit (closure,
-retraction, retention, the monthly snapshot, the emergency wipe); the
-Node port and the go-live unit follow. On 2026-10-28 the owner narrowed the scope: no
+scheduler with its single post, the closure unit (closure, retraction,
+retention, the monthly snapshot, the emergency wipe) and the Node
+fallback port (long polling, the minute loop, SQLite, the Dockerfile and
+the drill runbook); the go-live unit follows. On 2026-10-28 the owner narrowed the scope: no
 direct-message broadcasts and no member or reporter identity in storage;
 an approved report is posted once into a configured group or channel
 (ADR 0004, ADR 0006).
@@ -50,6 +51,8 @@ npm run dry-run                   # bundle the Worker into .wrangler/dry-run, of
 npm run probe:dry-run             # bundle the deployed probe (src/probe.ts, wrangler.probe.jsonc), offline
 npm run migrate:local             # apply the D1 migrations in migrations/ to the local database
 scripts/wipe.sh [--local]         # the keyholder's emergency wipe (every table but stats and meta); never run by the gate
+npm run port                      # the Node fallback port from its TS sources (node --import ./src/node-hooks.ts src/node.ts); never with a real token outside the fallback
+docker compose up -d --build      # the port in its container; the procedure is doc/guides/fallback-drill.md
 # Stack-independent:
 bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline, globs completeness, tripwire patterns)
 bash selftest-okf/run-all.sh      # OKF docs-gate contracts
@@ -67,8 +70,12 @@ strict ESM, grammY, zod, D1 as the only store (ADRs 0001, 0002, 0004 under
 cron handler); `src/probe.ts` is the deployed per-update probe, the same
 Worker with its D1 calls and Bot API requests counted, deployed once by the
 owner under `wrangler.probe.jsonc` and never with the bot's own
-configuration (ADR 0004); the Node port's entry, `src/node.ts`, comes
-later. Module map
+configuration (ADR 0004); the Node fallback port's entry is `src/node.ts`
+(long polling through grammY's runner, a minute loop calling the same
+`tick()`, node:sqlite; it runs the TypeScript sources through Node's type
+stripping with the resolve hook `src/node-hooks.ts`:
+`node --import ./src/node-hooks.ts src/node.ts`, Node 22.18 or later;
+`doc/guides/fallback-drill.md`). Module map
 (`doc/architecture/adr-0006-data-model-and-module-layout.md`); the
 modules land unit by unit, `src/errors/`, `src/config/`, `src/privacy/`
 (logger and reporter reference), `src/i18n/` and `src/clock.ts` first,
@@ -76,10 +83,10 @@ then `src/db/` and `migrations/`:
 
 | Module | Holds | Critical path (rules) |
 |---|---|---|
-| `src/telegram/` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | yes (2, 4) |
+| `src/telegram/` | bot wiring, handlers, rendering with previews disabled, the webhook secret check, the port's long polling | yes (2, 4) |
 | `src/auth/` | the allowlist gate, the membership check | yes (2, 4) |
 | `src/review/` | report state machine, categories and routing table, approval records, grace and cancel | yes (1, 3, 7) |
-| `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains, the finalization that leaves only the aggregate row, the counts | yes (1, 5, 8) |
+| `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains (the port's minute loop), the finalization that leaves only the aggregate row, the counts | yes (1, 5, 8) |
 | `src/privacy/` | HMAC references, the redacting logger, the retention job | yes (6, 8) |
 | `src/config/` | the zod schema and loaders | yes (2, 6) |
 | `src/db/` | the `SqlDb` port and its adapters | yes (1, 8) |
@@ -89,7 +96,7 @@ then `src/db/` and `migrations/`:
 | `src/platforms/` | URL parsing, per-platform instruction keys | yes (4) |
 
 Critical paths are the globs in `.claude/devil/critical-globs.conf`
-(`src/worker.ts`, `src/probe.ts` and `src/node.ts` included). Anchor convention: every file
+(`src/worker.ts`, `src/probe.ts`, `src/node.ts` and `src/node-hooks.ts` included). Anchor convention: every file
 on a critical path carries the comment line `// @critical-path` (TypeScript)
 or `-- @critical-path` (SQL) near its top, and
 `selftest/critical-globs-completeness.sh` fails when an anchored file under

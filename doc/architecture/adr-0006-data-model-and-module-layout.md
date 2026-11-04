@@ -158,10 +158,10 @@ a pending report expires after 30 days (`expired`, outcome
 
 | Module | Holds |
 |---|---|
-| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers (the closure unit's in `closing.ts`), keyholder alerts |
+| `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers (the closure unit's in `closing.ts`), keyholder alerts, the Node port's long polling (`polling.ts`) |
 | `src/auth/` | `isAdmin`, `isKeyholder`, the membership check with the member definition, the two-layer lockdown check |
 | `src/review/` | categories and routing as data, the review card, the routing card and the status card, the report state machine with its conditional updates (approve, cancel, reject, route), approval records, grace and cancel, the admin prompts, the post's renderer, the keyholders' approval notice, the block list, the admin free-text validator |
-| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render; closure and retraction (`closure.ts`, `retraction.ts`, their shared edit and conclusion in `concluding.ts`), finalization (`finalize.ts`), the counts of `/stats`, `/budget` and the monthly snapshot (`stats.ts`) |
+| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render; closure and retraction (`closure.ts`, `retraction.ts`, their shared edit and conclusion in `concluding.ts`), finalization (`finalize.ts`), the counts of `/stats`, `/budget` and the monthly snapshot (`stats.ts`), the Node port's minute loop that calls `tick()` (`minute-loop.ts`) |
 | `src/privacy/` | HMAC references, log redaction, the retention job (`retention.ts`); the emergency wipe is `scripts/wipe.sh`, a wrangler invocation outside the Worker |
 | `src/config/` | the zod schema and loaders (a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap is refused) |
 | `src/db/` | the `SqlDb` port and its D1 and node:sqlite adapters, the Node migrations runner, the random ids |
@@ -169,7 +169,7 @@ a pending report expires after 30 days (`expired`, outcome
 | `src/errors/` | `AppError` and the catalog |
 | `src/i18n/` | the `fa` and `en` catalogs |
 | `src/platforms/` | URL parsing, the link policy (the exact hosts a post may link to), per-platform instruction keys |
-| `src/worker.ts`, `src/node.ts`, `src/clock.ts` | the Worker entry (`fetch` and `scheduled`), the Node port's entry (long polling and the minute loop over node:sqlite), the clock port |
+| `src/worker.ts`, `src/node.ts`, `src/node-hooks.ts`, `src/clock.ts` | the Worker entry (`fetch` and `scheduled`), the Node port's entry (long polling and the minute loop over node:sqlite) and its module hook (Node's type stripping resolves the extensionless imports through it), the clock port |
 
 ### Critical globs (Phase 2)
 
@@ -178,9 +178,10 @@ a pending report expires after 30 days (`expired`, outcome
 `*src/privacy/*`, `*src/config/*`, `*src/db/*`, `*migrations/*` (the root
 migrations directory), `*src/platforms/*` (the link policy lives there:
 rule 4), `*src/worker.ts` (the Worker entry) and `*src/node.ts` (the Node
-port's entry, when it lands); since then also `*src/probe.ts` (the deployed
-probe, unit U5) and `*scripts/wipe.sh` (the emergency wipe, an operator
-script outside `src/`: rule 8's wipe clause, unit U6). `src/errors/` and
+port's entry); since then also `*src/probe.ts` (the deployed probe, unit
+U5), `*scripts/wipe.sh` (the emergency wipe, an operator script outside
+`src/`: rule 8's wipe clause, unit U6) and `*src/node-hooks.ts` (the Node
+port's module hook, unit U7). `src/errors/` and
 `src/i18n/` are not critical.
 
 ### Tripwire patterns (Phase 2)

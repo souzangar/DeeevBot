@@ -20,7 +20,10 @@
 //   answers a caller may treat as non-errors ("message is not modified",
 //   "message to edit not found", "message to delete not found", "message
 //   can't be deleted") and getChatMember's "user not found", each with its
-//   own `kind`.
+//   own `kind`; and getUpdates' two 409s, which the Node port's long polling
+//   tells apart (src/telegram/polling.ts): "webhook is active", a webhook set
+//   for the bot (`webhook_active`), and "terminated by other getUpdates
+//   request", another poller on the token (`polling_conflict`).
 // - anything that is not a Bot API failure keeps its AppError code, or is
 //   UNEXPECTED.
 // Nothing here reads a payload, and the AppError made from a failure names
@@ -39,6 +42,8 @@ export type TelegramFailureKind =
   | 'message_not_found'
   | 'message_cannot_be_deleted'
   | 'user_not_found'
+  | 'webhook_active'
+  | 'polling_conflict'
   | 'transient'
   | 'permanent'
   | 'not_telegram';
@@ -68,6 +73,8 @@ const DESCRIPTIONS: readonly (readonly [number, string, TelegramFailureKind])[] 
   [400, 'user not found', 'user_not_found'],
   [400, 'member not found', 'user_not_found'],
   [400, 'participant_id_invalid', 'user_not_found'],
+  [409, 'webhook is active', 'webhook_active'],
+  [409, 'terminated by other getupdates request', 'polling_conflict'],
 ];
 
 const CODE_FOR: Readonly<Record<TelegramFailureKind, ErrorCode>> = {
@@ -79,6 +86,8 @@ const CODE_FOR: Readonly<Record<TelegramFailureKind, ErrorCode>> = {
   message_not_found: 'TELEGRAM_PERMANENT',
   message_cannot_be_deleted: 'TELEGRAM_PERMANENT',
   user_not_found: 'TELEGRAM_PERMANENT',
+  webhook_active: 'TELEGRAM_PERMANENT',
+  polling_conflict: 'TELEGRAM_PERMANENT',
   transient: 'TELEGRAM_TRANSIENT',
   permanent: 'TELEGRAM_PERMANENT',
   not_telegram: 'UNEXPECTED',

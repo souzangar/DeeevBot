@@ -152,6 +152,33 @@ export const LOG_EVENTS = [
   'retention.done',
   'retention.abandoned',
   'snapshot.sent',
+  // The Node port (unit U7, src/node.ts): its database file could not be
+  // opened, prepared or closed; the migrations applied at start (with how
+  // many were new), or one that failed, which refuses the start;
+  // deleteWebhook refused, which refuses the start too; started; stopping
+  // (a signal, or polling that ended by itself); stopped (polling ended,
+  // the running tick awaited, the database closed); a stop past its
+  // deadline; an uncaught exception or an unhandled rejection, by class.
+  // Long polling (src/telegram/polling.ts): a getUpdates that failed, which
+  // the runner retries; polling that ended by itself (a 401, another
+  // poller's 409, or retries exhausted); polling ended by a webhook set for
+  // the bot, and the keyholders' alert of it (with the counts), after which
+  // the port yields. The minute loop (src/broadcast/minute-loop.ts): a
+  // minute skipped because the run before it was still going.
+  'port.database_failed',
+  'port.migrated',
+  'port.migration_failed',
+  'port.webhook_not_deleted',
+  'port.started',
+  'port.stopping',
+  'port.stopped',
+  'port.stop_timeout',
+  'port.crashed',
+  'polling.failed',
+  'polling.stopped',
+  'polling.webhook_set',
+  'polling.webhook_alerted',
+  'tick.skipped',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 

@@ -25,7 +25,9 @@ report data to a third-party service.
   `bot.handleUpdate` under `executionCtx.waitUntil` (grammY's
   `webhookCallback` is not used: its wrapper resolves while the handling
   task runs detached, so nothing could be registered with the runtime);
-  on Node, long polling.
+  on Node, long polling through grammY's runner, `@grammyjs/runner` 2.0.3,
+  which hands each update on as it arrives instead of after the one
+  before.
 - Vitest 4.1 with `@cloudflare/vitest-plugin` 1.4.9 (the successor of
   Cloudflare's deprecated Workers Vitest pool package; peer `vitest ^4.1`
   or `^5`) for the adapters; plain node for pure logic.
@@ -43,7 +45,12 @@ report data to a third-party service.
   Node, so there is no native build to install or audit; its
   ExperimentalWarning is accepted (the test runner silences it).
   `better-sqlite3` is dropped. The same driver runs every SQL-level test,
-  the invariants tier's included (`src/db/node-sqlite.ts`).
+  the invariants tier's included (`src/db/node-sqlite.ts`). The port runs
+  its TypeScript sources through Node's own type stripping (on by default
+  from Node 22.18), with a resolve hook for their extensionless imports
+  (`src/node-hooks.ts`): no build step, and the image installs the
+  production packages only
+  ([developer setup](../guides/developer-setup.md), section 8).
 - i18n catalogs for `fa` and `en`; user-facing text is looked up by key
   ([ADR 0005](./adr-0005-error-handling-convention.md)).
 - No AI services.
@@ -90,3 +97,8 @@ package, and the compatibility-date rule was recorded.
 
 Amended 2026-10-28 (Phase 3, unit U1b): the Node port's SQLite driver is
 `node:sqlite`; `better-sqlite3` is dropped.
+
+Amended 2026-11-04 (Phase 3, unit U7): the port's long polling runs on
+`@grammyjs/runner` 2.0.3 (an exact dependency), and the port runs through
+Node's type stripping with a module hook rather than a `tsc` build, because
+`tsc` keeps the extensionless specifiers Node's resolver cannot load.

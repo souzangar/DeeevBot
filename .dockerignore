@@ -1,0 +1,22 @@
+# What never enters the Node port image's build context (Dockerfile):
+# secrets and local configuration (critical invariant 6), the database and
+# local state (critical invariant 8), and everything the port does not run.
+.git
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+data
+**/*.sqlite
+**/*.sqlite-journal
+node_modules
+.wrangler
+.claude
+coverage
+dist
+doc
+test
+selftest
+selftest-okf
+scripts
+src/**/*.test.ts

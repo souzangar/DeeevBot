@@ -1,7 +1,7 @@
 ---
 type: guide
 title: "Developer setup"
-description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler and the webhook boundary, critical paths and the tripwire, and the toolchain's known issues as of 2026-10-28."
+description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler and the webhook boundary, the Node port and why it runs through Node's type stripping, critical paths and the tripwire, and the toolchain's known issues."
 status: active
 tags: [guide, development, toolchain, testing, cloudflare]
 timestamp: 2026-10-28T00:00:00Z
@@ -20,7 +20,9 @@ free-text validator in `src/review/`: the webhook boundary of section 7, the
 bot with its one API transformer, `/start`, `/language`, `/lockdown` and
 `/unlock`, the two-layer lockdown, the "I reported it" counter, the alerts,
 and the fake Bot API the tests drive). Intake, review, the post with its
-jobs and the Node port follow. The decisions: the
+jobs and the closure followed (units U3 to U6), then the Node port, the
+fallback that runs the same code with long polling (unit U7, section 8).
+The decisions: the
 stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
 storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
 errors in [ADR 0005](../architecture/adr-0005-error-handling-convention.md),
@@ -65,6 +67,7 @@ needs the scripts approved. Nothing else warns on install.
 | `npm run dev` | `wrangler dev`: the Worker on a local server, with the variables from `.dev.vars` (section 6); it answers the webhook path as the deployed Worker does (section 7, "The webhook boundary") and 404 to anything else |
 | `npm run dry-run` | `wrangler deploy --dry-run --outdir .wrangler/dry-run`: bundles the Worker and lists its bindings (section 7) |
 | `npm run migrate:local` | `wrangler d1 migrations apply div-report --local`: applies `migrations/` to the local D1 database |
+| `npm run port` | `node --import ./src/node-hooks.ts src/node.ts`: the Node port, from its TypeScript sources (section 8); it reads its configuration from the environment, deletes the bot's webhook and long-polls Telegram, so it is never run with a real token outside the fallback |
 | `npm run probe:dry-run` | `wrangler deploy --dry-run --config wrangler.probe.jsonc --outdir .wrangler/probe-dry-run`: bundles the deployed per-update probe (`src/probe.ts`), a throwaway Worker the owner runs once (ADR 0004, "The deployed probe"); offline, no account |
 | `bash selftest/run-all.sh` | stack-independent, like the rows below: the kit's tooling pins (devil.sh, the hooks, the statusline, the critical-globs completeness check, the tripwire patterns) |
 | `bash selftest-okf/run-all.sh` | the OKF docs-gate contracts |
@@ -146,7 +149,11 @@ the switch while nothing lifts the override) and
 `test/invariants/handler-logs.test.ts` (rule 6: no handler's log line holds
 a URL, an id, a text or an update), and, from unit U4,
 `test/invariants/review.test.ts` (rules 1, 3, 4, 5, 7 and 8 for the admin
-review), with the lockdown spec driving the review's real registrations. The
+review), with the lockdown spec driving the review's real registrations,
+and, from unit U7, `test/invariants/polling-authenticity.test.ts` (rule 2 on
+the Node port: only the webhook boundary and long polling hand updates to
+the bot, no server in `src/`, the port's bot composed as the Worker's, and
+nothing of the port in the Worker's or the probe's import graph). The
 bot under test (`test/support/bot-harness.ts`) is wired as the Worker wires
 it, the review in the slot of features (`defaultFeatures()`), unless a test
 passes its own; `test/support/review-driver.ts` drives the review as the
@@ -167,6 +174,24 @@ check, the test deployment's variables and configuration (`variables.ts`,
 `config.ts`), a migrated in-memory database (`database.ts`), Telegram update
 builders (`updates.ts`) and the bot as the Worker composes it, over the
 fakes (`bot-harness.ts`).
+The Node port's tests (unit U7, section 8) are unit tests beside its
+modules: `src/node.test.ts` (the start over the fakes: an empty database
+migrated, the webhook deleted before the first `getUpdates`, a `/start`
+fetched by long polling answered, every refusal, a due post sent once, the
+run's `SEND_TIMEOUT_SECONDS` bound, the scheduled passes at their minutes;
+the signals and exit codes; and the entry itself in a child process, failing
+fast without a token), `src/node-hooks.test.ts` (the module hook, in child
+processes), `src/telegram/polling.test.ts` (updates handled concurrently,
+the stop, the retries, the end on a 401 or another poller's 409, the yield
+to a webhook's 409 with the keyholders' alert, nothing on the console) and
+`src/broadcast/minute-loop.test.ts` (one run a minute, a minute skipped
+while a run is going, a timer fired a millisecond early running nothing).
+`src/worker.test.ts` walks the import graphs of `src/worker.ts` and
+`src/probe.ts` (`test/support/module-graph.ts`) and finds nothing of the
+port in them.
+For these, the fake Bot API's `getUpdates` long-polls as Telegram does
+(held until an update is queued, its `timeout` passes or its request is
+aborted), and `test/fakes/timers.ts` holds manual timers on the fake clock.
 The duties, from CLAUDE.md's testing conventions:
 
 - every new logic file (service, repository, handler, util) gets a unit test,
@@ -221,11 +246,15 @@ once per `env` object; a failed load is not kept. The Worker entry calls it
 on every request (section 7, "The webhook boundary"). Under `nodejs_compat`
 at this compatibility date the runtime also copies every variable and secret
 into `process.env` (observed on 2026-10-28 in the workers tier); nothing in
-`src/` reads `process.env`. grammY's bundled `debug` package does, for
+`src/` reads `process.env` but the Node port's entry, which hands it whole
+to `configFor()` (section 8). grammY's bundled `debug` package does, for
 `DEBUG`, and would then write its own lines to the console, outside the
-redacting logger, so the bot refuses to start with a `DEBUG` variable: the
-load fails with `CONFIG_INVALID` naming it, whatever its value, and the
-Worker answers every request 500 until it is removed
+redacting logger; so does Node itself, for `NODE_DEBUG` and
+`NODE_DEBUG_NATIVE` (with `NODE_DEBUG=fetch` or `undici`, every Bot API
+request line, the token in its path). So the bot refuses to start with any
+of the three: the load fails with `CONFIG_INVALID` naming it, whatever its
+value, the Worker answers every request 500 until it is removed, and the
+Node port refuses to start, before any request
 ([operations and security runbook](./operations-and-security.md), section
 4).
 
@@ -248,12 +277,14 @@ Worker answers every request 500 until it is removed
 | `VENUE_LOCALE` | `fa` or `en`: the one language of every message the bot writes in the admin review venue (cards, prompts, the answers to the venue's commands and presses), whoever acts | `fa` |
 | `MARKS_PER_DAY` | an integer from 0 to 1000000: the daily cap on recorded "I reported it" presses, all reports together | 20000 |
 | `MARKS_PER_REPORT` | an integer from 0 to 1000000: the cap on recorded "I reported it" presses for one report | 5000 |
-| `DEBUG` | nothing: an environment that defines it, with any value, the empty one included, is refused, because it would switch on grammY's own logging past the redacting logger | must be absent |
+| `SQLITE_PATH` | the Node port's alone (section 8): the path of its SQLite file, not blank; a relative path is taken from the working directory. The Worker never reads it and never needs it | `./data/div-report.sqlite` |
+| `DEBUG`, `NODE_DEBUG`, `NODE_DEBUG_NATIVE` | nothing: an environment that defines any of them, with any value, the empty one included, is refused, because each would switch on debug lines past the redacting logger: grammY's for `DEBUG`, Node's own for the other two (`NODE_DEBUG=fetch` or `undici` prints every Bot API request, the token in its path) | must be absent |
 
 - An empty value counts as absent: a tunable left empty takes its default,
   and an empty required variable fails. A value of spaces only is not absent,
   and no variable accepts it. Variables the schema does not know are ignored,
-  except `DEBUG`, which is refused even when empty.
+  except `DEBUG`, `NODE_DEBUG` and `NODE_DEBUG_NATIVE`, which are refused
+  even when empty.
 - Integers are canonical decimals: no leading zero, exponent or decimal point,
   and a sign only as the `-` of a chat id. In `ADMIN_IDS` and `KEYHOLDER_IDS`
   (critical invariant 2) spaces around an entry are ignored; an @handle, a
@@ -381,7 +412,102 @@ The tests: `src/telegram/webhook.test.ts`, `src/worker.test.ts`,
 `test/invariants/webhook-authenticity.test.ts` and
 `test/workers/webhook.test.ts`.
 
-## 8. Critical paths, the anchor and the tripwire
+## 8. The Node port
+
+`src/node.ts` is the fallback's entry
+([ADR 0001](../architecture/adr-0001-runtime-and-hosting.md); the procedure
+is the [fallback drill runbook](./fallback-drill.md)): the Worker's bot,
+`createBot(deps, defaultFeatures(deps))`, fed by long polling
+(`src/telegram/polling.ts`), and the Worker's run, `tick()`, called by a
+minute loop (`src/broadcast/minute-loop.ts`), over node:sqlite and the file
+at `SQLITE_PATH`. At start, in order: the configuration from `process.env`
+(one that does not load, `DEBUG` included, starts nothing); the database
+file, its directory created owner-only when missing, the file made
+owner-only and `secure_delete` on; the migrations of `migrations/`
+(`src/db/migrate.ts`; a failed one refuses the start); `deleteWebhook`,
+since the two transports are exclusive; long polling; the loop. A refusal
+is one class-only log line and exit code 1. SIGTERM or SIGINT stops polling
+(the updates being handled awaited) and the loop (the running tick
+awaited), then closes the database, exit code 0. A webhook set meanwhile
+(Telegram's 409 "webhook is active", told apart by
+`src/telegram/errors.ts`) makes the port yield: the keyholders get the
+catalog's alert, and the port stops with exit code 0 and stays stopped, so
+its start, which deletes the webhook, never takes the bot back in a loop.
+Polling that ends by itself otherwise (a 401, another poller's 409, 15 hours
+of failed fetches) stops the port, exit code 1.
+
+- Long polling runs on grammY's runner (`@grammyjs/runner` 2.0.3, an exact
+  dependency), never on `bot.start()`, which handles one update after
+  another while the intake waits up to 25 seconds inside its handler. Its
+  own Bot API client waits 30 seconds on Telegram's side and gives up after
+  40, since the bot's own client gives up after 10; it asks for `message`
+  and `callback_query` only. The runner's console output is off (`silent`):
+  every failure is logged by class through the redacting logger.
+- The minute loop calls `tick()` at each minute's start with that start as
+  `now`, so `tick()` runs reconciliation, retention and the snapshot at
+  their minutes, as for the cron; a minute that comes while a run is going
+  is skipped (`tick.skipped`), never run late or twice. The run's Bot API
+  client is bounded at `SEND_TIMEOUT_SECONDS`, as the Worker's.
+- The `LOCKDOWN` variable is read at start, so changing it takes a restart;
+  `meta.lockdown` works as on the Worker.
+- The Worker's bundle holds none of it: `src/worker.test.ts` checks the
+  import graphs, and `npm run dry-run` bundles from `src/worker.ts` alone.
+
+### How Node runs it: type stripping, no build step
+
+Decided 2026-11-04 (unit U7): the port runs from its TypeScript sources
+through Node's own type stripping, not from JavaScript that `tsc` would emit
+into a `dist/` of its own. The reasons:
+
+- The sources import each other without a file extension
+  (`./config/memo`), which wrangler's bundler and Vitest resolve and Node's
+  ESM resolver does not. `tsc` emits the specifiers as written (with
+  `module: ESNext` and `moduleResolution: Bundler`), so an emitted `dist/`
+  would not load either, and `module: NodeNext` would mean rewriting every
+  import in `src/` with a `.js` extension.
+- With stripping, the process runs the very files the tests run, and the
+  image needs no compiler and no build stage: `npm ci --omit=dev` installs
+  the three production packages (grammy, zod, the runner) and nothing else.
+
+The one addition is `src/node-hooks.ts`, a resolve hook loaded with
+`--import` before the entry (`module.registerHooks`). It completes a
+relative specifier without an extension, imported from a `.ts` module,
+with `.ts`, and leaves everything else to Node. The sources already suit
+stripping: `verbatimModuleSyntax` makes every type-only import explicit,
+and `src/` holds no enum, namespace or parameter property, which stripping
+refuses (one would fail the port's start and `src/node-hooks.test.ts`).
+Node 22.18 or later runs it: type stripping is on by default from 22.18,
+and `module.registerHooks` exists from 22.15. The image is `node:22-slim`;
+`engines` (22.13 or later) stays the toolchain's floor. The port and its
+tests were run on Node 22.22.3 and 26.13 (2026-11-04); on Node 22, Node
+prints one `ExperimentalWarning` for `node:sqlite` at start.
+
+### The image and the compose example
+
+- `Dockerfile`: `node:22-slim`; the production dependencies from the
+  lockfile with `npm ci --omit=dev --ignore-scripts`; `src/` (its tests
+  left out by `.dockerignore`) and `migrations/`, owned by root;
+  `/app/data` owner-only for the image's unprivileged `node` user, which
+  the port runs as; the command `node --import ./src/node-hooks.ts
+  src/node.ts`. No secret is ever in the image.
+- `docker-compose.yml`: the service with `env_file: .env`, `SQLITE_PATH`
+  set to the volume's file, the named volume `div-report-data` at
+  `/app/data`, `init: true` so that signals reach the port,
+  `restart: on-failure` (a port that yielded to a webhook exits 0 and must
+  stay down; so a reboot of the host needs `docker compose up -d` again),
+  `stop_grace_period: 60s` (the port's own stop
+  deadline is 50 seconds), a read-only root file system with a `/tmp`
+  tmpfs, every capability dropped, and rotated logs. No port is published.
+- `.env.example`: the variables, every secret and id empty, copied to
+  `.env` (gitignored) and filled in there. `.dockerignore` keeps `.env`,
+  `.dev.vars`, the database, the tests and the docs out of the build
+  context; `.gitignore` keeps `data/` and any `*.sqlite` file out of VCS.
+
+Never start the port with the production token outside the fallback: it
+deletes the webhook of the token it runs with, which takes the Worker off
+the air. The tests run it against the fake Bot API.
+
+## 9. Critical paths, the anchor and the tripwire
 
 The critical paths are the globs in `.claude/devil/critical-globs.conf`, which
 also scope the domain-auditor and devil.sh's critical-path runs; ADR 0006 is
@@ -398,7 +524,7 @@ the source of truth for the module map and the rules each module carries.
 | `*src/db/*` | the `SqlDb` port and its adapters | 8 |
 | `*migrations/*` | the D1 schema migrations | 8 |
 | `*src/platforms/*` | URL parsing, per-platform instruction keys and the link policy (the exact hosts a post may link to) | 4 |
-| `*src/worker.ts`, `*src/node.ts` | the Worker entry (HTTP, cron) and the Node port's entry, when it lands | none listed |
+| `*src/worker.ts`, `*src/node.ts`, `*src/node-hooks.ts` | the Worker entry (HTTP, cron), the Node port's entry and its module hook (section 8) | none listed |
 
 `src/errors/` and `src/i18n/` are deliberately not critical.
 Every file on a critical path carries the comment line `// @critical-path`
@@ -437,12 +563,17 @@ Known false positive: a method-shorthand handler such as
 `async fetch(request, env, ctx) {` matches the bare-fetch pattern, which is
 why `src/worker.ts` writes its handlers as properties (`fetch: () => ...`).
 
-## 9. Known issues (2026-10-28)
+## 10. Known issues (2026-10-28, updated 2026-11-04)
 
 Moving to `@cloudflare/vitest-plugin` on 2026-10-28 removed the deprecated
 Workers Vitest pool package, its six high-severity audit findings and the
-2026-08-22 compatibility-date cap; `npm audit` now reports
-`found 0 vulnerabilities`. What remains:
+2026-08-22 compatibility-date cap; `npm audit` then reported
+`found 0 vulnerabilities`. On 2026-11-04 it reports 10 moderate findings,
+all one advisory published since (GHSA-g3hv-75wg-m249: minimatch, a denial
+of service through glob patterns), reached through eslint and
+typescript-eslint, development tools only; the committed lockfile of
+2026-10-28 gets the same 10, and `npm audit --omit=dev` finds none, which is
+all the port's image installs. What remains:
 
 - `SELF` from `cloudflare:test` is marked deprecated in the plugin's types, in
   favour of `exports` from `cloudflare:workers` (`exports.default.fetch()`);
@@ -456,8 +587,10 @@ Workers Vitest pool package, its six high-severity audit findings and the
 - `@types/node` 26 on a Node 22 runtime can type-check APIs that Node 22
   lacks; that matters only for the unit tests and the Node port. For
   `node:sqlite`, `src/db/node-sqlite.ts` uses only what Node 22 has
-  (`DatabaseSync`, `prepare`, `exec`, `isTransaction`).
+  (`DatabaseSync`, `prepare`, `exec`, `isTransaction`). The port's hook
+  uses `module.registerHooks` and its tests `DatabaseSync.isOpen`, both in
+  Node 22 from 22.15.
 - `node:sqlite` is experimental in Node 22 and prints an `ExperimentalWarning`
   when it loads. `vitest.config.ts` passes `--disable-warning=ExperimentalWarning`
   to the unit and invariants tiers, which hides every experimental warning
-  there; the Node port will print it once at start.
+  there; the Node port prints it once at start.

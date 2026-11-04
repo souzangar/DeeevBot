@@ -112,16 +112,16 @@ the bot, or transfer it. Held by the keyholder. Requirements:
 
 | Value | Where it lives | Never |
 |---|---|---|
-| Bot token | the deployment's secret store (Workers secrets; on the Node port, the environment or a gitignored file) | VCS, logs, any chat message |
+| Bot token | the deployment's secret store (Workers secrets; on the Node port, the gitignored `.env` file beside `docker-compose.yml`, filled in from `.env.example`: [fallback drill runbook](./fallback-drill.md)) | VCS, logs, any chat message |
 | Webhook `secret_token` | same | same; re-issued whenever the token is re-issued |
 | Reporter-reference HMAC key | same; never exported; the only thing that could re-identify a reporter reference | VCS, logs, exports, backups; note that changing it severs every existing counter and block from its reference |
 | `ADMIN_IDS` | same (deployment configuration kept out of VCS) | VCS |
 | `KEYHOLDER_IDS`, the keyholders' numeric Telegram ids (alerts, `/lockdown`, `/unlock`, `/retract`); never an admin's id, which the configuration refuses | same (deployment configuration kept out of VCS), set by the keyholder | VCS |
-| `LOCKDOWN`, the keyholder's override (the value `1`; a secret change is itself a new deployment, global within about a minute, with no code deploy); no Telegram command clears it | the secret store, set by the keyholder with `wrangler secret put LOCKDOWN` (value `1`) and cleared with `wrangler secret delete LOCKDOWN` | VCS; never set or cleared by an admin |
+| `LOCKDOWN`, the keyholder's override (the value `1`; a secret change is itself a new deployment, global within about a minute, with no code deploy); no Telegram command clears it | the secret store, set by the keyholder with `wrangler secret put LOCKDOWN` (value `1`) and cleared with `wrangler secret delete LOCKDOWN`; on the Node port, `LOCKDOWN=1` in its `.env`, read at start only, so setting or clearing it takes a restart (`docker compose up -d`) | VCS; never set or cleared by an admin |
 | Chat ids: the admin review venue (`ADMIN_CHAT_ID`), the membership chat (`MEMBERSHIP_CHAT_ID`), the broadcast channel (`BROADCAST_CHAT_ID`, a channel the keyholder owns, with the bot as its only posting administrator) | deployment configuration validated by the zod schema | VCS |
 | The bot's numeric id and username (`BOT_ID`, `BOT_USERNAME`), which spare every update a `getMe` call; set again if the bot is ever re-created | deployment configuration validated by the zod schema | |
 | The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default), the review venue's one language (`VENUE_LOCALE`, `fa` by default, or `en`) | deployment configuration validated by the zod schema | |
-| Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file | copied into any backup containing per-user tables |
+| Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file in a Docker volume, owner-only, destroyed with `docker compose down --volumes` ([fallback drill runbook](./fallback-drill.md), section 7) | copied into any backup containing per-user tables |
 
 The commit gate's secret-shape scan (`.claude/hooks/secret-shape-scan.sh`)
 is the last line of defence against a token in the tree; it is not a
@@ -145,8 +145,11 @@ Register with `setWebhook` and these settings (decisions Q4 and Q8):
 
 After a token re-issue: set the new token and a new secret in the secret
 store, redeploy, re-register. On the Node fallback there is no webhook:
-long polling with `getUpdates` and no inbound port; delete the webhook
-before polling (the two are mutually exclusive).
+long polling with `getUpdates` and no inbound port; the port deletes the
+webhook itself at every start (the two are mutually exclusive), so it is
+stopped for good before the webhook is registered again, and a webhook set
+while it runs makes it yield, alerting the keyholders
+([fallback drill runbook](./fallback-drill.md), sections 5 and 6).
 
 ### 2.2 The chats the bot sits in, and its role in each
 
@@ -368,7 +371,9 @@ trigger an immediate retention pass, which reduces exposure; alerts go
 to the keyholders by direct message, never to the venue, which is
 assumed compromised. A keyholder may still run `/open`, `/stats`,
 `/attach`, `/halt` and `/retract <id>`; nobody may `/repost`. The Node port
-reads the same `meta` row.
+reads the same `meta` row; its `LOCKDOWN` variable is read at start, so
+setting or clearing the override there takes a restart
+([fallback drill runbook](./fallback-drill.md), section 5).
 The admins see refusals and nothing else (admin review runbook, section
 10).
 
@@ -408,7 +413,10 @@ is throttled to 1 report per day; blocks persist.
   (method names and update ids, among others). So the configuration fails
   with `CONFIG_INVALID` naming `DEBUG`, the Worker answers every request 500
   (Telegram keeps the updates), and the fix is `wrangler secret delete
-  DEBUG`.
+  DEBUG`. The same holds for `NODE_DEBUG` and `NODE_DEBUG_NATIVE`, Node's
+  own debug switches: on the Node port, `NODE_DEBUG=fetch` or `undici` would
+  print every Bot API request, the token in its path, so the port refuses to
+  start with either, before any request.
 
 ## 5. The single cron: jobs, reconciliation, retention, the snapshot
 
@@ -416,7 +424,8 @@ is throttled to 1 report per day; blocks persist.
   run drains the due jobs (at most one post and a bounded number of
   edits), then, by the minute: reconciliation every 15th minute, the
   retention job at 00:15 UTC, the monthly stats snapshot on the first day
-  at 06:00 UTC. The Node port runs the same function on a timer.
+  at 06:00 UTC. The Node port runs the same function from a minute loop,
+  at each minute's start, never two runs at once.
 - Reconciliation, every 15th minute: flags a `posting` row without an id
   past two minutes, and an approved report whose post is 30 minutes
   overdue unless `/halt`, the pause or a lockdown explains it;
@@ -473,27 +482,28 @@ is throttled to 1 report per day; blocks persist.
 
 ## 6. Fallback deployment and the yearly drill
 
-The fallback is the Node port of the same code: Docker, long polling, the
-same SQL on a local SQLite file, deployed with an empty database. Nothing
-in the recovery story may depend on a Cloudflare account that is already
-suspended.
-
-Recovery procedure:
+The fallback is the Node port of the same code (`src/node.ts`): Docker,
+long polling, a minute loop running the same run as the cron, the same SQL
+on a local SQLite file, deployed with an empty database. Nothing in the
+recovery story may depend on a Cloudflare account that is already
+suspended. The procedure step by step, operating the port, switching back
+to the Worker, destroying the port's database and the yearly drill's
+checklist are the [fallback drill runbook](./fallback-drill.md). In short:
 
 1. Obtain a host: a foreign VPS needs a payment path; an Iranian VPS needs
    a tunnel to api.telegram.org. Both are the owner's operational choices at
    that time.
-2. Deploy the port with the secrets from the secret store (1.4); the
-   reporter-reference key may be new, since no per-user data is carried
-   over.
-3. If a Cloudflare webhook is still registered, delete it; the port polls.
-4. Announce in the channel that open reports must be re-submitted. There
-   is nothing to re-subscribe.
+2. Deploy the port with the secrets from the secret store (1.4) in its
+   `.env` file; the reporter-reference key may be new, since no per-user
+   data is carried over.
+3. The port deletes the webhook itself when it starts, then polls.
+4. Verify a `/start` and a posted report, and announce in the channel that
+   open reports must be re-submitted. There is nothing to re-subscribe.
 
-The yearly drill proves the port starts and receives updates, and that the
-keyholder can reach the Cloudflare account, the BotFather credentials and
-the channel. Record the date and outcome in an audit doc under
-`doc/audits/`.
+The yearly drill proves the port starts, receives updates and posts, with
+a drill bot and never the production token, and that the keyholder can
+reach the Cloudflare account, the BotFather credentials and the channel.
+Record the date and outcome in an audit doc under `doc/audits/`.
 
 ## 7. Incident procedures
 
@@ -636,7 +646,8 @@ Monthly:
 
 Yearly:
 
-- [ ] Fallback drill run and recorded (6)
+- [ ] Fallback drill run and recorded (6; the
+      [fallback drill runbook](./fallback-drill.md), section 8)
 - [ ] The keyholder's access to the Cloudflare account, the BotFather
       credentials and the channel proven (1.3)
 - [ ] Platform reference pages re-verified against the live platforms

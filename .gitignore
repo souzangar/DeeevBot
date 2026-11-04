@@ -22,3 +22,8 @@ coverage/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+# The Node port's SQLite database (SQLITE_PATH, ./data/div-report.sqlite by
+# default) holds report data: never in VCS (critical invariants 6 and 8).
+data/
+*.sqlite
+*.sqlite-journal

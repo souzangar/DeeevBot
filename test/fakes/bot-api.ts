@@ -23,6 +23,16 @@
 //   not modified". seedMessage() puts a message there, a post sent before
 //   the test started, say; receive() puts a user's message there under the
 //   chat's next id, as Telegram numbers a private chat's messages.
+// - Long polling, as Telegram does it: a getUpdates without a `timeout` (or
+//   with 0) answers at once with what is queued; one with a positive
+//   `timeout` and nothing queued is held until queueUpdates() puts an
+//   update there, or the `timeout` passes (it then answers []), or its
+//   request is aborted (it then rejects as an aborted fetch does), so a
+//   long-polling loop over the fake waits as it would on Telegram instead
+//   of spinning. Each answer takes at most `limit` updates (100 by
+//   default) and hands each update out once; an `offset` drops the queued
+//   updates below it, as Telegram confirms them. waitingForUpdates() counts
+//   the requests being held.
 // - Scripted failures, per chat id and/or method, for a number of calls or
 //   for every one: the Bot API's 400s and 403s, a 429 with retry_after, a
 //   5xx, a timeout, a network failure, a request that never answers, and a
@@ -82,6 +92,11 @@ export const FAILURES = {
   userDeactivated: answer(403, 'Forbidden: user is deactivated'),
   cantInitiateConversation: answer(403, "Forbidden: bot can't initiate conversation with a user"),
   serverError: answer(502, 'Bad Gateway'),
+  // What getUpdates meets when another poller or a webhook holds the bot's
+  // updates, and when the token was revoked or re-issued.
+  conflict: answer(409, 'Conflict: terminated by other getUpdates request; make sure that only one bot instance is running'),
+  webhookActive: answer(409, "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first"),
+  unauthorized: answer(401, 'Unauthorized'),
   timeout: { kind: 'timeout' },
   networkFailure: { kind: 'network' },
   hang: { kind: 'hang' },
@@ -158,8 +173,10 @@ export interface FakeBotApi {
   messageIn(chatId: number, messageId: number): StoredMessage | undefined;
   /** Every message the fake holds for `chatId`, by message id. */
   messagesIn(chatId: number): StoredMessage[];
-  /** Updates the next getUpdates answers with. */
+  /** Updates the next getUpdates answers with; a held long poll answers with them at once. */
   queueUpdates(...updates: Update[]): void;
+  /** The getUpdates requests being held, waiting for an update (see the header). */
+  waitingForUpdates(): number;
   /** The requests a 'hang' outcome left unsettled. */
   hanging(): number;
 }
@@ -226,6 +243,8 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
   const lastMessageId = new Map<number, number>();
   const members = new Map<string, FakeMember | 'user_not_found'>();
   const updates: Update[] = [];
+  /** The held long polls: each answers when woken. */
+  const waiters = new Set<() => void>();
   let hung = 0;
 
   const key = (chatId: number, messageId: number): string => `${chatId}:${messageId}`;
@@ -286,8 +305,16 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     switch (method) {
       case 'getMe':
         return ok(botInfo);
-      case 'getUpdates':
-        return ok(updates.splice(0));
+      case 'getUpdates': {
+        // Telegram confirms every update below the offset: they are gone.
+        if (typeof payload.offset === 'number') {
+          const offset = payload.offset;
+          const confirmed = updates.filter((update) => update.update_id < offset);
+          for (const update of confirmed) updates.splice(updates.indexOf(update), 1);
+        }
+        const limit = typeof payload.limit === 'number' && payload.limit > 0 ? payload.limit : 100;
+        return ok(updates.splice(0, limit));
+      }
       case 'setWebhook':
       case 'deleteWebhook':
       case 'answerCallbackQuery':
@@ -341,6 +368,31 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     }
   };
 
+  /** getUpdates as Telegram long-polls it (see the header). */
+  const longPoll = (payload: Record<string, unknown>, signal: AbortSignal | null | undefined): Promise<Response> => {
+    const seconds = typeof payload.timeout === 'number' ? payload.timeout : 0;
+    if (updates.length > 0 || seconds <= 0) return Promise.resolve(respond('getUpdates', payload));
+    return new Promise<Response>((resolve, reject) => {
+      const finish = (): void => {
+        clearTimeout(timer);
+        waiters.delete(wake);
+        signal?.removeEventListener('abort', abort);
+      };
+      const wake = (): void => {
+        finish();
+        resolve(respond('getUpdates', payload));
+      };
+      const abort = (): void => {
+        finish();
+        reject(new DOMException('The operation was aborted', 'AbortError'));
+      };
+      const timer = setTimeout(wake, seconds * 1000);
+      waiters.add(wake);
+      if (signal?.aborted === true) abort();
+      else signal?.addEventListener('abort', abort);
+    });
+  };
+
   const fetchImpl = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(urlOf(input));
     const method = METHOD_PATH.exec(url.pathname)?.[1];
@@ -353,6 +405,7 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
     calls.push({ method, chatId, payload });
     const outcome = scripted(method, chatId);
     if (outcome !== undefined) return settle(outcome, init?.signal, () => respond(method, payload));
+    if (method === 'getUpdates') return longPoll(payload, init?.signal);
     return Promise.resolve(respond(method, payload));
   };
 
@@ -381,7 +434,9 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
       [...messages.values()].filter((message) => message.chat.id === chatId).sort((a, b) => a.message_id - b.message_id),
     queueUpdates: (...queued) => {
       updates.push(...queued);
+      for (const wake of [...waiters]) wake();
     },
+    waitingForUpdates: () => waiters.size,
     hanging: () => hung,
   };
 }
