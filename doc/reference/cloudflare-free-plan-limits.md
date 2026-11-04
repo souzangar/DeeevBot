@@ -39,7 +39,7 @@ number and record the date.
 | Durable Object requests per day | 100,000 (separate meter) | DO pricing and limits | not used: there is no Durable Object (ADR 0004) |
 | Durable Object duration per day | 13,000 GB-s | DO pricing and limits | not used |
 | Subrequests per invocation | 50 (D1 queries count) | Workers limits | a cron run drains a few jobs, each one Bot API call and a few D1 queries |
-| CPU per invocation | Workers 10 ms; DO 30 s (no Free distinction stated for the DO figure) | Workers limits; DO pricing and limits | everything runs in the Worker; the per-update work is measured by the deployed probe |
+| CPU per invocation | Workers 10 ms; DO 30 s (no Free distinction stated for the DO figure) | Workers limits; DO pricing and limits | everything runs in the Worker; the per-update work is to be measured by the deployed probe, built and not yet run (Open measurements) |
 | DO alarm invocation duration | 15 min | DO pricing and limits | not used |
 | Simultaneous outgoing connections | 6 | Workers limits | one post or edit per job; no pacing |
 | D1 rows written per day | 100,000 (indexes and deletes count) | D1 pricing | D1 is the only store and holds nothing per member: a few dozen rows per report, one per press |
@@ -48,7 +48,7 @@ number and record the date.
 | DO SQLite rows read per day | 5,000,000 | DO pricing and limits | not used |
 | D1 database size | 500 MB | D1 pricing | minimisation keeps it tiny |
 | DO storage per object | 10 GB (an FAQ entry still says 1 GB on Free) | DO pricing and limits | not used |
-| Cron Triggers per account | 5 | Workers limits | one: `* * * * *`, whose run posts, edits and, by the minute, reconciles (every 15th minute), runs the retention job (00:15 UTC) and the monthly snapshot (ADR 0004) |
+| Cron Triggers per account | 5 | Workers limits | counted per account, not per Worker; this bot's one: `* * * * *` (`wrangler.jsonc`), whose run posts, edits and, by the minute, reconciles (every 15th minute), runs the retention job (00:15 UTC) and the monthly snapshot (ADR 0004); the account runs no other cron Worker, the deployed probe's (the same one cron, `wrangler.probe.jsonc`) while it briefly exists aside; every cron run is a request on the account's daily request meter, 1,440 a day |
 | Queues (Free) | 10,000 ops/day | Queues pricing | not used |
 
 ## Over-limit behaviour
@@ -65,6 +65,9 @@ payment path.
 ## Open measurements
 
 - The CPU of the per-update work on the webhook path (configuration memo,
-  HMAC, grammY parse, render), by a deployed probe.
+  HMAC, grammY parse, render), by a deployed probe: built (`src/probe.ts`,
+  `wrangler.probe.jsonc`; the procedure is ADR 0004's "The deployed
+  probe") and not yet run, an owner dependency.
 - Whether Workers invocation logs record request headers (relevant to the
-  webhook secret, not to a meter).
+  webhook secret, not to a meter); Workers observability stays off
+  meanwhile (`wrangler.jsonc`, pinned by `src/worker.test.ts`).

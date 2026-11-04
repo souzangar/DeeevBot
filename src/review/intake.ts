@@ -18,10 +18,12 @@
 //   message sent through an inline bot and a reply quoting another chat are
 //   refused, never read: classifyMessage() says 'refused' and the handler
 //   deletes them.
-// - A command the intake does not know is left alone: no deletion, no
-//   draft, the same answer as before intake existed, so a command meant
-//   for someone else (a non-keyholder's /lockdown) gets byte for byte the
-//   answer any unknown command gets.
+// - A command the intake does not know is not read: no draft, the same
+//   answer as before intake existed, so a command meant for someone else
+//   (a non-keyholder's /lockdown) gets byte for byte the answer any unknown
+//   command gets; outside lockdown the handler deletes it on receipt, as it
+//   deletes every message received in a private chat
+//   (src/telegram/intake.ts).
 // - A text at the URL step carries one link: the text itself when it is
 //   one token (an address without a scheme, "instagram.com/name", is read
 //   as https), else the one token with "://"; none is 'not_a_link', two

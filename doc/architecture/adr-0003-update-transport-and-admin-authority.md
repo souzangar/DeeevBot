@@ -50,10 +50,31 @@ Both transports, one rule.
   `src/telegram/webhook.ts`, described for developers in the
   [developer setup](../guides/developer-setup.md), section 7. The webhook path carries a random segment to
   keep scanner traffic off the daily request budget; the path is not
-  itself the check. Registration uses `allowed_updates` of `message` and
-  `callback_query` only, a low `max_connections`, and
-  `drop_pending_updates` on re-registration.
-- VPS: long polling with `getUpdates`, no inbound port.
+  itself the check. Registration is the operator script
+  `scripts/set-webhook.ts` (`npm run set-webhook -- <Worker origin>`), run
+  with Node from the keyholder's machine and never part of the Worker: it
+  loads the whole configuration as the Worker does (`configFor`), refusing
+  one that does not load, calls `setWebhook` with the URL
+  `<origin>/<WEBHOOK_PATH_SEGMENT>`, `secret_token` the configured
+  `WEBHOOK_SECRET`, `allowed_updates` of `message` and `callback_query`
+  only, `max_connections` 10 (the Free plan's burst is small) and
+  `drop_pending_updates` true on every registration, then prints
+  `getWebhookInfo` with the URL's path masked; `--delete`
+  (`npm run set-webhook:delete`) calls `deleteWebhook` and keeps the
+  pending updates. Any failure is one class-only log line and exit code 1.
+- VPS: long polling with `getUpdates`, no inbound port. As built (the Node
+  port, unit U7: `src/node.ts`, `src/telegram/polling.ts`), the port
+  deletes the webhook at every start, without dropping the pending updates,
+  since Telegram refuses `getUpdates` while a webhook is set, then polls
+  for `message` and `callback_query` only and hands each update to the bot
+  composed exactly as the Worker's; an update fetched under the bot's token
+  came from Telegram by construction. A webhook set while it polls ends
+  polling (Telegram's 409 "webhook is active"): the keyholders are alerted
+  and the port exits with code 0 and stays stopped, yielding the bot to the
+  Worker. Switching back is still to stop the port for good first, then
+  register the webhook again, since a port started later deletes the
+  webhook at its start. A 401, or another poller's 409, ends polling as a
+  failure (exit code 1).
 - Admin authority: `ADMIN_IDS`, numeric Telegram user ids, come from the
   secret store, are parsed at startup by the configuration schema, and
   are checked at every admin action through one `isAdmin(userId)` gate,
@@ -61,17 +82,20 @@ Both transports, one rule.
   The admin chat id is a venue, never an authority; nothing the client
   sends (chat type, name, callback payload, forwarded message) ever
   grants authority; usernames are never consulted because they are
-  reassignable. Admin commands are accepted in an admin's private chat
-  with the bot or in the venue, typed there (a forwarded message is never a
-  command), and refused under lockdown; from anyone else an admin command
-  is not a command at all and gets the answer an unknown command gets,
-  while a press of an admin button by an id outside `ADMIN_IDS` is refused.
+  reassignable. Admin commands are accepted in the venue only (since
+  unit U4, below; at first an admin's private chat with the bot as well),
+  typed there (a forwarded message is never a command), and refused under
+  lockdown; from anyone else, or anywhere else, an admin command is not a
+  command at all and gets the answer an unknown command gets, while a
+  press of an admin button by an id outside `ADMIN_IDS`, or on a message
+  outside the venue, is refused.
   Every command and button handler is registered behind the gates of
   `src/telegram/guards.ts`.
 - Keyholder authority: `KEYHOLDER_IDS`, the numeric Telegram ids of the
   keyholders (at least one), checked through one `isKeyholder(userId)`
-  gate. A keyholder may run `/lockdown`, `/unlock`, `/retract <id>`,
-  `/attach <id> ...`, `/open` and `/stats`, and press the Cancel and
+  gate. A keyholder may run `/lockdown`, `/unlock`, `/retract <id>` (and
+  answer its prompt), `/attach <id> ...`, `/halt` (which only an admin's
+  `/resume` lifts), `/open` and `/stats`, and press the Cancel and
   Lockdown buttons on the approval notices; keyholder commands are
   accepted only in the keyholder's private chat with the bot, typed there,
   and from anyone else `/lockdown` and `/unlock` are answered exactly as an
@@ -87,13 +111,17 @@ Both transports, one rule.
   `wrangler secret put` (a secret change is itself a new deployment,
   global within about a minute, with no code deploy) and which no
   Telegram command clears; it is read before any query, so it locks the
-  bot when D1 refuses queries. `/lockdown` writes the switch with the time
+  bot when D1 refuses queries. On the Node port the override is the
+  `LOCKDOWN` line of its `.env` file, read once at start, so setting or
+  lifting it there takes a restart (`src/node.ts`). `/lockdown` writes the switch with the time
   it was set (a second `/lockdown` keeps the first time); `/unlock` clears
   it together with the once-only alert marker, so the next lockdown alerts
   again, and says so when the override still holds the bot locked. Under either: intake answers a neutral
   "temporarily unavailable" and stores nothing, presses are ignored,
   every admin action is refused, no post or edit job runs except a
-  keyholder's retraction edit, and alerts go to the keyholders by direct
+  retraction's edit (under lockdown only a keyholder can order a
+  retraction; one an admin ordered before the switch still runs, as
+  built: `RUN_WHEN_HELD` in `src/broadcast/edits.ts`), and alerts go to the keyholders by direct
   message, never to the venue, which is compromised by assumption; the
   tick alerts the keyholders once (`meta.lockdown_alerted_at`) and still
   runs retention. The post claim binds the lockdown state in the same
@@ -124,7 +152,9 @@ Both transports, one rule.
 - The webhook secret, the two allowlists and the `LOCKDOWN` secret are
   secrets under invariant 6: never in VCS, never logged, never echoed to
   a chat. Whether Workers invocation logs record request headers (which
-  would log the secret when observability is enabled) is an open item.
+  would log the secret when observability is enabled) is an open item;
+  observability stays off meanwhile (`wrangler.jsonc`, pinned by
+  `src/worker.test.ts`).
 - A rejected request still costs one Workers request; the random path
   keeps the bulk of scanners away, and anyone who messages the bot can
   burn the meter (accepted risk; the Paid plan is the fix).
@@ -147,7 +177,10 @@ clears `meta.lockdown`. They are `test/invariants/webhook-authenticity.test.ts`
 and `test/invariants/lockdown.test.ts`, with the unit tests beside
 `src/telegram/webhook.ts`, `src/telegram/guards.ts`, `src/auth/` and
 `src/config/schema.ts`, and the Worker's own boundary in the Workers
-runtime, `test/workers/webhook.test.ts`.
+runtime, `test/workers/webhook.test.ts`; the Node port's update source is
+`test/invariants/polling-authenticity.test.ts`, with the unit tests beside
+`src/telegram/polling.ts`, and the registration's exact parameters are
+pinned by `scripts/set-webhook.test.ts`.
 
 ## Alternatives considered
 
@@ -194,3 +227,12 @@ command or a non-keyholder's keyholder command gets the unknown command's
 answer; `/unlock` also clears the once-only alert marker; the membership
 answer is cached in memory under the reporter reference; the gates live in
 `src/telegram/guards.ts`; the tests named.
+
+Amended 2026-11-04 (Phase 3, units U7 and U8): the Node port's long
+polling as built (the webhook deleted at every start without dropping the
+pending updates, the yield to a webhook set meanwhile) and its `LOCKDOWN`
+override, read at start; the registration by `scripts/set-webhook.ts`,
+with `max_connections` 10 in place of "a low `max_connections`" and the
+pending updates dropped on every registration; `/halt` among the keyholder
+commands; the venue-only admin commands of unit U4 in the decision's own
+text; the tests named.

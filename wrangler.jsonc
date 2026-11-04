@@ -40,11 +40,21 @@
   // retention job at 00:15 UTC (after the Free plan's daily caps reset at
   // 00:00 UTC) and the monthly snapshot on the first day at 06:00 UTC; the
   // Worker runs nothing for any other expression.
+  // The Free plan's five Cron Triggers are counted per ACCOUNT, not per
+  // Worker, and so is its daily request meter, on which each cron run counts
+  // (1,440 a day here): the account runs no other cron Worker beside this
+  // one, the deployed probe (wrangler.probe.jsonc) aside while it exists: it
+  // is deployed once and deleted after its run (ADR 0004). src/worker.test.ts
+  // pins this list to the one expression.
   "triggers": { "crons": ["* * * * *"] },
 
   // Critical invariant 6: the platform's invocation logs are logs. Workers
-  // observability stays off until it is turned on deliberately
-  // (doc/guides/operations-and-security.md, section 4).
+  // observability stays OFF: whether its invocation logs record request
+  // headers, the webhook's secret token among them, is not settled
+  // (doc/reference/cloudflare-free-plan-limits.md, "Open measurements"). It
+  // is turned on only deliberately, to debug, and off again right after
+  // (doc/guides/operations-and-security.md, section 4); src/worker.test.ts
+  // pins it off, so turning it on is a visible change.
   "observability": { "enabled": false },
 
   // Nothing here: every secret and every deployment value comes from

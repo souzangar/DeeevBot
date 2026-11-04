@@ -5,15 +5,25 @@
 // load runs nothing), dispatches on the cron expression and hands the run to
 // waitUntil, which never rejects. The same entry runs in the Workers runtime
 // on D1 in test/workers/webhook.test.ts and test/workers/scheduled.test.ts.
-// Last, the module graph wrangler bundles from this entry (and from the
+// Then the module graph wrangler bundles from this entry (and from the
 // deployed probe's, src/probe.ts) holds nothing of the Node port: not its
 // entry or module hook, not long polling or the minute loop, not the
 // node:sqlite adapter or the migrations runner, not the runner package and
 // no Node-only built-in, read from the sources' own imports, type-only ones
-// included.
+// included; and nothing outside src/, so never the operator scripts
+// (scripts/set-webhook.ts, which handles the token and the webhook secret).
+// Last, the deployment's own configuration (unit U8): wrangler.jsonc, and
+// the deployed probe's wrangler.probe.jsonc, declare exactly the one cron
+// this Worker runs, TICK_CRON, with no per-environment block that could add
+// another, and keep Workers observability off (critical invariant 6: the
+// platform's invocation logs are logs).
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { enqueuePost } from './broadcast/jobs';
 import { SEND_TIMEOUT_SECONDS } from './broadcast/post';
+import { TICK_CRON } from './broadcast/tick';
 import { sql } from './db/sql';
 import { FAILURES } from '../test/fakes/bot-api';
 import { migratedDatabase } from '../test/support/database';
@@ -184,5 +194,34 @@ describe("the Worker's module graph: nothing of the Node port", () => {
     expect(files).toEqual(expect.arrayContaining([...NODE_PORT_FILES.filter((file) => file !== 'node-hooks.ts'), 'telegram/bot.ts', 'broadcast/tick.ts']));
     expect(external).toEqual(expect.arrayContaining(['@grammyjs/runner', 'node:sqlite', 'node:fs']));
     expect(importGraph('node-hooks.ts').external).toEqual(['node:module']);
+  });
+
+  it.each(['worker.ts', 'probe.ts'])('%s imports nothing outside src/, so never the webhook registration script', (entry) => {
+    expect(importGraph(entry).files.filter((file) => file.startsWith('../'))).toEqual([]);
+  });
+
+  it('would see the script in a graph that reached it, so the check is not vacuous', () => {
+    expect(importGraph('../scripts/set-webhook.ts').files).toEqual(expect.arrayContaining(['../scripts/set-webhook.ts', 'config/memo.ts', 'telegram/api.ts']));
+  });
+});
+
+/** A wrangler configuration file, read as wrangler reads it: JSON with comments. */
+const wranglerConfig = (file: string): Record<string, unknown> => {
+  // `.href`: the Workers and Node type packages both declare URL.
+  const path = fileURLToPath(new URL(`../${file}`, import.meta.url).href);
+  const parsed = ts.parseConfigFileTextToJson(path, readFileSync(path, 'utf8'));
+  if (parsed.error !== undefined) throw new Error(`${file} does not parse`);
+  return parsed.config as Record<string, unknown>;
+};
+
+describe("the deployment's wrangler configuration: one cron, observability off", () => {
+  it.each(['wrangler.jsonc', 'wrangler.probe.jsonc'])('%s declares exactly the one cron the Worker runs, and no environment that could add another', (file) => {
+    const config = wranglerConfig(file);
+    expect(config.triggers).toEqual({ crons: [TICK_CRON] });
+    expect(config.env).toBeUndefined();
+  });
+
+  it.each(['wrangler.jsonc', 'wrangler.probe.jsonc'])('%s keeps Workers observability off', (file) => {
+    expect(wranglerConfig(file).observability).toEqual({ enabled: false });
   });
 });

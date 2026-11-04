@@ -224,10 +224,10 @@ what Instagram documents.
 
 The points below are what a member makes, in their own words, in one
 Instagram report. They are the English source for the i18n catalogs (the
-Persian copy is written from them later). They apply the decision of
-2026-10-28 (Q7): one genuine report per member, no template text to paste,
-no promise of removal, and first-person reporting by the affected person
-where Instagram requires it.
+Persian copy, written from them, is a draft awaiting a native speaker's
+review). They apply the decision of 2026-10-28 (Q7): one genuine report
+per member, no template text to paste, no promise of removal, and
+first-person reporting by the affected person where Instagram requires it.
 
 Common frame, every category:
 
@@ -322,4 +322,5 @@ Items from the research note's "Unverified" section that concern this page:
   covers Article 16 notices only.
 - The live in-app reason labels for private information and child safety
   were not observed on a logged-in client; the mappings marked [INF] above
-  need a check on a real device before the Persian copy is written.
+  need a check on a real device before the Persian copy, now a draft for
+  native review, is final.

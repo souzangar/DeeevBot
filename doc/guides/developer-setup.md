@@ -1,7 +1,7 @@
 ---
 type: guide
 title: "Developer setup"
-description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler and the webhook boundary, the Node port and why it runs through Node's type stripping, critical paths and the tripwire, and the toolchain's known issues."
+description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler, the webhook boundary and its registration script, the Node port and why it runs through Node's type stripping, critical paths and the tripwire, and the toolchain's known issues."
 status: active
 tags: [guide, development, toolchain, testing, cloudflare]
 timestamp: 2026-10-28T00:00:00Z
@@ -9,8 +9,8 @@ timestamp: 2026-10-28T00:00:00Z
 
 # Developer setup
 
-For whoever works on the code; facts as of 2026-10-28. Phase 2 scaffolded the
-toolchain, and Phase 3 is adding the application modules: so far the core
+For whoever works on the code; facts as of 2026-10-28, updated 2026-11-04. Phase
+2 scaffolded the toolchain, and Phase 3 added the application modules: first the core
 (`src/errors/`, `src/config/`, the redacting logger and the reporter reference
 in `src/privacy/`, `src/i18n/` and `src/clock.ts`) and the storage (`src/db/`:
 the SQL port with its D1 and node:sqlite adapters, the Node migrations runner
@@ -21,7 +21,9 @@ bot with its one API transformer, `/start`, `/language`, `/lockdown` and
 `/unlock`, the two-layer lockdown, the "I reported it" counter, the alerts,
 and the fake Bot API the tests drive). Intake, review, the post with its
 jobs and the closure followed (units U3 to U6), then the Node port, the
-fallback that runs the same code with long polling (unit U7, section 8).
+fallback that runs the same code with long polling (unit U7, section 8),
+and the go-live unit's webhook registration script, `scripts/set-webhook.ts`
+(unit U8, section 7, "Registering the webhook").
 The decisions: the
 stack in [ADR 0002](../architecture/adr-0002-language-and-framework.md),
 storage in [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
@@ -34,9 +36,12 @@ Deployment, the secret store and who holds each value belong to the
 
 ## 1. Prerequisites and install
 
-- Node 22.13.0 or later (`engines` in `package.json`; 22.13 is eslint 10's
-  floor on the 22 line). Development so far has used Node v22.22.3 through
-  nvm, with npm 12.0.1; the repository has no `.nvmrc`.
+- Node 22.18.0 or later (`engines` in `package.json`): the Node port and
+  the webhook script run from their TypeScript through Node's type
+  stripping, on by default from 22.18 (section 8); eslint 10's own floor
+  on the 22 line is 22.13.
+  Development so far has used Node v22.22.3 through nvm, with npm 12.0.1,
+  and Node 26.13; the repository has no `.nvmrc`.
 - git, bash and jq: the kit selftests refuse to run without git and jq, the
   commit gate is skipped without jq (it says so), and the tripwire is inert.
 - `npm ci` installs exactly what the committed `package-lock.json` records;
@@ -68,7 +73,10 @@ needs the scripts approved. Nothing else warns on install.
 | `npm run dry-run` | `wrangler deploy --dry-run --outdir .wrangler/dry-run`: bundles the Worker and lists its bindings (section 7) |
 | `npm run migrate:local` | `wrangler d1 migrations apply div-report --local`: applies `migrations/` to the local D1 database |
 | `npm run port` | `node --import ./src/node-hooks.ts src/node.ts`: the Node port, from its TypeScript sources (section 8); it reads its configuration from the environment, deletes the bot's webhook and long-polls Telegram, so it is never run with a real token outside the fallback |
+| `npm run set-webhook -- <origin>` | `node --import ./src/node-hooks.ts scripts/set-webhook.ts <origin>`: registers the bot's webhook at the Worker's origin plus `WEBHOOK_PATH_SEGMENT`, with the deployment's configuration read from the environment, and prints the masked `getWebhookInfo` answer (section 7, "Registering the webhook"); the keyholder's operation, run against Telegram, never by a test |
+| `npm run set-webhook:delete` | the same script with `--delete`: removes the webhook, keeping the updates Telegram holds, and prints the same answer |
 | `npm run probe:dry-run` | `wrangler deploy --dry-run --config wrangler.probe.jsonc --outdir .wrangler/probe-dry-run`: bundles the deployed per-update probe (`src/probe.ts`), a throwaway Worker the owner runs once (ADR 0004, "The deployed probe"); offline, no account |
+| `scripts/wipe.sh [--local]` | the keyholder's emergency wipe: every row of every table but `stats` and `meta`, after the database's name is typed; `--local` rehearses it on the local database of `wrangler dev` ([operations and security runbook](./operations-and-security.md), section 7); never run by the gate |
 | `bash selftest/run-all.sh` | stack-independent, like the rows below: the kit's tooling pins (devil.sh, the hooks, the statusline, the critical-globs completeness check, the tripwire patterns) |
 | `bash selftest-okf/run-all.sh` | the OKF docs-gate contracts |
 | `node scripts/okf/check.mjs` | the docs gate: frontmatter, links, prose references, index staleness |
@@ -106,7 +114,7 @@ the documented intentional bypass.
 
 | Tier | Files | Runs in | Rules |
 |---|---|---|---|
-| unit | `src/**/*.test.ts`, beside the module | plain node | no network; mock at the boundary (the Telegram API, storage, the clock) |
+| unit | `src/**/*.test.ts` and `scripts/**/*.test.ts`, beside the module | plain node | no network; mock at the boundary (the Telegram API, storage, the clock) |
 | workers | `test/workers/**/*.test.ts` | the Workers runtime through `@cloudflare/vitest-plugin`, with the local D1 binding from `wrangler.jsonc`; no Cloudflare account | for the Cloudflare adapters; pure logic stays in unit |
 | invariants | `test/invariants/**/*.test.ts` | plain node | always run by the commit gate; one spec per stated "must not" |
 
@@ -125,7 +133,11 @@ same tables as node:sqlite, and drives the D1 adapter), and, from unit U4,
 `test/workers/review.test.ts` (the review's batches on D1: the approval's
 upsert over a SELECT, the post job's `ON CONFLICT DO NOTHING`, the Cancel
 and a re-approval under a new id, the rejection's counters and the
-routing's nulls). The workers project
+routing's nulls), from unit U3 `test/workers/intake.test.ts` (the intake's
+submit batch on D1), from unit U5 `test/workers/scheduled.test.ts` (the cron
+handler's run on D1: the post's claim and its record) and from unit U6
+`test/workers/finalize.test.ts` (the finalization's one batch on D1). The
+workers project
 also binds the test deployment's variables, written out in
 `vitest.config.ts` (the config file imports packages only, section 9), so
 the real Worker boots with a valid configuration. The invariants tier
@@ -147,13 +159,23 @@ forwarded, copied, fetched or looked up), `test/invariants/lockdown.test.ts`
 (rule 2: what lockdown refuses, and that only a keyholder's `/unlock` lifts
 the switch while nothing lifts the override) and
 `test/invariants/handler-logs.test.ts` (rule 6: no handler's log line holds
-a URL, an id, a text or an update), and, from unit U4,
-`test/invariants/review.test.ts` (rules 1, 3, 4, 5, 7 and 8 for the admin
-review), with the lockdown spec driving the review's real registrations,
-and, from unit U7, `test/invariants/polling-authenticity.test.ts` (rule 2 on
+a URL, an id, a text or an update), from unit U3
+`test/invariants/intake.test.ts` (rules 3, 4, 5 and 8 for the intake), from
+unit U4 `test/invariants/review.test.ts` (rules 1, 3, 4, 5, 7 and 8 for the
+admin review), with the lockdown spec driving the review's real
+registrations, from unit U5 `test/invariants/post.test.ts` (rules 1, 2, 4
+and 5 for the single post, `/attach` and `/repost`), from unit U6
+`test/invariants/closure.test.ts` (rules 1, 4 and 5 for closure and
+retraction), `test/invariants/retention.test.ts` and
+`test/invariants/wipe.test.ts` (rule 8: every deletion path, the aggregate
+row alone, the wipe's statement list), and, from unit U7,
+`test/invariants/polling-authenticity.test.ts` (rule 2 on
 the Node port: only the webhook boundary and long polling hand updates to
 the bot, no server in `src/`, the port's bot composed as the Worker's, and
-nothing of the port in the Worker's or the probe's import graph). The
+nothing of the port in the Worker's or the probe's import graph), and, from
+unit U8, `test/invariants/webhook-script.test.ts` (rule 6: the webhook
+script never prints or logs the token, the secret or the path segment,
+driven with the production logger and the console captured). The
 bot under test (`test/support/bot-harness.ts`) is wired as the Worker wires
 it, the review in the slot of features (`defaultFeatures()`), unless a test
 passes its own; `test/support/review-driver.ts` drives the review as the
@@ -188,7 +210,13 @@ to a webhook's 409 with the keyholders' alert, nothing on the console) and
 while a run is going, a timer fired a millisecond early running nothing).
 `src/worker.test.ts` walks the import graphs of `src/worker.ts` and
 `src/probe.ts` (`test/support/module-graph.ts`) and finds nothing of the
-port in them.
+port in them, and nothing outside `src/`, so never the webhook script; it
+also reads `wrangler.jsonc` and `wrangler.probe.jsonc` and pins their one
+cron and observability off. The webhook script's test,
+`scripts/set-webhook.test.ts` (unit U8), runs it over the fake Bot API,
+whose `getWebhookInfo` answers what `setWebhook` set: the exact parameters
+of `setWebhook` and `deleteWebhook`, the masked answer it prints, every
+refusal as one class-only line, and the entry in a child process.
 For these, the fake Bot API's `getUpdates` long-polls as Telegram does
 (held until an update is queued, its `timeout` passes or its request is
 aborted), and `test/fakes/timers.ts` holds manual timers on the fake clock.
@@ -213,6 +241,10 @@ every `.ts` file, with type information from `tsconfig.json`, and adds:
   `test/invariants/logger-redaction.test.ts` fails if any other file under
   `src/` (tests aside) refers to the console;
 - `@typescript-eslint/no-floating-promises` as an error, and `eqeqeq`;
+- `scripts/set-webhook.ts` is linted like the rest (`tsconfig.json` includes
+  `scripts/`, whose `.mjs` files it leaves out): it prints its one answer
+  with `process.stdout.write`, since `no-console` holds there too, and every
+  other line through the redacting logger;
 - in `src/` outside `src/**/*.test.ts`, `no-restricted-imports` on `node:fs`,
   `node:fs/promises`, `fs`, `fs/promises`, `node:child_process` and
   `child_process`: the Workers runtime has no file system or processes, while
@@ -247,7 +279,8 @@ on every request (section 7, "The webhook boundary"). Under `nodejs_compat`
 at this compatibility date the runtime also copies every variable and secret
 into `process.env` (observed on 2026-10-28 in the workers tier); nothing in
 `src/` reads `process.env` but the Node port's entry, which hands it whole
-to `configFor()` (section 8). grammY's bundled `debug` package does, for
+to `configFor()` (section 8), and outside `src/` only the webhook script
+does the same (section 7, "Registering the webhook"). grammY's bundled `debug` package does, for
 `DEBUG`, and would then write its own lines to the console, outside the
 redacting logger; so does Node itself, for `NODE_DEBUG` and
 `NODE_DEBUG_NATIVE` (with `NODE_DEBUG=fetch` or `undici`, every Bot API
@@ -327,8 +360,8 @@ and 2.1.
 | `compatibility_date` | 2026-10-28 (see below), with the `nodejs_compat` flag |
 | `send_metrics` | `false`: wrangler sends no usage metrics for this project, overriding each user's own telemetry setting (an explicit `WRANGLER_SEND_METRICS` in the environment still takes precedence); the owner's stance, not a rule-6 requirement |
 | `d1_databases` | binding `DB`, `database_name` `div-report`, an all-zero placeholder `database_id` (the real id is deployment configuration), `migrations_dir` `migrations/` at the repository root |
-| `triggers` | one cron, `* * * * *`: each run posts the due approved report, runs the due edit jobs and, by the minute, reconciliation (every 15th minute), the retention job (00:15 UTC, after the Free plan's daily caps reset) and the monthly snapshot (ADR 0004); the Worker runs nothing for any other expression |
-| `observability` | disabled: the platform's invocation logs are logs (critical invariant 6); turned on only deliberately (runbook, section 4) |
+| `triggers` | one cron, `* * * * *`: each run posts the due approved report, runs the due edit jobs and, by the minute, reconciliation (every 15th minute), the retention job (00:15 UTC, after the Free plan's daily caps reset) and the monthly snapshot (ADR 0004); the Worker runs nothing for any other expression. The Free plan's five Cron Triggers are per account, so the account runs no other cron Worker (the deployed probe's aside while it exists); `src/worker.test.ts` pins the list to `TICK_CRON` |
+| `observability` | disabled: the platform's invocation logs are logs (critical invariant 6); turned on only deliberately (runbook, section 4); `src/worker.test.ts` pins it off, in `wrangler.probe.jsonc` too |
 | `vars` | empty: no secret and no deployment value lives in this file |
 
 `npm run migrate:local` applies `migrations/` to the local database under
@@ -340,10 +373,10 @@ later change adds a file rather than editing an applied one, as
 `schema_migrations`.
 `npm run dry-run` bundles the Worker into `.wrangler/dry-run` and lists its
 one binding (`env.DB`) with no Cloudflare account and no network access, and
-with `send_metrics` off it prints no telemetry notice. With the Telegram
-wiring, the review and the scheduler the bundle is 1,377 KiB, 227 KiB
-gzipped (2026-10-28), most of it zod
-and grammY's web build, unminified; the Free plan allows a Worker of 3 MB. `.wrangler/`, which also
+with `send_metrics` off it prints no telemetry notice. With the whole bot
+(units U2 to U6) the bundle is 1,462 KiB, 243 KiB gzipped
+(2026-11-04), most of it zod and grammY's web build, unminified; the Free
+plan allows a Worker of 3 MB. `.wrangler/`, which also
 holds the local D1 state, is gitignored. There is no Durable Object. The
 `Broadcaster` class and its `v1` migration tag of Phase 2 were removed before
 any deployment (the `database_id` is still the placeholder), so no
@@ -412,6 +445,33 @@ The tests: `src/telegram/webhook.test.ts`, `src/worker.test.ts`,
 `test/invariants/webhook-authenticity.test.ts` and
 `test/workers/webhook.test.ts`.
 
+### Registering the webhook
+
+`scripts/set-webhook.ts` (unit U8) is how Telegram learns the boundary's URL
+and secret: an operator script the keyholder runs with Node, never part of
+the Worker (nothing under `src/` imports it, which `src/worker.test.ts`
+checks), the procedure in the
+[operations and security runbook](./operations-and-security.md), section
+2.1. `npm run set-webhook -- <origin>` reads the configuration with
+`configFor(process.env)`, so it needs every required variable and refuses
+`DEBUG`, `NODE_DEBUG` and `NODE_DEBUG_NATIVE`; takes the Worker's origin
+alone (https, no path, query, fragment, userinfo or port); builds its client
+with `createBotApi()` (the one transformer, bounded at
+`BOT_TIMEOUT_SECONDS`); calls `setWebhook` with the origin plus `/` and
+`WEBHOOK_PATH_SEGMENT`, `secret_token` `WEBHOOK_SECRET`, `allowed_updates`
+`message` and `callback_query`, `max_connections` 10 and
+`drop_pending_updates` true (`--delete`: `deleteWebhook` with
+`drop_pending_updates` false); then prints `getWebhookInfo` as JSON with the
+URL's path masked and every string, the URL's origin included, scrubbed of
+the token, the secret and the segment in any letter case. A refusal or a
+failed call is one class-only line (`config.invalid`, `webhook.usage`,
+`webhook.failed` with the method) and exit code 1. Its test,
+`scripts/set-webhook.test.ts`, drives it over the fake Bot API and never
+against Telegram, and the always-run `test/invariants/webhook-script.test.ts`
+pins its must-not with the production logger: no stream ever holds the
+token, the secret or the segment; it is a critical path
+(`*scripts/set-webhook.ts`, section 9).
+
 ## 8. The Node port
 
 `src/node.ts` is the fallback's entry
@@ -470,7 +530,8 @@ into a `dist/` of its own. The reasons:
   the three production packages (grammy, zod, the runner) and nothing else.
 
 The one addition is `src/node-hooks.ts`, a resolve hook loaded with
-`--import` before the entry (`module.registerHooks`). It completes a
+`--import` before the entry (`module.registerHooks`); the webhook script
+(section 7) runs through the same hook, from `scripts/`. It completes a
 relative specifier without an extension, imported from a `.ts` module,
 with `.ts`, and leaves everything else to Node. The sources already suit
 stripping: `verbatimModuleSyntax` makes every type-only import explicit,
@@ -478,7 +539,7 @@ and `src/` holds no enum, namespace or parameter property, which stripping
 refuses (one would fail the port's start and `src/node-hooks.test.ts`).
 Node 22.18 or later runs it: type stripping is on by default from 22.18,
 and `module.registerHooks` exists from 22.15. The image is `node:22-slim`;
-`engines` (22.13 or later) stays the toolchain's floor. The port and its
+`engines` says 22.18 or later for the whole project. The port and its
 tests were run on Node 22.22.3 and 26.13 (2026-11-04); on Node 22, Node
 prints one `ExperimentalWarning` for `node:sqlite` at start.
 
@@ -518,13 +579,15 @@ the source of truth for the module map and the rules each module carries.
 | `*src/telegram/*` | bot wiring, handlers, rendering with previews disabled, the webhook secret check | 2, 4 |
 | `*src/auth/*` | the allowlist gate, the membership check | 2, 4 |
 | `*src/review/*` | the report state machine, routing table, approval records, grace and cancel | 1, 3, 7 |
-| `*src/broadcast/*` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains | 1, 5 |
+| `*src/broadcast/*` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains, the finalization that leaves only the aggregate row | 1, 5, 8 |
 | `*src/privacy/*` | HMAC references, log redaction, the retention job | 6, 8 |
 | `*src/config/*` | the zod schema and loaders | 2, 6 |
-| `*src/db/*` | the `SqlDb` port and its adapters | 8 |
-| `*migrations/*` | the D1 schema migrations | 8 |
+| `*src/db/*` | the `SqlDb` port and its adapters | 1, 8 |
+| `*migrations/*` | the D1 schema migrations | 1, 8 |
 | `*src/platforms/*` | URL parsing, per-platform instruction keys and the link policy (the exact hosts a post may link to) | 4 |
-| `*src/worker.ts`, `*src/node.ts`, `*src/node-hooks.ts` | the Worker entry (HTTP, cron), the Node port's entry and its module hook (section 8) | none listed |
+| `*src/worker.ts`, `*src/node.ts`, `*src/node-hooks.ts`, `*src/probe.ts` | the Worker entry (HTTP, cron), the Node port's entry and its module hook (section 8), the deployed per-update probe's entry | none listed |
+| `*scripts/wipe.sh` | the emergency wipe, an operator script outside `src/` | 8 |
+| `*scripts/set-webhook.ts` | the webhook registration script, an operator script outside `src/` (section 7) | 2, 6 |
 
 `src/errors/` and `src/i18n/` are deliberately not critical.
 Every file on a critical path carries the comment line `// @critical-path`
@@ -533,7 +596,9 @@ and `src/config/schema.ts` do. `selftest/critical-globs-completeness.sh`
 fails, naming the file, when an anchored file under `src/` or `migrations/`
 matches no glob, so a new critical module adds its glob in the same change.
 The check sees only anchored files: a critical file without the anchor
-escapes it.
+escapes it, and it does not scan `scripts/`, whose two critical files
+(`scripts/set-webhook.ts` carries the anchor, `scripts/wipe.sh` does not)
+have their globs by hand.
 
 The tripwire, `.claude/hooks/critical-path-tripwire.sh`, runs after every
 Claude Code Edit or Write. In a file the globs match (test files, `*.spec.*`,

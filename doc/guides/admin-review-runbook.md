@@ -75,6 +75,13 @@ the deployment are in
   [telegram-bot-api-notes.md](../reference/telegram-bot-api-notes.md)); a
   decision older than that edits the card to the outcome without links,
   and auto-delete removes the rest. Decide cards promptly.
+- The nightly retention job (00:15 UTC) withdraws a prompt nobody
+  answered within 24 hours (its message deleted while Telegram still
+  allows it): a reply to it then counts for nothing, so press the card's
+  button again. A report nobody decides expires 30 days after intake: the
+  job finalizes it with the outcome "no decision" and edits its card to
+  "expired" without links (at most five cards a night and never under
+  lockdown; the venue's auto-delete covers any card left).
 - The venue is not the NGO's group and not the broadcast channel. Nothing
   about a report is posted anywhere else, and nothing from the venue is
   forwarded out of it. The keyholder is not in the venue; alerts reach
@@ -341,15 +348,18 @@ this copy is for use at the keyboard.
 |---|---|---|---|---|
 | Private data (doxxing) | yes | account link by default; the post URL only by your explicit opt-in recorded with the approval, when you judge it necessary and safe; the affected-person flag forces account only | platform page, "Private information" (key `private-information`) | you report the specific post yourself; the affected person is told to file the platform's first-person report |
 | Child safety: non-sexual abuse, exploitation, grooming | yes | account link by default; the post URL by your opt-in at step 7 | platform page, "Child safety, non-sexual" (key `child-safety`) | a child's public photo with insults belongs here or under harassment; doubt about the sexual nature routes (section 3) |
-| Suspected child sexual abuse material | never | none; routed from your card | none, by design (card key `csam-routing`) | section 6; nothing reaches the channel or anyone else |
+| Suspected child sexual abuse material | never | none; routed from your card | none, by design: the routing card's own text (the catalog's `review.route.*` keys) | section 6; nothing reaches the channel or anyone else |
 | Bullying and harassment (incl. public images with abusive text) | yes | account link by default; the post URL by your opt-in at step 7 | platform page, "Bullying and harassment" (key `harassment`) | where the platform wants to hear from the targeted person, the instructions say so |
 | Intimate images shared without consent | yes | account only, never the post URL (a routing rule, not a default) | platform page, "Intimate images shared without consent" (key `intimate-images`) | the affected person files the first-person report |
 | Impersonation | yes | account link by default; the post URL by your opt-in at step 7 | platform page, "Impersonation" (key `impersonation`) | the account is the target |
 | Other | yes | account link by default; the post URL by your opt-in at step 7; no link at all unless its host is in the configured allowlist | the fixed generic block, drawn from platform-reporting-other.md | no reason label you did not see yourself; you write no instructions |
 
-For a Telegram target the "account" is the channel (and the bot the post
-was forwarded from, when the header shows one), named in the post as
-code text, never as a link; see section 11.
+For a Telegram target the "account" is the public username the reported
+link names, usually the channel, shown in the post as code text
+(`@username`, and `post 123` when the link mode carries the post), never
+as a link. The bot the post was forwarded from is not named in the post:
+its instructions tell members to report that bot from the post's
+"Forwarded from" header. See section 11.
 
 ## 6. Suspected CSAM: the routing card
 
@@ -415,7 +425,9 @@ through the routes in order, then confirm.
 When to close: the reported account or content is gone ("taken down"),
 nothing happened after a reasonable time ("closed without result"), or
 the post was wrong ("retracted", section 8). Ninety days after the post
-the report expires on its own, through the same edit.
+the report expires on its own, through the same edit, unless the bot is
+locked down or halted then: the expiry waits for the first night without
+either.
 
 1. Check the target in the isolated profile. Do not do this for routed
    reports; they are already closed at routing and you no longer have the
@@ -427,15 +439,16 @@ the report expires on its own, through the same edit.
 3. What the bot does: moves the report to `closing`, and the status card
    says so; at the next minute's run it edits the channel post, appending
    the outcome line in both languages and removing the "I reported it"
-   button; only when that edit succeeds does it write `closed` and, in the
-   same batch, keep the aggregate row (category, platform, day-level
-   dates, outcome, "I reported it" count, keyed link hash) and delete the
-   report's links, comment, texts, approval, prompts, jobs and merged
-   duplicates; the status card then shows the outcome without buttons, and
-   the rest of the report's row goes the next night. Nobody is messaged,
-   not the reporter and not the members: the edited post is the outcome.
-   If the post with its outcome line would be too long for Telegram's 4096
-   characters, the post is replaced by the outcome line alone.
+   button; only when that edit succeeds (or the post is gone) does it
+   write `closed` and, in the same batch, keep the aggregate row
+   (category, platform, day-level dates, outcome, "I reported it" count,
+   keyed link hash) and delete the report's links, comment, texts,
+   approval, prompts, jobs and merged duplicates; the status card then
+   shows the outcome without buttons, and the rest of the report's row
+   goes the next night. Nobody is messaged, not the reporter and not the
+   members: the edited post is the outcome. If the post with its outcome
+   line would be too long for Telegram's 4096 characters, the post is
+   replaced by the outcome line alone.
 4. If the edit cannot be made, the report stays in `closing` with the post
    untouched and keeps its data: the bot sets `needs_attention`, alerts the
    keyholders (and the venue when not locked down) once, the status card
@@ -554,9 +567,10 @@ What you do:
 ## 10. Lockdown: what you see
 
 The keyholder can lock the bot down at any moment (`/lockdown`, the
-Lockdown button on an approval notice, or the `LOCKDOWN` secret set with
-wrangler); it is the answer to an admin's arrest or a seized admin
-account. While it is set:
+Lockdown button on an approval notice, or the deployment's `LOCKDOWN`
+override: a secret set with wrangler on Cloudflare, or a line in the
+Node port's `.env` file and a restart); it is the answer to an admin's
+arrest or a seized admin account. While it is set:
 
 - every admin action is refused: every button of the review card, the
   routing card and the status card (Approve, Reject, Route, Cancel, Block
@@ -572,20 +586,23 @@ account. While it is set:
   after a keyholder cancelled it: your next press on it, after the
   lockdown is lifted, brings it to the report's real state; a keyholder
   also finds the open reports with `/open` and the counts with `/stats` in
-  their own chat;
+  their own chat, and can record a post with `/attach` and hold posting
+  with `/halt` there (a keyholder's `/halt` outlasts the lockdown, until
+  an admin's `/resume`);
 - intake answers reporters "temporarily unavailable" and stores nothing;
-  "I reported it" presses are ignored; no post goes out and no closure
-  edit runs; a keyholder's `/retract` still works in their own chat, and
-  its edit still runs, since it removes harm, but the status cards in the
-  venue are left as they were;
+  "I reported it" presses are thanked but not counted; no post goes out
+  and no closure edit runs; a keyholder's `/retract` still works in their
+  own chat, and its edit still runs, since it removes harm, but the status
+  cards in the venue are left as they were;
 - the nightly retention job still runs (and once at the lockdown itself),
   deleting what is due, without touching the venue; the monthly snapshot
   goes to the keyholders only;
 - alerts go to the keyholders by direct message, never to the venue,
   which is assumed compromised;
 - only a keyholder's `/unlock` clears it (never `/resume`, never an
-  admin), and the `LOCKDOWN` secret is cleared only by the keyholder with
-  wrangler.
+  admin), and the `LOCKDOWN` override is lifted only where it was set:
+  with wrangler on Cloudflare, by the keyholder, or in the Node port's
+  `.env` file and a restart.
 
 If you believe an admin account or phone has been taken, tell the
 keyholder at once so they can lock down; the review can wait. The

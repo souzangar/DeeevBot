@@ -1,7 +1,7 @@
 ---
 type: audit
 title: "Planning review (2026-10-28)"
-description: "The angel's two review rounds on the Phase 1 decision brief (objections, suggestions and dispositions, the owner's answers, the research note's unverified items); the Phase 3 MVP plan review (four angel rounds and the codex devil's 21 objections with their dispositions, the devil's unverified scope, the open items carried into the units); and the scope reduction review of the same evening: the owner's threat statement and answers, the angel's rounds 5 to 7, the devil's 14 objections on R9 with their dispositions, closure at R11."
+description: "The angel's two review rounds on the Phase 1 decision brief (objections, suggestions and dispositions, the owner's answers, the research note's unverified items); the Phase 3 MVP plan review (four angel rounds and the codex devil's 21 objections with their dispositions, the devil's unverified scope, the open items carried into the units); and the scope reduction review of the same evening: the owner's threat statement and answers, the angel's rounds 5 to 7, the devil's 14 objections on R9 with their dispositions, closure at R11; and the implementation closing note: the MVP's commits, unit by unit, the decisions taken without the owner, to confirm, and the owner dependencies still open."
 status: active
 tags: [audit, planning, review, angel, devil]
 timestamp: 2026-10-28T00:00:00Z
@@ -554,3 +554,68 @@ Quoted from the critique:
 > U2–U8 implementation tests; those require deployment or unimplemented
 > code. The working tree changed during inspection, so this is not
 > certification of an immutable revision.
+
+## Implementation (closing note, 2026-11-04)
+
+The plan closed at R11 was built unit by unit, each unit by a delegated
+implementer from its own brief, reviewed by the supervising session with a
+domain-auditor pass on every critical-path diff, its findings folded in
+before the commit. The commits, in order:
+
+| Unit | Commit | Subject |
+|---|---|---|
+| Phase 1 | `7a488b3` | docs(planning): record decisions, confirm rules |
+| Phase 2 | `9f61dc7` | build(toolchain): scaffold the stack, arm the kit |
+| U1a | `5d59638` | feat(core): errors, config, logger, i18n, clock |
+| U1b | `b305f86` | feat(storage): D1 port, adapters, migrations |
+| U1b follow-up | `df7e252` | docs(threat-model): channel only, no identities (the threat model, the rules as amended at R11) |
+| U2 | `2487f06` | feat(telegram): boundary, lockdown, bot, fakes |
+| U3 | `e55f633` | feat(intake): drafts, link policy, limits |
+| U4 | `3318972` | feat(review): cards, approve, cancel, route |
+| U5 | `e25ea75` | feat(broadcast): the tick and the single post |
+| U6 | `c3bd1a8` | feat(broadcast): closure, retention, wipe |
+| U7 | `f0ef382` | feat(node): the fallback port on plain Node |
+| U8 | this unit's commit | the go-live unit: the webhook registration script (`scripts/set-webhook.ts`), the single cron and observability pinned, the go-live, weekly, monthly and yearly checklists, the per-rule test lists of [Critical invariants](../architecture/critical-invariants.md), and every doc reconciled with the code |
+
+Decisions the supervising session took without the owner during the units,
+built and documented, for the owner to confirm or overturn:
+
+- Notify-first approvals (U4): an approval is recorded only after its
+  notice reached at least one keyholder, so a post nobody outside the
+  admins' reach has seen is never approved; `KEYHOLDER_IDS` must be
+  non-empty, and at least one keyholder must have sent `/start` before any
+  approval can be recorded.
+- `VENUE_LOCALE` defaults to `fa` (U4): every message the bot writes in the
+  review venue is in that one language, whoever acts.
+- A keyholder's `/halt` is lifted only by an admin's `/resume` (U5).
+- A bot post is never edited by hand in the channel (U5): an edited post
+  can no longer be attached by `/attach`, whose check compares its text.
+- A report in `closing` cannot be retracted (U6).
+- An abandoned edit job is queued again by reconciliation (U6), and the
+  nightly abandon alert repeats while the cause persists.
+- A due retraction edit runs under lockdown and `/halt` whoever ordered it
+  (U6, confirmed at U8): an admin's retraction ordered before a lockdown
+  still replaces the post with that admin's correction text, which passed
+  the free-text policy (no link, mention or phone number, at most 300
+  characters), because taking the reported links down is the
+  harm-removing direction and the keyholder can see the result in the
+  channel; the alternative, holding admin-ordered retractions until
+  `/unlock`, keeps a wrong post up for the whole lockdown.
+
+Owner dependencies still open, each on the go-live checklist of the
+[operations and security runbook](../guides/operations-and-security.md),
+section 9:
+
+- The keyholder outside the country (the owner: "not yet, but I can
+  arrange it"), holding the channel, the Cloudflare and BotFather accounts
+  and the secrets; go-live is blocked until they exist.
+- The deployed per-update probe, with its one-time fidelity check of
+  `/attach`'s text comparison, run once on the owner's account (ADR 0004,
+  "The deployed probe"): built in U5, not run.
+- The two live go-live probes: the bot posts into the channel as its only
+  posting administrator; `getChatMember` answers for the plain-member bot
+  in the NGO group (or `MEMBERSHIP_CHAT_ID` becomes the channel).
+- A native speaker's review of every Persian string of `src/i18n/fa.ts`,
+  all of them drafts by the implementers.
+- The NGO group's future: hidden members do not hide those who have
+  written in its history ([Threat model: seizure](../product/threat-model-seizure.md)).

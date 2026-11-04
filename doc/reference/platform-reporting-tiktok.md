@@ -198,10 +198,11 @@ All [R]:
 
 The points below are what a member makes, in their own words, in one
 TikTok report. They are the English source for the i18n catalogs (the
-Persian copy is written from them later). They apply the decision of
-2026-10-28 (Q7): one genuine report per member, no template text to paste,
-no promise of removal, and first-person reporting by the affected person
-where TikTok offers a first-person route.
+Persian copy, written from them, is a draft awaiting a native speaker's
+review). They apply the decision of 2026-10-28 (Q7): one genuine report
+per member, no template text to paste, no promise of removal, and
+first-person reporting by the affected person where TikTok offers a
+first-person route.
 
 Common frame, every category:
 
@@ -292,5 +293,5 @@ Items from the research note's "Unverified" section that concern this page:
   2026); no CSAM-specific web form was found.
 - Whether the Privacy portal accepts a third party's report, and the live
   in-app reason labels for personal information, harassment and
-  child-safety reports; check on a real device before the Persian copy is
-  written.
+  child-safety reports; check on a real device before the Persian copy,
+  now a draft for native review, is final.

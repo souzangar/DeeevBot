@@ -54,7 +54,7 @@ link.
 |---|---|---|---|
 | Private data (doxxing) | yes | account link by default; post URL by explicit admin opt-in, recorded with the approval | `private-information` |
 | Child safety | yes | account link by default; post URL by admin opt-in | `child-safety` |
-| Suspected CSAM | never | no link leaves the admin review venue; routing card instead | `csam-routing` (card, not post) |
+| Suspected CSAM | never | no link leaves the admin review venue; routing card instead | none: the routing card's own text, the catalog's `review.route.*` keys (`src/review/card.ts`) |
 | Bullying and harassment | yes | account link by default; post URL by admin opt-in | `harassment` |
 | Intimate images shared without consent | yes | account link only; the post URL is never included (a rule of this table, not a default) | `intimate-images` |
 | Impersonation | yes | account link by default; post URL by admin opt-in | `impersonation` |
@@ -194,11 +194,12 @@ The routing card the bot sends the admin, in the review venue only, lists:
 
 The admin's hotline report states "unverified member report, content not
 opened". On confirmation the bot records the admin id and timestamp, nulls
-`url`, `account_url` and `comment` on the report and on its merged rows in
-the same batch (the aggregate row and the keyed link hash remain), and
-deletes the review card from the venue. No message goes to the reporter
-at routing; the hotline links went out at intake when the reporter's
-label asked for them.
+`url`, `account_url`, `comment` and `affected_person` on the report and on
+its merged rows in the same batch (the aggregate fields and the keyed link
+hash remain, until the row is finalized into its aggregate row 30 days
+later), and deletes the review card from the venue. No message goes to
+the reporter at routing; the hotline links went out at intake when the
+reporter's label asked for them.
 
 Why not post it, recorded for the owner: platforms deduplicate reports,
 so volume buys no speed (research note section 0); every member who opens

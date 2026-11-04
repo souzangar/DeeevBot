@@ -125,9 +125,12 @@ deployment configuration: `approvals.admin_id`, `reports.decided_by`,
 - `meta(key PK, value)`: `schema_version` (set by each migration that
   changes the schema; 1 for `0001_init.sql`, 2 for
   `0002_prompt_category.sql`), `halted` (/halt),
-  `paused_until` (the global 429 pause) and `lockdown` (the keyholder's
+  `paused_until` (the global 429 pause), `lockdown` (the keyholder's
   switch, set by `/lockdown` and cleared only by `/unlock` from a
-  keyholder; the `LOCKDOWN` secret is its override outside D1). An absent
+  keyholder; the `LOCKDOWN` secret is its override outside D1) and
+  `lockdown_alerted_at` (the lockdown alert's once-only marker, cleared by
+  `/unlock` with the switch, or by the run once neither lockdown layer
+  holds the bot). An absent
   key reads as its default; a value is an integer or a text of at most 64
   characters.
 
@@ -160,8 +163,8 @@ a pending report expires after 30 days (`expired`, outcome
 |---|---|
 | `src/telegram/` | the Bot API adapter with the one transformer (previews off and HTML parse mode on every send and edit) and the port it satisfies, bot composition and the error boundary, the webhook boundary with the secret check, the gates every command and button is registered behind, where the bot may answer, render helpers, the classification of Bot API failures, the intake, review, press and command handlers (the closure unit's in `closing.ts`), keyholder alerts, the Node port's long polling (`polling.ts`) |
 | `src/auth/` | `isAdmin`, `isKeyholder`, the membership check with the member definition, the two-layer lockdown check |
-| `src/review/` | categories and routing as data, the review card, the routing card and the status card, the report state machine with its conditional updates (approve, cancel, reject, route), approval records, grace and cancel, the admin prompts, the post's renderer, the keyholders' approval notice, the block list, the admin free-text validator |
-| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render; closure and retraction (`closure.ts`, `retraction.ts`, their shared edit and conclusion in `concluding.ts`), finalization (`finalize.ts`), the counts of `/stats`, `/budget` and the monthly snapshot (`stats.ts`), the Node port's minute loop that calls `tick()` (`minute-loop.ts`) |
+| `src/review/` | categories and routing as data, the intake conversation's logic and its store, the draft and the submit (`intake.ts`, `drafts.ts`), the review card, the routing card and the status card, the report state machine with its conditional updates (approve, cancel, reject, route), approval records, grace and cancel, the admin prompts, the post's renderer, the keyholders' approval notice, the block list, the admin free-text validator |
+| `src/broadcast/` | the post job's enqueue (`jobs.ts`), the post and edit jobs, `tick()`, reconciliation, the link allowlist check at render, the verified `/attach` and `/repost` (`attach.ts`, `repost.ts`), `/halt` and `/resume` (`state.ts`), the one lockdown entry `lockdownNow()` (`maintenance.ts`); closure and retraction (`closure.ts`, `retraction.ts`, their shared edit and conclusion in `concluding.ts`), finalization (`finalize.ts`), the counts of `/stats`, `/budget` and the monthly snapshot (`stats.ts`), the Node port's minute loop that calls `tick()` (`minute-loop.ts`) |
 | `src/privacy/` | HMAC references, log redaction, the retention job (`retention.ts`); the emergency wipe is `scripts/wipe.sh`, a wrangler invocation outside the Worker |
 | `src/config/` | the zod schema and loaders (a load whose `KEYHOLDER_IDS` and `ADMIN_IDS` overlap is refused) |
 | `src/db/` | the `SqlDb` port and its D1 and node:sqlite adapters, the Node migrations runner, the random ids |
@@ -169,7 +172,8 @@ a pending report expires after 30 days (`expired`, outcome
 | `src/errors/` | `AppError` and the catalog |
 | `src/i18n/` | the `fa` and `en` catalogs |
 | `src/platforms/` | URL parsing, the link policy (the exact hosts a post may link to), per-platform instruction keys |
-| `src/worker.ts`, `src/node.ts`, `src/node-hooks.ts`, `src/clock.ts` | the Worker entry (`fetch` and `scheduled`), the Node port's entry (long polling and the minute loop over node:sqlite) and its module hook (Node's type stripping resolves the extensionless imports through it), the clock port |
+| `src/worker.ts`, `src/probe.ts`, `src/node.ts`, `src/node-hooks.ts`, `src/clock.ts` | the Worker entry (`fetch` and `scheduled`), the deployed probe's entry (the same Worker with its D1 calls and Bot API requests counted, for one deployment by the owner under `wrangler.probe.jsonc`, not yet run: [ADR 0004](./adr-0004-storage-and-delivery-ledger.md)), the Node port's entry (long polling and the minute loop over node:sqlite) and its module hook (Node's type stripping resolves the extensionless imports through it), the clock port |
+| `scripts/`, at the repository root | the operator scripts, never part of the Worker: the emergency wipe (`wipe.sh`) and the webhook registration (`set-webhook.ts`, run with Node through `src/node-hooks.ts`); `scripts/okf/` holds the docs gate, not the bot's code |
 
 ### Critical globs (Phase 2)
 
@@ -180,9 +184,10 @@ migrations directory), `*src/platforms/*` (the link policy lives there:
 rule 4), `*src/worker.ts` (the Worker entry) and `*src/node.ts` (the Node
 port's entry); since then also `*src/probe.ts` (the deployed probe, unit
 U5), `*scripts/wipe.sh` (the emergency wipe, an operator script outside
-`src/`: rule 8's wipe clause, unit U6) and `*src/node-hooks.ts` (the Node
-port's module hook, unit U7). `src/errors/` and
-`src/i18n/` are not critical.
+`src/`: rule 8's wipe clause, unit U6), `*src/node-hooks.ts` (the Node
+port's module hook, unit U7) and `*scripts/set-webhook.ts` (the webhook
+registration script, an operator script outside `src/`: rules 2 and 6,
+unit U8). `src/errors/` and `src/i18n/` are not critical.
 
 ### Tripwire patterns (Phase 2)
 
@@ -201,10 +206,13 @@ error; the tripwire covers only the critical globs.
 ## Consequences
 
 - Each critical module carries named rules: `telegram` and `auth` rule 2
-  and rule 4 (rendering), `review` rules 1, 3 and 7, `broadcast` rules 1
-  and 5, `privacy` rules 6 and 8, `config` rules 2 and 6, `db` and the
-  root `migrations/` rule 8, `platforms` rule 4. The domain-auditor reads diffs under these
-  globs against those rules.
+  and rule 4 (rendering), `review` rules 1, 3 and 7, `broadcast` rules 1,
+  5 and 8 (the finalization, since unit U6), `privacy` rules 6 and 8,
+  `config` rules 2 and 6, `db` and the root `migrations/` rules 1 (the
+  trigger, since unit U1b) and 8, `platforms` rule 4, as CLAUDE.md's
+  module table has them; and the operator scripts, `scripts/wipe.sh` rule
+  8 (the wipe clause) and `scripts/set-webhook.ts` rules 2 and 6. The
+  domain-auditor reads diffs under these globs against those rules.
 - Membership of the membership chat, which sets a reporter's intake
   limits, is checked with `getChatMember` against the NGO group, where the
   bot is a plain member in privacy mode and never an admin (or against a
@@ -271,3 +279,11 @@ Amended 2026-10-28 (Phase 3, unit U4): `admin_prompts.category`, added by
 the category an admin confirmed to the force-reply prompt that completes
 the approval; the review's modules in `src/review/` and the post job's
 enqueue, `src/broadcast/jobs.ts`.
+
+Amended 2026-11-04 (Phase 3, unit U8, the reconciliation with the code):
+`meta.lockdown_alerted_at`; the module map with the intake's store in
+`src/review/`, `/attach`, `/repost`, `/halt`, `/resume` and
+`lockdownNow()` in `src/broadcast/`, the deployed probe's entry, and the
+operator scripts in `scripts/`; the critical glob
+`*scripts/set-webhook.ts`; the rules each module carries, as CLAUDE.md's
+module table has them.

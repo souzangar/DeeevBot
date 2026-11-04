@@ -196,11 +196,11 @@ coordinated reporting directly. All quotes are from the Authenticity policy
 ## What the bot's instructions say
 
 The points below are what a member makes, in their own words, in one X
-report. They are the English source for the i18n catalogs (the Persian copy
-is written from them later). They apply the decision of 2026-10-28 (Q7):
-one genuine report per member, no template text to paste, no promise of
-removal, and first-person reporting by the affected person where X requires
-it.
+report. They are the English source for the i18n catalogs (the Persian copy,
+written from them, is a draft awaiting a native speaker's review). They
+apply the decision of 2026-10-28 (Q7): one genuine report per member, no
+template text to paste, no promise of removal, and first-person reporting
+by the affected person where X requires it.
 
 Common frame, every category:
 

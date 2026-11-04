@@ -45,14 +45,14 @@ Free-plan values from developers.cloudflare.com (Workers limits updated
 | Durable Object requests per day | 100,000 (separate meter) | not used: there is no Durable Object ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)) |
 | Durable Object duration per day | 13,000 GB-s | not used |
 | Subrequests per invocation | 50 (D1 queries count) | a cron run drains a few jobs, each one Bot API call and a few D1 queries; a webhook update makes a few calls |
-| CPU per invocation | Workers 10 ms | every invocation is a Worker one; the per-update work is measured by the deployed probe |
+| CPU per invocation | Workers 10 ms | every invocation is a Worker one; the per-update work is to be measured by the deployed probe, built and not yet run |
 | DO alarm invocation duration | 15 min | not used |
 | Simultaneous outgoing connections | 6 | one post or edit per job; no pacing, a report being posted once |
 | D1 rows written per day | 100,000 (indexes and deletes count) | D1 is the only store and holds nothing per member: a report costs a few dozen rows over its lifecycle, a press one (capacity below) |
 | DO SQLite rows written per day | 100,000 (separate meter; each setAlarm = 1) | not used |
 | D1 / DO rows read per day | 5,000,000 each | D1: the minute cron reads the due jobs through an index, a few rows a run; DO not used |
 | D1 database size / DO storage | 500 MB / 10 GB per object (an FAQ entry still says 1 GB on Free) | minimisation keeps both tiny |
-| Cron Triggers per account | 5 | three planned: the one-minute job cron (which also replaces the stall detector), the nightly retention job and the monthly snapshot |
+| Cron Triggers per account | 5 | one as built (three were planned): `* * * * *`, the one-minute job cron, which also replaces the stall detector and, by the minute, runs the nightly retention job and the monthly snapshot; the five are counted per account, and the account runs no other cron Worker, the deployed probe's while it briefly exists aside |
 | Queues (Free) | 10,000 ops/day | not used |
 
 ### Over-limit behaviour
@@ -61,7 +61,8 @@ On Free, an operation over a daily cap fails until 00:00 UTC. Defined
 behaviour ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md), the cap
 contract): a cron run that meets a cap error stops without writing, the
 next minute's run picks the due work up again once the reset has passed,
-and the admin chat is alerted once.
+and the keyholders are alerted, at most once a UTC day from one Worker
+instance (as built: ADR 0004, "The run as built").
 
 Capacity on Free: each approved report is posted once, into the broadcast
 chat, so a report costs a few dozen D1 rows over its whole lifecycle
@@ -106,13 +107,18 @@ model is [Threat model: seizure](../product/threat-model-seizure.md).
 - Fallback: the Node port (Docker, long polling, the same SQL on a local
   SQLite file) is deployed with an empty database, because nothing in the
   recovery story may depend on a Cloudflare account that is already
-  suspended. A yearly drill proves the port starts and receives updates
-  ([operations and security](../guides/operations-and-security.md); the
+  suspended. As built, it is `src/node.ts`, run by Node 22.18 or later
+  from its TypeScript sources through Node's type stripping and the module
+  hook `src/node-hooks.ts` (`npm run port`), in the image of `Dockerfile`
+  with `docker-compose.yml`. A yearly drill proves the port starts and
+  receives updates ([operations and security](../guides/operations-and-security.md); the
   procedure and the drill are the
   [fallback drill runbook](../guides/fallback-drill.md)).
 - Open measurement for the MVP plan: the CPU of the per-update work on
   the webhook path (configuration memo, HMAC, grammY parse, render), by a
-  deployed probe.
+  deployed probe: built (`src/probe.ts` with `wrangler.probe.jsonc`; the
+  procedure is ADR 0004's "The deployed probe") and not yet run, an owner
+  dependency.
 
 ## Alternatives considered
 
@@ -141,3 +147,9 @@ in Docker (`Dockerfile`, `docker-compose.yml`): the same bot over long
 polling, a minute loop calling the same run, the same migrations on a
 SQLite file; its deployment, the switch back and the yearly drill are the
 [fallback drill runbook](../guides/fallback-drill.md).
+
+Amended 2026-11-04 (Phase 3, unit U8, the reconciliation with the code):
+one cron as built in place of the three planned, the Free plan's five
+being counted per account; the cap alert to the keyholders, never the
+admin chat; the Node port's runtime (Node 22.18 or later, type stripping
+with `src/node-hooks.ts`); the deployed probe built and not yet run.

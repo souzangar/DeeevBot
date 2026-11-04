@@ -142,9 +142,10 @@ per category (the catalogs' `instructions.other.<slug>` keys), and a
 report of the category "other" on any platform quotes the fixed generic
 block (`instructions.generic`): since the scope reduction of 2026-10-28
 no admin writes instructions, and the recommended comment is the only
-admin text. The blocks name nothing platform-specific. They were written
-from this checklist, which also governs any change to them, in English
-(the Persian copy follows the same rules):
+admin text a post carries (a retraction replaces the post with the
+admins' correction). The blocks name nothing platform-specific. They were
+written from this checklist, which also governs any change to them, in
+English (the Persian copy follows the same rules):
 
 1. Name the in-app path you verified in the isolated browser profile: where
    the Report option is on a post and on a profile. If you could not find

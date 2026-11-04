@@ -30,7 +30,10 @@ exist, as do the Telegram wiring, the intake, the admin review, the
 scheduler with its single post, the closure unit (closure, retraction,
 retention, the monthly snapshot, the emergency wipe) and the Node
 fallback port (long polling, the minute loop, SQLite, the Dockerfile and
-the drill runbook); the go-live unit follows. On 2026-10-28 the owner narrowed the scope: no
+the drill runbook) and the go-live unit (the webhook registration script,
+the checklists, the per-rule test lists and the docs reconciled with the
+code). The MVP's code is complete; go-live waits on the owner's steps
+listed in the closing note of `doc/audits/2026-10-28-planning-review.md`. On 2026-10-28 the owner narrowed the scope: no
 direct-message broadcasts and no member or reporter identity in storage;
 an approved report is posted once into a configured group or channel
 (ADR 0004, ADR 0006).
@@ -38,7 +41,7 @@ an approved report is posted once into a configured group or channel
 ## Commands
 
 ```bash
-npm ci                            # install from the committed lockfile (Node >= 22.13, npm)
+npm ci                            # install from the committed lockfile (Node >= 22.18, npm)
 npm run typecheck                 # tsc --noEmit
 npm run lint                      # eslint . (typescript-eslint, type-checked)
 npm run build                     # typecheck + lint (the gate's build step)
@@ -53,6 +56,8 @@ npm run migrate:local             # apply the D1 migrations in migrations/ to th
 scripts/wipe.sh [--local]         # the keyholder's emergency wipe (every table but stats and meta); never run by the gate
 npm run port                      # the Node fallback port from its TS sources (node --import ./src/node-hooks.ts src/node.ts); never with a real token outside the fallback
 docker compose up -d --build      # the port in its container; the procedure is doc/guides/fallback-drill.md
+npm run set-webhook -- <origin>   # the keyholder registers the webhook (origin + WEBHOOK_PATH_SEGMENT, secret_token, message + callback_query, max_connections 10, pending dropped) and prints the masked getWebhookInfo; never run by a test
+npm run set-webhook:delete        # deleteWebhook, pending updates kept (the fallback drill's switch-back)
 # Stack-independent:
 bash selftest/run-all.sh          # kit tooling safety pins (devil.sh, hooks, statusline, globs completeness, tripwire patterns)
 bash selftest-okf/run-all.sh      # OKF docs-gate contracts
@@ -75,7 +80,9 @@ configuration (ADR 0004); the Node fallback port's entry is `src/node.ts`
 `tick()`, node:sqlite; it runs the TypeScript sources through Node's type
 stripping with the resolve hook `src/node-hooks.ts`:
 `node --import ./src/node-hooks.ts src/node.ts`, Node 22.18 or later;
-`doc/guides/fallback-drill.md`). Module map
+`doc/guides/fallback-drill.md`). `scripts/set-webhook.ts` is the operator's
+webhook registration script, run the same way and never part of the
+Worker; `scripts/wipe.sh` the keyholder's emergency wipe. Module map
 (`doc/architecture/adr-0006-data-model-and-module-layout.md`); the
 modules land unit by unit, `src/errors/`, `src/config/`, `src/privacy/`
 (logger and reporter reference), `src/i18n/` and `src/clock.ts` first,
@@ -96,7 +103,8 @@ then `src/db/` and `migrations/`:
 | `src/platforms/` | URL parsing, per-platform instruction keys | yes (4) |
 
 Critical paths are the globs in `.claude/devil/critical-globs.conf`
-(`src/worker.ts`, `src/probe.ts`, `src/node.ts` and `src/node-hooks.ts` included). Anchor convention: every file
+(`src/worker.ts`, `src/probe.ts`, `src/node.ts`, `src/node-hooks.ts`,
+`scripts/set-webhook.ts` and `scripts/wipe.sh` included). Anchor convention: every file
 on a critical path carries the comment line `// @critical-path` (TypeScript)
 or `-- @critical-path` (SQL) near its top, and
 `selftest/critical-globs-completeness.sh` fails when an anchored file under
@@ -247,7 +255,10 @@ amended the same day for the single-post model:
   failure that changes state; a job failure is recorded on its job and
   never aborts the tick; a storage failure, a daily-cap error included,
   stops the tick WITHOUT writing (the next tick after the 00:00 UTC reset
-  resumes from the committed state) and alerts the keyholders once. Every
+  resumes from the committed state) and alerts the keyholders once (at most
+  once a UTC day per isolate, on a 15th minute, since the failed store
+  cannot hold the marker); reconciliation queues an edit job the retention
+  job abandoned again, so a persistent cause alerts nightly. Every
   code path that maps an error has a unit test; "the boundary never leaks
   a URL or an id" is a regression test with a real `GrammyError`.
 
@@ -258,8 +269,8 @@ amended the same day for the single-post model:
   to make it testable rather than skipping.
 - Every new logic file (service/repository/handler/util) gets a unit test.
 - Three Vitest projects (`vitest.config.ts`): **unit** is `*.test.ts`
-  beside the module under `src/`, plain node, no network, mocks at the
-  boundary; **workers** is `test/workers/*.test.ts`, run in the Workers
+  beside the module under `src/` (and `scripts/`), plain node, no network,
+  mocks at the boundary; **workers** is `test/workers/*.test.ts`, run in the Workers
   runtime by `@cloudflare/vitest-plugin` with the local D1 binding, for
   the Cloudflare adapters and the D1 parity of the atomic batches (the
   submit, the approval, the finalization); **invariants**

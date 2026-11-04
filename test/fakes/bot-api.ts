@@ -8,11 +8,17 @@
 // recording is what Telegram would have received.
 //
 // - Methods: getMe, getUpdates, getChatMember, setWebhook, deleteWebhook,
-//   sendMessage, editMessageText, editMessageReplyMarkup (returning the
-//   edited Message with its reply_markup), deleteMessage and
+//   getWebhookInfo, sendMessage, editMessageText, editMessageReplyMarkup
+//   (returning the edited Message with its reply_markup), deleteMessage and
 //   answerCallbackQuery. Any other method, getChat among them, is answered
 //   404 "Not Found" and recorded like the rest, so a test can assert it was
 //   never called.
+// - The webhook, as Telegram keeps it: setWebhook records its url,
+//   max_connections (40 unless given) and allowed_updates, deleteWebhook
+//   forgets them, and getWebhookInfo answers them (an empty url when none
+//   is set), with what setWebhookInfo() adds (a delivery error, an IP
+//   address); like Telegram, it never answers the secret token. getUpdates
+//   is not refused while a webhook is set: a test scripts that 409.
 // - Messages the bot sends are kept per chat, by the text it sent, or, with
 //   the `telegramTexts` option, by the text Telegram keeps once it has
 //   parsed the HTML (plainText(), src/review/render-post.ts), which a probe
@@ -43,7 +49,7 @@
 //   ever fetched.
 // Fixture values are never secret-shaped (the secret-shape scan reads test
 // files too).
-import type { Update, UserFromGetMe } from 'grammy/types';
+import type { Update, UserFromGetMe, WebhookInfo } from 'grammy/types';
 import { plainText } from '../../src/review/render-post';
 
 /** One call the code under test made. */
@@ -177,6 +183,8 @@ export interface FakeBotApi {
   queueUpdates(...updates: Update[]): void;
   /** The getUpdates requests being held, waiting for an update (see the header). */
   waitingForUpdates(): number;
+  /** Fields getWebhookInfo answers on top of the webhook's own (see the header). */
+  setWebhookInfo(extra: Partial<WebhookInfo>): void;
   /** The requests a 'hang' outcome left unsettled. */
   hanging(): number;
 }
@@ -243,6 +251,9 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
   const lastMessageId = new Map<number, number>();
   const members = new Map<string, FakeMember | 'user_not_found'>();
   const updates: Update[] = [];
+  /** The webhook setWebhook set, as getWebhookInfo answers it; null when none is set. */
+  let webhook: Pick<WebhookInfo, 'url' | 'max_connections' | 'allowed_updates'> | null = null;
+  let webhookExtra: Partial<WebhookInfo> = {};
   /** The held long polls: each answers when woken. */
   const waiters = new Set<() => void>();
   let hung = 0;
@@ -316,7 +327,17 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
         return ok(updates.splice(0, limit));
       }
       case 'setWebhook':
+        webhook = {
+          url: String(payload.url),
+          max_connections: typeof payload.max_connections === 'number' ? payload.max_connections : 40,
+          ...(Array.isArray(payload.allowed_updates) ? { allowed_updates: payload.allowed_updates as NonNullable<WebhookInfo['allowed_updates']> } : {}),
+        };
+        return ok(true);
       case 'deleteWebhook':
+        webhook = null;
+        return ok(true);
+      case 'getWebhookInfo':
+        return ok({ url: '', has_custom_certificate: false, pending_update_count: 0, ...webhook, ...webhookExtra });
       case 'answerCallbackQuery':
         return ok(true);
       case 'getChatMember': {
@@ -437,6 +458,9 @@ export function fakeBotApi(options: FakeBotApiOptions = {}): FakeBotApi {
       for (const wake of [...waiters]) wake();
     },
     waitingForUpdates: () => waiters.size,
+    setWebhookInfo: (extra) => {
+      webhookExtra = { ...extra };
+    },
     hanging: () => hung,
   };
 }

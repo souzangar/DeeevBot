@@ -28,7 +28,7 @@ below are defined in
   reporter's own update, and everything it keeps is keyed by an
   HMAC-SHA-256 of the id under a server key, `REPORTER_REF_KEY`, the
   "reporter reference" (the draft's `draft_key`, the report's
-  `reporter_ref`, the counters' `reporter_ref`).
+  `reporter_ref`, the reporter counters' `reporter_stats.reporter_ref`).
 - There is no subscriber list and no list of who pressed "I reported it":
   an approved report is posted once into the configured channel, and a
   press only increments the report's count and the day's.
@@ -56,7 +56,9 @@ below are defined in
 Every table and column named here is defined in
 [ADR 0006](../architecture/adr-0006-data-model-and-module-layout.md) and
 created by `migrations/0001_init.sql` and the files after it (`category` on
-`admin_prompts` by `0002_prompt_category.sql`); D1 is the only store.
+`admin_prompts` by `0002_prompt_category.sql`); D1 is the only store (the
+Node port keeps the same tables, from the same files, in its SQLite file
+at `SQLITE_PATH`).
 
 ### Finalization
 
@@ -119,8 +121,11 @@ any column that holds or could hold a Telegram id other than the admins'
 and keyholders' own, when a column has no classified fate, when a field
 this table nulls is not nullable, when a table or a personal column is
 missing from this table, or when this table names a column the schema
-does not have, or names it under another table; each path's own test
-lands with the code that runs it.
+does not have, or names it under another table.
+`test/invariants/retention.test.ts` runs every path of the schedule
+through the code that deletes it, at its moment and not a moment before,
+and checks that every terminal path leaves only the aggregate row;
+`test/invariants/wipe.test.ts` pins the wipe (below).
 
 ## What survives
 
@@ -187,6 +192,10 @@ enabled.
   the history and also works when D1 refuses queries (a daily cap
   exhausted). The procedure is in the
   [operations and security runbook](../guides/operations-and-security.md).
+  The script does not apply to the Node port, whose SQLite file runs with
+  `secure_delete` on: there the equivalent is to stop the port and destroy
+  its database, aggregate rows included
+  ([fallback drill runbook](../guides/fallback-drill.md), section 7).
 - The recovery story after a lost deployment is the re-submission of open
   reports, announced in the channel; nothing in it may depend on an
   account that is already suspended (see

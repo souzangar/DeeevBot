@@ -103,11 +103,13 @@ invocation (ADR 0004,
   `fail_query(403, "Forbidden: user is deactivated", ...)` for a deleted
   user, which corroborates the text above.
 
-Project use: there is no subscriber to remove, and the webhook does not
-receive `my_chat_member`. A 403 "bot was blocked by the user" is classified
-`TELEGRAM_BLOCKED`; a 403 "user is deactivated" and a 400 "chat not found" or
-"private chat not found" are `TELEGRAM_CHAT_GONE` (`src/telegram/errors.ts`,
-matching the code first, then these texts). On a reply each is logged by
+Project use: there is no subscriber to remove, and the bot never
+receives `my_chat_member`: the webhook is registered, and the Node port
+polls, for `message` and `callback_query` only. A 403 "bot was blocked by
+the user" is classified `TELEGRAM_BLOCKED`; a 403 "user is deactivated"
+and a 400 "chat not found" or "private chat not found" are
+`TELEGRAM_CHAT_GONE` (`src/telegram/errors.ts`, matching the code first,
+then these texts). On a reply each is logged by
 class and ignored; on a keyholder alert it is counted as failed, and an
 alert that reached no keyholder at all is sent again by the next
 reconciliation (one keyholder reached suffices). A keyholder who never sent `/start`
@@ -182,11 +184,45 @@ traffic off the daily request budget, but the path is not itself the check;
 an authentic update is handed to the bot under `waitUntil` and answered 200
 at once, so Telegram does not redeliver (decisions Q8, Q9;
 `src/telegram/webhook.ts`). The IP ranges are not used as the check (they
-can change; the secret is the contract). The webhook is registered with
-`allowed_updates = [message, callback_query]`, a low `max_connections` and
-`drop_pending_updates` on every re-registration
-([ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md));
-the Node fallback calls `deleteWebhook` before it polls.
+can change; the secret is the contract).
+
+Project use, the registration: the webhook is registered by
+`scripts/set-webhook.ts` (`npm run set-webhook -- <Worker origin>`;
+[ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md)),
+which calls `setWebhook` with `url` = the Worker's origin plus
+`/<WEBHOOK_PATH_SEGMENT>`, `secret_token` = `WEBHOOK_SECRET`,
+`allowed_updates` = `["message", "callback_query"]`, `max_connections` = 10
+(the Free plan's burst is small) and `drop_pending_updates` = true, on
+every registration; `npm run set-webhook:delete` calls `deleteWebhook` with
+`drop_pending_updates` = false, so the pending updates are kept. Either way
+it then calls `getWebhookInfo` and prints the answer as JSON on stdout, the
+URL's path masked (`<WEBHOOK_PATH_SEGMENT>` when it is the configured
+segment, otherwise hidden) and the token, the secret token and the segment
+scrubbed, in any letter case, from every string, the URL's origin
+included; it never prints the token or the secret token. The fields it reads are WebhookInfo's as grammY's bundled types
+declare them (`node_modules/@grammyjs/types/manage.d.ts`, `@grammyjs/types`
+5.0.0 as grammY 1.46.0 pins it; read 2026-11-04, not checked against
+core.telegram.org): `url` ("may be empty if webhook is not set up"),
+`has_custom_certificate`, `pending_update_count`, `ip_address`,
+`last_error_date`, `last_error_message`, `last_synchronization_error_date`,
+`max_connections` and `allowed_updates`; anything else in the answer is left
+out. `scripts/set-webhook.test.ts` pins both calls' exact parameters and the
+masking against the fake Bot API.
+
+Project use, the Node port: at every start it calls `deleteWebhook` without
+`drop_pending_updates`, so the updates Telegram kept while the Worker was
+out of reach are handled (`src/node.ts`), then polls with `getUpdates`
+(`timeout` 30 seconds, `allowed_updates` `message` and `callback_query`, as
+the webhook is registered) through grammY's runner
+(`src/telegram/polling.ts`). Since `getUpdates` "will not work if an
+outgoing webhook is set up", a webhook set while the port polls ends
+polling: the classification (`src/telegram/errors.ts`) tells `getUpdates`'
+two 409s apart by their description, "webhook is active" (the port alerts
+the keyholders, exits with code 0 and stays stopped, yielding the bot to the
+webhook) and "terminated by other getUpdates request" (another poller on the
+token: like a 401, it ends polling as a failure, exit code 1). Those two
+descriptions are the fragments the code matches; they were not verified
+against the Bot API page or the server source for this note.
 
 ## Message deletion and editing
 
@@ -296,3 +332,10 @@ approved report needs no broadcast limit at all.
 - Whether `getChatMember` answers for a non-admin member bot in the NGO's
   group: the page guarantees it only for an administrator bot; measured in
   the MVP.
+- The two 409 descriptions of `getUpdates` the Node port tells apart
+  ("webhook is active", "terminated by other getUpdates request") are the
+  fragments `src/telegram/errors.ts` matches, not verified against the Bot
+  API page or the server source.
+- The WebhookInfo fields the registration script prints are as grammY's
+  bundled types declare them (`@grammyjs/types` 5.0.0), not as read on
+  core.telegram.org.

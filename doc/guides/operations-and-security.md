@@ -1,7 +1,7 @@
 ---
 type: runbook
 title: "Operations and security runbook"
-description: "Running the bot safely after the seizure threat: the keyholder outside the country as the root of trust (the BotFather owner account, the Cloudflare account, the channel, the secrets), admin accounts that administer nothing, the configuration, webhook registration, the chats the bot sits in and its role in each, the grace period with Cancel and /halt, the single post and its edits, lockdown and the emergency wipe, quota exhaustion, logs, the single cron with retention and the stats snapshot, the fallback deployment and the yearly drill, incident procedures, the risk register, and checklists."
+description: "Running the bot safely after the seizure threat: the keyholder outside the country as the root of trust (the BotFather owner account, the Cloudflare account, the channel, the secrets), admin accounts that administer nothing, the configuration, webhook registration with its script, the chats the bot sits in and its role in each, the grace period with Cancel and /halt, the single post and its edits, lockdown and the emergency wipe, quota exhaustion, logs, the single cron with retention and the stats snapshot, the fallback deployment and the yearly drill, incident procedures, the risk register, and the go-live, weekly, monthly and yearly checklists."
 status: active
 tags: [runbook, operations, security, cloudflare, telegram, keyholder, lockdown, iran]
 timestamp: 2026-10-28T00:00:00Z
@@ -49,10 +49,11 @@ its recovery codes (2.3), the broadcast channel (2.2), and the secrets
 - [ ] Knows the actions: Cancel on an approval notice (3.1); `/lockdown`,
       or the Lockdown button on a notice (3.6); `wrangler secret put
       LOCKDOWN` with the value `1` (3.6, when D1 or the bot cannot be
-      trusted); `/retract <id>` and `/stats` in their own chat, under
-      lockdown too (admin review runbook, sections 8 and 10); the
-      emergency wipe, `scripts/wipe.sh`, and `wrangler d1 delete` (7); the token
-      re-issue (7). A Cancel on a notice whose approval is not recorded
+      trusted); `/retract <id>`, `/attach <id> ...`, `/halt`, `/open` and
+      `/stats` in their own chat, under lockdown too (3.2; admin review
+      runbook, sections 8 and 10); the emergency wipe, `scripts/wipe.sh`, and
+      `wrangler d1 delete` (7); the token re-issue (7) and the webhook
+      registration that follows it (2.1). A Cancel on a notice whose approval is not recorded
       yet changes nothing and says so, until the notice is five minutes
       old, when it settles the notice as cancelled; on the Node port a
       send slower than five minutes could settle a notice before its
@@ -113,7 +114,7 @@ the bot, or transfer it. Held by the keyholder. Requirements:
 | Value | Where it lives | Never |
 |---|---|---|
 | Bot token | the deployment's secret store (Workers secrets; on the Node port, the gitignored `.env` file beside `docker-compose.yml`, filled in from `.env.example`: [fallback drill runbook](./fallback-drill.md)) | VCS, logs, any chat message |
-| Webhook `secret_token` | same | same; re-issued whenever the token is re-issued |
+| Webhook `secret_token` (`WEBHOOK_SECRET`) and the path segment (`WEBHOOK_PATH_SEGMENT`) | same | same; re-issued whenever the token is re-issued; a new value of either needs the webhook registered again (2.1), since the Worker answers 404 to anything else |
 | Reporter-reference HMAC key | same; never exported; the only thing that could re-identify a reporter reference | VCS, logs, exports, backups; note that changing it severs every existing counter and block from its reference |
 | `ADMIN_IDS` | same (deployment configuration kept out of VCS) | VCS |
 | `KEYHOLDER_IDS`, the keyholders' numeric Telegram ids (alerts, `/lockdown`, `/unlock`, `/retract`); never an admin's id, which the configuration refuses | same (deployment configuration kept out of VCS), set by the keyholder | VCS |
@@ -131,20 +132,72 @@ substitute for keeping secrets out of it.
 
 ### 2.1 Webhook registration
 
-Register with `setWebhook` and these settings (decisions Q4 and Q8):
+The webhook is registered by `scripts/set-webhook.ts` (decisions Q4 and
+Q8), an operator script the keyholder runs with Node 22.18 or later from
+their own machine, in a checkout of the deployed commit; it is never part
+of the Worker:
 
-1. The Worker URL whose path carries a random segment. The segment keeps
-   scanner traffic off the daily request budget; it is not the check.
-2. `secret_token`: 1 to 256 characters from A-Z, a-z, 0-9, `_` and `-`.
-   The Worker rejects any request whose `X-Telegram-Bot-Api-Secret-Token`
-   header does not equal the configured secret, by constant-time compare,
-   before parsing the body, with a 404 and an empty body.
-3. `allowed_updates = ["message", "callback_query"]`, nothing else.
-4. A low `max_connections`.
-5. `drop_pending_updates = true` on every re-registration.
+```bash
+npm run set-webhook -- https://div-report.<account subdomain>.workers.dev
+npm run set-webhook:delete
+```
+
+It reads the deployment's whole configuration from its environment, as
+the Worker does: every required variable of 1.4 with the Worker's own
+values (the configuration refuses to load otherwise; never the Node port's
+`.env`, whose webhook secret and segment are fresh ones), and never `DEBUG`,
+`NODE_DEBUG` or `NODE_DEBUG_NATIVE`, which it refuses before any request.
+Either export the values in the shell first, or keep them in a gitignored
+file (`.env.*`, owner-only, on the keyholder's machine only) and run
+`env -i PATH="$PATH" node --env-file=<file> --import ./src/node-hooks.ts
+scripts/set-webhook.ts <origin>`: a variable the shell already exports
+wins over the file's value (Node's rule), so `env -i` starts from an empty
+environment, and no other bot's token left in the shell can move another
+webhook. The argument is the Worker's origin alone, `https://` and its
+host, never a path: the script appends the segment itself. It calls
+`setWebhook` with exactly these parameters, which its unit test pins
+(`scripts/set-webhook.test.ts`):
+
+1. `url`: the origin, then `/` and `WEBHOOK_PATH_SEGMENT`. The random
+   segment keeps scanner traffic off the daily request budget; it is not
+   the check.
+2. `secret_token`: `WEBHOOK_SECRET`, 1 to 256 characters from A-Z, a-z,
+   0-9, `_` and `-`. The Worker rejects any request whose
+   `X-Telegram-Bot-Api-Secret-Token` header does not equal it, by
+   constant-time compare, before reading the body, with a 404 and an empty
+   body.
+3. `allowed_updates = ["message", "callback_query"]`, nothing else. Not
+   `edited_message` among them: an edit a user makes to a message already
+   sent never reaches the bot, which acts on each message as first
+   received (and, outside lockdown, deletes it on receipt); nor
+   `my_chat_member`, `chat_member`, channel posts or inline queries.
+4. `max_connections = 10`: the Free plan's burst is small.
+5. `drop_pending_updates = true` on every registration, so register right
+   after the deploy it follows: updates Telegram still holds are dropped.
+
+It then prints Telegram's `getWebhookInfo` answer as JSON on its standard
+output, the URL's path shown as `<WEBHOOK_PATH_SEGMENT>` when it is the
+configured segment (as hidden otherwise), every text, the URL's host
+included, scrubbed in any letter case of the
+token, the secret and the segment, and never the token or the secret
+itself (Telegram does not return the secret). Check that `url` shows the
+Worker's origin with `<WEBHOOK_PATH_SEGMENT>`, `allowed_updates` the two
+kinds and `max_connections` 10; a `last_error_message` with its
+`last_error_date` is the last delivery failure Telegram saw. `--delete`
+removes the webhook instead, keeping the updates Telegram holds
+(`drop_pending_updates = false`, as the port's own deletion keeps them),
+and prints the same answer with an empty `url`: it cleans up (the deployed
+probe's throwaway bot after its run, ADR 0004) and takes the bot off the
+Worker without starting the port, which deletes the webhook itself at
+every start anyway. A failure prints one class-only line on standard
+error and exits 1, and nothing else: `config.invalid` (a value missing or
+malformed, or a debug variable set), `webhook.usage` (not one https origin
+and not `--delete`), or `webhook.failed` naming the Bot API method, with
+Telegram's error code when there is one (401: the token is wrong or
+revoked). No line names a value, the argument included.
 
 After a token re-issue: set the new token and a new secret in the secret
-store, redeploy, re-register. On the Node fallback there is no webhook:
+store, redeploy, run the script again. On the Node fallback there is no webhook:
 long polling with `getUpdates` and no inbound port; the port deletes the
 webhook itself at every start (the two are mutually exclusive), so it is
 stopped for good before the webhook is registered again, and a webhook set
@@ -156,7 +209,7 @@ while it runs makes it yield, alerting the keyholders
 | Chat | The bot's role | Why |
 |---|---|---|
 | The broadcast channel (`BROADCAST_CHAT_ID`, a channel, negative id) | the only posting administrator; the keyholder owns the channel; no human admin is among its administrators | one post per approved report, edited at retraction and closure; joining is the consent and leaving the opt-out; a channel hides its subscribers from non-administrators, which a group never does, so a seized admin phone lists nobody; the bot stores no ids for its readers |
-| Admin review venue (`ADMIN_CHAT_ID`, a private supergroup) | administrator holding `can_delete_messages`; auto-delete enabled | review cards, prompts and replies are deleted within 48 hours of their message (the Bot API's limit); the keyholder is not in it |
+| Admin review venue (`ADMIN_CHAT_ID`, a private supergroup) | administrator holding `can_delete_messages`; auto-delete enabled | review cards are deleted at the decision, prompts and admins' replies once answered (and by the nightly retention job); a card past the Bot API's 48-hour deletion limit, which binds an administrator bot too, is edited to its outcome without links instead, and the venue's auto-delete covers the rest; the keyholder is not in it |
 | The NGO's membership group (`MEMBERSHIP_CHAT_ID`) | a plain member in privacy mode, never an administrator; hidden members on; the admins out of its administrator list | an administrator bot receives every group message, which would route the members' chatter through the Worker and burn the request meter; membership is checked with `getChatMember` on the update's user id to set a reporter's limits, and never stored. The owner's go-live probe verifies that `getChatMember` answers for a plain-member bot; if it does not, `MEMBERSHIP_CHAT_ID` becomes the channel (a value change). Hidden members protect only people who never write: the group's history exposes its authors, which is outside the bot's control and the owner's decision |
 | Keyholders' private chats | ordinary private chats, opened by the keyholder's `/start` | alerts, the approval notices with Cancel and Lockdown, `/lockdown`, `/unlock`, `/retract`, `/attach`, `/halt`, `/open`, `/stats` |
 | Reporters' private chats | ordinary private chats | intake, its one self-deleting acknowledgement, the hotline links for a "sexual content involving a minor" label; nothing else, ever |
@@ -307,7 +360,9 @@ cloudflare-free-plan-limits.md):
 - D1 rows written: 100,000 per day (indexes and deletes count); a report
   costs a few dozen over its lifecycle; a press costs two, so
   `MARKS_PER_DAY` at 20,000 is at most 40,000.
-- Cron Triggers: 5 per account; the bot uses one.
+- Cron Triggers: 5 per account, not per Worker; the bot uses one, and the
+  account runs no other cron Worker (the deployed probe's aside, while it
+  exists).
 
 ### 3.4 The channel
 
@@ -362,7 +417,9 @@ Two layers, either of which locks the bot:
 
 Under either layer: intake answers reporters "temporarily unavailable"
 and stores nothing; presses are ignored; every admin action is refused;
-no post or edit job runs except a keyholder's retraction edit; the run
+no post or edit job runs except a retraction's edit, which removes harm
+(under lockdown only a keyholder can order a retraction; one an admin
+ordered before the switch still runs); the run
 alerts the keyholders once (within a minute of a keyholder's `/lockdown`
 or Lockdown button, and otherwise, the `LOCKDOWN` secret included, at the
 next quarter hour, again every quarter hour until a keyholder got it)
@@ -402,7 +459,13 @@ is throttled to 1 report per day; blocks persist.
 - Open item: whether Workers invocation logs record request headers, which
   would put the webhook secret in a log when observability is enabled.
   Until settled, treat the observability setting as sensitive and keep it
-  off unless debugging.
+  off unless debugging: `wrangler.jsonc` sets it off, and
+  `src/worker.test.ts` pins that (and the deployed probe's
+  `wrangler.probe.jsonc` too), so turning it on is a deliberate change of
+  the committed file, reverted right after the debugging.
+- The webhook script (2.1) prints the masked `getWebhookInfo` answer and,
+  on a failure, one class-only line through the redacting logger; nothing
+  of the token, the secret or the path segment.
 - Unknown errors produce a log line with the error class only, never the
   update payload.
 - The bot refuses to start with a `DEBUG` variable or secret, whatever its
@@ -420,7 +483,8 @@ is throttled to 1 report per day; blocks persist.
 
 ## 5. The single cron: jobs, reconciliation, retention, the snapshot
 
-- One Cron Trigger, every minute (`* * * * *` in wrangler.jsonc). Each
+- One Cron Trigger, every minute (`* * * * *` in wrangler.jsonc, the
+  account's only cron Worker, which `src/worker.test.ts` pins). Each
   run drains the due jobs (at most one post and a bounded number of
   edits), then, by the minute: reconciliation every 15th minute, the
   retention job at 00:15 UTC, the monthly stats snapshot on the first day
@@ -548,7 +612,8 @@ Record the date and outcome in an audit doc under `doc/audits/`.
      first; otherwise wait for the 00:00 UTC reset and wipe.
 - **Token compromise or suspicion of it.** Re-issue the token in
   @BotFather from the owner account, set it and a new webhook secret in the
-  secret store, redeploy, re-register the webhook (2.1). The old token
+  secret store, redeploy, register the webhook again with the script (2.1).
+  The old token
   stops working the moment the new one is issued, which also disarms any
   deployment running under it.
 - **Cloudflare account compromise.** The keyholder's failure domain:
@@ -603,46 +668,69 @@ operators:
 
 ## 9. Checklists
 
-Go-live (blocked until the keyholder exists):
+Go-live (blocked until the keyholder exists; the list holds every go-live
+blocker of the [threat model](../product/threat-model-seizure.md)):
 
-- [ ] A keyholder outside the country exists, holds the BotFather owner
-      account (1.2), the Cloudflare account (2.3) and the channel (2.2),
-      and is listed in `KEYHOLDER_IDS` with no id in common with
-      `ADMIN_IDS` (1.1)
-- [ ] Every keyholder has sent `/start` and received the confirmation (1.1)
-- [ ] Admin accounts hardened and administering nothing, the second copy
-      of the credentials held (1.3)
-- [ ] Secrets in the secret store, none in the tree (1.4)
-- [ ] Review venue created as a private supergroup, bot an administrator
-      with `can_delete_messages`, auto-delete on (2.2)
-- [ ] Broadcast channel created and owned by the keyholder, bot its only
-      posting administrator, no human admin among its administrators; the
-      owner's probe: the bot posts into it (2.2, 3.4)
-- [ ] Bot added to the membership group as a plain member in privacy mode,
-      never an administrator; hidden members on; the admins out of the
-      group's administrator list; the owner's probe: `getChatMember`
-      answers, or `MEMBERSHIP_CHAT_ID` switched to the channel (2.2)
-- [ ] Webhook registered with secret token, random path, `message` and
-      `callback_query` only, low max_connections, pending updates dropped
-      (2.1)
-- [ ] The single cron scheduled (5)
+- [ ] A keyholder outside the country exists and holds the channel (2.2),
+      the Cloudflare account and its recovery codes (2.3), the BotFather
+      owner account (1.2) and the secrets (1.4)
+- [ ] `KEYHOLDER_IDS` lists every keyholder and shares no id with
+      `ADMIN_IDS` (the configuration refuses to load otherwise, 1.1)
+- [ ] The broadcast channel created and owned by the keyholder, the bot its
+      only posting administrator, no human admin among its administrators;
+      the owner's probe: the bot posts into it (2.2, 3.4)
+- [ ] The NGO group: hidden members on, the admins out of its
+      administrator list, the bot a plain member in privacy mode, never an
+      administrator; the owner's probe: `getChatMember` answers for the
+      plain-member bot, or `MEMBERSHIP_CHAT_ID` switched to the channel
+      (2.2)
+- [ ] Admin accounts hardened and administering nothing, at least two
+      allowlisted, the second copy of the credentials held (1.3)
+- [ ] Review venue created as a private supergroup, the bot an
+      administrator with `can_delete_messages`, auto-delete on, the
+      keyholder not in it (2.2)
+- [ ] Deployed from the keyholder's machine: `npx wrangler d1 create
+      div-report`, its id in wrangler.jsonc's `database_id` on that machine
+      only (never committed), `npx wrangler d1 migrations apply div-report
+      --remote`, `npx wrangler deploy`, every value of 1.4 set with `npx
+      wrangler secret put <NAME>` and none in the tree, never `DEBUG`,
+      `NODE_DEBUG` or `NODE_DEBUG_NATIVE`
+- [ ] Webhook registered with `npm run set-webhook -- <origin>`, its
+      printed answer checked: the origin with `<WEBHOOK_PATH_SEGMENT>`,
+      `message` and `callback_query` only, `max_connections` 10 (2.1)
+- [ ] The single cron scheduled, the account's only cron Worker (5)
+- [ ] Observability off (4)
+- [ ] Every keyholder has sent `/start` to the bot and received the
+      confirmation that alerts will reach them (1.1)
+- [ ] The keyholder tried `/lockdown` (the alert arrives within a minute,
+      the admins' commands are refused) and then `/unlock`, both in their
+      own chat with the bot (3.6)
+- [ ] The emergency wipe rehearsed on the local database:
+      `npm run migrate:local`, then `scripts/wipe.sh --local` (7)
 - [ ] The deployed per-update probe run once on a throwaway Worker, its
-      fidelity check passed and its CPU time and subrequest counts
-      recorded (ADR 0004, "The deployed probe", which has the procedure)
-- [ ] Observability off unless debugging (4)
-- [ ] The lockdown and wipe procedures read by the keyholder (3.6, 7)
+      fidelity check passed before `/attach` is relied on, its CPU time and
+      subrequest counts recorded (ADR 0004, "The deployed probe", which has
+      the procedure)
+- [ ] The lockdown and wipe procedures and the fallback drill runbook read
+      by the keyholder (3.6, 6, 7)
 
 Weekly:
 
-- [ ] Keyholder's alerts read: `needs_attention`, cap alerts (3.2, 3.3)
-- [ ] Open reports older than their reasonable time closed (admin review
-      runbook, section 7)
+- [ ] Keyholder's alerts read: `needs_attention` from reconciliation, the
+      nightly alert of abandoned edit jobs, cap and storage alerts (3.2,
+      3.3, 5)
+- [ ] `/open` checked: no report left in `posting`, `closing` or
+      `retracting` without a human on it (3.2); open reports older than
+      their reasonable time closed (admin review runbook, section 7)
+- [ ] `/budget` (an admin, in the venue): the day's counted presses and
+      non-member reports well under their caps (3.3)
 
 Monthly:
 
-- [ ] Stats snapshot received by the keyholders and in the review venue (5)
+- [ ] Stats snapshot received on the first of the month, by the keyholders
+      and, unless locked down, in the review venue (5)
 - [ ] `ADMIN_IDS` still lists at least two live accounts; `KEYHOLDER_IDS`
-      at least one reachable keyholder (1.3)
+      at least one reachable keyholder who has sent `/start` (1.3)
 
 Yearly:
 

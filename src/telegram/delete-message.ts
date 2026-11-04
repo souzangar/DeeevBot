@@ -7,8 +7,12 @@
 // /cancel, /skip, a command the bot does not know, /start and /language,
 // so no reported URL, typed anywhere, stays in the sender's chat. The two
 // exceptions: a keyholder's own commands (/start from a keyholder,
-// /lockdown, /unlock), whose chat is an operations log the keyholder
-// keeps; and the lockdown path, which reads, stores and deletes nothing.
+// /lockdown, /unlock, and every command registered through
+// src/telegram/registry.ts's keyholderCommand: /open, /attach, /halt,
+// /retract and /stats), whose chat is an operations log the keyholder
+// keeps (their reply to a retraction prompt is deleted with the prompt
+// once taken, src/telegram/closing.ts); and the lockdown path, which
+// reads, stores and deletes nothing.
 //
 // A handler deletes after the write that recorded what the message said
 // has committed and before its reply. The delete is awaited and retried

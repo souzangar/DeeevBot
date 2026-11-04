@@ -87,6 +87,12 @@ card and hotline list in the
 [admin review runbook](../guides/admin-review-runbook.md) and
 [CSAM hotlines](../reference/csam-hotlines.md).
 
+Amended the same evening by the scope reduction (below), which sends no
+message at any decision: nothing goes to the reporter at routing. The
+hotline links go out at intake instead, in a persistent message carrying
+no target URL, when the reporter's own label is "sexual content involving
+a minor" (as built: `src/review/route.ts`, `src/telegram/intake.ts`).
+
 ### Q2. Private-data routing
 
 Decided by the owner, revised once (see above): the broadcast carries the
@@ -101,20 +107,53 @@ never carry the post URL. Detail and the reasons:
 
 ### Q3. Verification standard, reporter abuse, retraction
 
-Verification is a runbook duty, not a bot feature: the admin confirms the
-link, confirms the category from the platform's own view in an isolated
-profile, checks for weaponisation, never opens suspected CSAM, writes the
-recommended comment as points to make, and picks the link mode. The bot
-checks membership of the NGO group as a plain member in privacy mode
-(never as an admin), takes text only (media and forwarded posts are
-refused and deleted), and enforces membership-based limits with a global
-cap of 20 non-member reports per day, duplicate detection by a keyed URL
-hash, a block list, a rejection throttle and first-decision-wins.
-Retraction edits every delivered message in place (deleting where younger
-than 48 hours), edits the mirror post and marks the report retracted; it
-queues behind a running broadcast and completes within the hour. Detail:
-[Review and abuse controls](./review-and-abuse-controls.md) and the
-[admin review runbook](../guides/admin-review-runbook.md).
+Phase 1 recorded:
+
+> Verification is a runbook duty, not a bot feature: the admin confirms the
+> link, confirms the category from the platform's own view in an isolated
+> profile, checks for weaponisation, never opens suspected CSAM, writes the
+> recommended comment as points to make, and picks the link mode. The bot
+> checks membership of the NGO group as a plain member in privacy mode
+> (never as an admin), takes text only (media and forwarded posts are
+> refused and deleted), and enforces membership-based limits with a global
+> cap of 20 non-member reports per day, duplicate detection by a keyed URL
+> hash, a block list, a rejection throttle and first-decision-wins.
+> Retraction edits every delivered message in place (deleting where younger
+> than 48 hours), edits the mirror post and marks the report retracted; it
+> queues behind a running broadcast and completes within the hour. Detail:
+> [Review and abuse controls](./review-and-abuse-controls.md) and the
+> [admin review runbook](../guides/admin-review-runbook.md).
+
+The scope reduction (below) superseded its retraction sentences: there
+are no delivered messages and no mirror post. The decision now, as built
+(unit U8):
+
+- Verification stays a runbook duty, as above, in the
+  [admin review runbook](../guides/admin-review-runbook.md).
+- Intake (`src/telegram/intake.ts`, `src/review/intake.ts`,
+  `src/review/drafts.ts`): private chats only, text only (media, forwards,
+  messages sent through an inline bot and replies quoting another chat are
+  refused and deleted, never read), every message deleted on receipt
+  outside lockdown; membership of the NGO group read with `getChatMember`
+  on the update's user id by a plain-member bot in privacy mode, never
+  stored; members 5 open reports (pending a decision) and 20 a day,
+  non-members 1 a day and 20 a day all together, a reference with 3
+  rejections in 30 days 1 a day, a blocked reference none; a report of an
+  open target (pending, approved, posting or posted) merged into it by the
+  keyed link hash; first decision wins by a conditional update.
+- Retraction edits the one post in the channel in place, and nothing in
+  any other chat: `/retract <id>` by an admin in the venue or by a
+  keyholder in their own chat (also under lockdown), or the status card's
+  Retract button, the correction asked for by prompt and held to the admin
+  free-text policy; its edit job, due at once and run under `/halt` and
+  lockdown too, replaces the post's text with the correction under a fixed
+  heading and the warning line, removes the button, and deletes the post
+  as well when it is younger than 48 hours; the report becomes `retracted`
+  only when that edit succeeds, finalized in the same batch
+  (`src/broadcast/retraction.ts`, `src/broadcast/concluding.ts`).
+
+Detail: [Review and abuse controls](./review-and-abuse-controls.md) and
+[Report lifecycle](./report-lifecycle.md).
 
 ### Q4. Consent and Telegram's rules
 
@@ -151,15 +190,42 @@ Detail: [Retention and minimisation](./retention-and-minimisation.md).
 
 ### Q6. Admin review runbook and operations guide
 
-Two runbooks under `doc/guides/`:
-[admin review runbook](../guides/admin-review-runbook.md) (isolation
-setup, decision checklist, routing table, CSAM routing card, closure and
-retraction, reporter abuse, Telegram forwarded-from-bot guidance, legal
-notes for the Iranian context, a dedicated admin account) and
-[operations and security](../guides/operations-and-security.md) (the
-BotFather owner account as the root of trust, admin accounts, succession,
-grace period, Cancel and /halt, quota exhaustion and the daily budget, the
-fallback deployment, the stats snapshot).
+Phase 1 recorded:
+
+> Two runbooks under `doc/guides/`:
+> [admin review runbook](../guides/admin-review-runbook.md) (isolation
+> setup, decision checklist, routing table, CSAM routing card, closure and
+> retraction, reporter abuse, Telegram forwarded-from-bot guidance, legal
+> notes for the Iranian context, a dedicated admin account) and
+> [operations and security](../guides/operations-and-security.md) (the
+> BotFather owner account as the root of trust, admin accounts, succession,
+> grace period, Cancel and /halt, quota exhaustion and the daily budget, the
+> fallback deployment, the stats snapshot).
+
+Amended by the scope reduction (below), which made the keyholder the root
+of trust and added lockdown and the wipe. The decision now, as built
+(unit U8): three runbooks under `doc/guides/`.
+
+- The [admin review runbook](../guides/admin-review-runbook.md): the
+  dedicated admin account and the isolated workstation, the review venue,
+  the suspected-CSAM gate and its routing card, the decision checklist with
+  the approve prompts and the free-text rules, the per-category routing
+  table, closure and retraction as edits of the channel post, reporter
+  abuse and why nobody is messaged, what lockdown looks like to an admin,
+  Telegram posts forwarded from bots, and the legal and safety notes for
+  the Iranian context.
+- The [operations and security runbook](../guides/operations-and-security.md):
+  the keyholder outside the country as the root of trust (the BotFather
+  owner account, the Cloudflare account, the channel, the secrets), admin
+  accounts that administer nothing, the configuration, the webhook
+  registration with `scripts/set-webhook.ts`, the grace period with Cancel
+  and `/halt`, the single post and its edits, quota exhaustion, lockdown,
+  logs, the single cron with retention and the stats snapshot, the
+  incident procedures with the emergency wipe (`scripts/wipe.sh`), the
+  risk register, and the go-live, weekly, monthly and yearly checklists.
+- The [fallback drill runbook](../guides/fallback-drill.md), added by unit
+  U7: the Node port run when Cloudflare is out of reach, the switch back to
+  the Worker, the destruction of the port's database, and the yearly drill.
 
 ### Q7. Platform coordinated-reporting policies
 
@@ -182,13 +248,50 @@ applications are a roadmap item in
 
 ### Q8. Update authenticity
 
-Both transports, one rule: on Cloudflare a webhook registered with a
-secret token, rejected before parsing unless the header matches
-(constant-time compare), on a random path that is not itself the check; on
-a VPS long polling with no inbound port. Admin authority from `ADMIN_IDS`
-in the secret store through one `isAdmin(userId)` gate; the admin chat id
-is a venue, never an authority. Detail:
-[ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md).
+Phase 1 recorded:
+
+> Both transports, one rule: on Cloudflare a webhook registered with a
+> secret token, rejected before parsing unless the header matches
+> (constant-time compare), on a random path that is not itself the check; on
+> a VPS long polling with no inbound port. Admin authority from `ADMIN_IDS`
+> in the secret store through one `isAdmin(userId)` gate; the admin chat id
+> is a venue, never an authority. Detail:
+> [ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md).
+
+Amended by the scope reduction (below), which added the keyholders. The
+decision now, as built (unit U8):
+
+- The webhook (`src/telegram/webhook.ts`): only a POST to
+  `/<WEBHOOK_PATH_SEGMENT>` whose `X-Telegram-Bot-Api-Secret-Token` header
+  equals `WEBHOOK_SECRET`, compared in constant time over the SHA-256
+  digests of both, is read; anything else is answered 404 with an empty
+  body before the body is read and before any bot exists. An update is
+  answered 200 at once and handled under `waitUntil`.
+- Its registration, `scripts/set-webhook.ts`, an operator script run with
+  Node 22.18 or later and never part of the Worker:
+  `npm run set-webhook -- <Worker origin>` calls `setWebhook` with the url
+  `<origin>/<WEBHOOK_PATH_SEGMENT>`, `secret_token` = `WEBHOOK_SECRET`,
+  `allowed_updates` = `["message", "callback_query"]`,
+  `max_connections` = 10 and `drop_pending_updates` = true;
+  `npm run set-webhook:delete` calls `deleteWebhook` and keeps the pending
+  updates. Either then prints `getWebhookInfo` with the URL's path masked,
+  and never the token or the secret token.
+- Long polling on the Node port (`src/telegram/polling.ts`), `message` and
+  `callback_query` only, with no inbound port. The port calls
+  `deleteWebhook`, keeping the pending updates, at every start
+  (`src/node.ts`), and a webhook set while it runs ends its polling: it
+  alerts the keyholders and stops, yielding the bot to the Worker.
+- Admin authority from `ADMIN_IDS`, numeric ids only, through `isAdmin`,
+  re-checked at every admin action; keyholder authority from
+  `KEYHOLDER_IDS` through `isKeyholder`; the two lists never overlap, since
+  the configuration refuses a load where they do (`src/auth/allowlist.ts`,
+  `src/config/schema.ts`). The admin chat id is a venue, never an
+  authority.
+
+Detail:
+[ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md)
+and the [operations and security runbook](../guides/operations-and-security.md),
+section 2.1.
 
 ### Q9. Error-handling convention
 
@@ -388,11 +491,19 @@ The same evening, after the seizure threat, the owner amended rules 1, 2,
   once, recorded in
   [ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md); the
   Durable Object measurements of the first plan are moot.
+  (U8: the probe is built, `src/probe.ts` under `wrangler.probe.jsonc`,
+  bundled offline by `npm run probe:dry-run`, with the one-time fidelity
+  check of `/attach`'s text comparison; ADR 0004, "The deployed probe",
+  has its procedure. It has not been run: still open, an owner
+  dependency, since it needs the owner's Cloudflare account.)
 - Whether Workers invocation logs record request headers, which would put
   the webhook secret in a log if observability is enabled.
+  (U8: not settled by the code; wrangler.jsonc keeps `observability` off,
+  and `src/worker.test.ts` pins it off.)
 - The research note's unverified items (Telegram's live report option
   tree, moderator handling of forwarded posts, NGO escalation routes),
   listed in the [planning review](../audits/2026-10-28-planning-review.md).
+  (U8: still open.)
 - The owner's: a keyholder outside the country ("not yet, but I can
   arrange it"), which blocks go-live; the future of the existing NGO
   group, whose history exposes its authors whatever the member setting
@@ -400,3 +511,8 @@ The same evening, after the seizure threat, the owner amended rules 1, 2,
   go-live probes (the bot posts into the channel as its only posting
   administrator; `getChatMember` answers for a plain-member bot in the
   group, else `MEMBERSHIP_CHAT_ID` becomes the channel).
+  (U8: all three still open, owner dependencies, as is a native speaker's
+  review of every Persian string of the catalogs; the go-live checklist
+  is in the
+  [operations and security runbook](../guides/operations-and-security.md),
+  section 9.)

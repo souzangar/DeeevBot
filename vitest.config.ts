@@ -1,5 +1,6 @@
 // Three test tiers (doc/guides/developer-setup.md):
-// - unit: plain node, `*.test.ts` beside the module; no network, mock at the boundary.
+// - unit: plain node, `*.test.ts` beside the module (under src/, and the
+//   webhook script's under scripts/); no network, mock at the boundary.
 // - workers: the Workers runtime through @cloudflare/vitest-plugin, with
 //   the local D1 binding from wrangler.jsonc, plus TEST_MIGRATIONS, the D1
 //   migrations read here so a test can apply them with applyD1Migrations(),
@@ -41,7 +42,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           environment: 'node',
-          include: ['src/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
           execArgv: QUIET_EXPERIMENTAL,
         },
       },

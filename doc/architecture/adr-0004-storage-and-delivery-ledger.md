@@ -74,8 +74,12 @@ would yield is the reason (ADR 0001, "Threat model: seizure";
   `post` and a bounded number of `edit` jobs per run, each one Bot API
   call), then, by the minute, runs reconciliation every 15th minute, the
   retention job at 00:15 UTC and the monthly snapshot on the first day at
-  06:00 UTC; 1,440 invocations a day, each a few subrequests. On the Node
-  port an in-process timer runs the same function. Jobs are unique per
+  06:00 UTC; 1,440 invocations a day, each a few subrequests and each a
+  request on the account's daily meter. The Free plan's five Cron Triggers
+  are counted per account, and the account runs no other cron Worker, the
+  deployed probe's while it briefly exists aside (`wrangler.jsonc`). On
+  the Node port an in-process timer, the minute loop
+  (`src/broadcast/minute-loop.ts`), runs the same function. Jobs are unique per
   kind and report, kinds `post` and `edit`; an enqueue never resets an
   existing job, which keeps its payload, attempts and due time.
 - The approval row is the schedule. Approving writes the approval row,
@@ -90,7 +94,9 @@ would yield is the reason (ADR 0001, "Threat model: seizure";
   `posting` while the report has no un-voided approval (a trigger).
 - `meta.lockdown`, set by a keyholder's `/lockdown` and cleared only by
   `/unlock`, and the `LOCKDOWN` secret, the keyholder's override, stop
-  every job but a keyholder's `/retract`; a locked-down tick alerts the
+  every job but a retraction's edit (under lockdown only a keyholder can
+  order a `/retract`; one an admin ordered before the switch still runs,
+  `RUN_WHEN_HELD` in `src/broadcast/edits.ts`); a locked-down tick alerts the
   keyholders once (`meta.lockdown_alerted_at`) and still runs retention,
   which reduces exposure, and `/lockdown` triggers an immediate retention
   pass. `meta.halted` (/halt) holds the posts and the closure edits;
@@ -173,7 +179,8 @@ would yield is the reason (ADR 0001, "Threat model: seizure";
 - The cap contract: a cron run that meets a Free-plan cap error stops
   without writing; the next minute's run picks the due work up again once
   the 00:00 UTC reset has passed, and the keyholders (and the venue when
-  not locked down) are alerted once. A cap
+  not locked down) are alerted once; as built, the keyholders only, at
+  most once a UTC day from one isolate ("The run as built" below). A cap
   error between a post's send and its id write is the alert case above,
   never a retry.
 
@@ -183,8 +190,9 @@ The scheduler is `src/broadcast/`; what follows is the code as it stands,
 and where it refines the plan's wording it says so.
 
 - The entry. `src/worker.ts`'s `scheduled` loads the configuration with
-  `configFor(env)` before anything else (one that does not load, a `DEBUG`
-  variable included, is logged by class and runs nothing), then
+  `configFor(env)` before anything else (one that does not load, a `DEBUG`,
+  `NODE_DEBUG` or `NODE_DEBUG_NATIVE` variable included, is logged by class
+  and runs nothing), then
   `handleScheduled()` (`src/broadcast/tick.ts`) dispatches on the cron
   expression: `* * * * *`, wrangler.jsonc's one cron (it replaces the
   nightly `5 0 * * *` of the scaffold), runs `tick()` under the
@@ -223,8 +231,8 @@ and where it refines the plan's wording it says so.
 
 - The edit jobs (`src/broadcast/edits.ts`). A job's payload names its
   action, `{"action": "close"}` or `{"action": "retract"}`; the closure and
-  retraction unit registers one handler per action in `EDIT_HANDLERS`,
-  empty until then. The runner takes only due jobs of a registered action,
+  retraction unit registered one handler per action in `EDIT_HANDLERS`
+  (unit U6, below). The runner takes only due jobs of a registered action,
   the oldest first; a handler that throws records the failure on its own
   job (attempts + 1, due again after one to fifteen minutes) and the next
   job runs; a 429 moves the job and the global pause to now plus
@@ -333,9 +341,9 @@ and where it refines the plan's wording it says so.
   card's deletion), plus one edit per remembered keyholder notice; a
   reconciliation run at its bounds stays under 30 subrequests of the
   invocation's 50.
-- The slots the closure and retention unit fills: `runRetention()`,
-  `runRetentionNow()`, `runSnapshot()`, `finalize()` and `EDIT_HANDLERS`
-  (below).
+- The slots the closure and retention unit filled (unit U6, below):
+  `runRetention()`, `runRetentionNow()`, `runSnapshot()`, `finalize()` and
+  `EDIT_HANDLERS`.
 
 ### Closure, retraction, retention and the snapshot as built (unit U6)
 
@@ -446,13 +454,24 @@ the VPN. The procedure, from the keyholder's machine, logged in with
    `WEBHOOK_PATH_SEGMENT` and `REPORTER_REF_KEY`; `ADMIN_IDS=1` and
    `KEYHOLDER_IDS=2` (no admin or keyholder takes part); any non-zero
    `ADMIN_CHAT_ID` and `MEMBERSHIP_CHAT_ID`; the throwaway channel's
-   `BROADCAST_CHAT_ID`. Never `DEBUG`.
-4. Register the webhook, the token read with `read -rs TOKEN` so that it
-   stays out of the shell's history: `curl -s
-   "https://api.telegram.org/bot$TOKEN/setWebhook" --data-urlencode
-   "url=https://div-report-probe.<account subdomain>.workers.dev/<segment>"
-   --data-urlencode "secret_token=<secret>" --data-urlencode
-   'allowed_updates=["message","callback_query"]'`.
+   `BROADCAST_CHAT_ID`. Never `DEBUG`, `NODE_DEBUG` or
+   `NODE_DEBUG_NATIVE`, which the configuration refuses.
+4. Register the webhook with the bot's own script (Node 22.18 or later,
+   after `npm ci`), run with the probe's own values in the environment:
+   one `NAME=value` line for each variable step 3 lists, the throwaway
+   bot's among them, in a file kept out of VCS, for example `.env.probe`
+   (`.gitignore` ignores `.env.*`; `chmod 600 .env.probe`), then, from a
+   shell that exports none of these variables (`--env-file` never
+   overrides one the environment already holds, so a real bot's
+   `BOT_TOKEN` left there would move the real bot's webhook),
+   `node --env-file=.env.probe --import ./src/node-hooks.ts
+   scripts/set-webhook.ts https://div-report-probe.<account subdomain>.workers.dev`.
+   The script refuses a configuration that does not load, so it needs
+   every variable of step 3; it registers `<origin>/<WEBHOOK_PATH_SEGMENT>`
+   with the secret token, `message` and `callback_query` only,
+   `max_connections` 10 and the pending updates dropped, and prints the
+   webhook as Telegram holds it, the path masked. The token never appears
+   on the command line or in the shell's history.
 5. `npx wrangler tail div-report-probe --format json` in a second terminal.
 6. The fidelity check, once: `curl -s -X POST -H
    "X-Telegram-Bot-Api-Secret-Token: <secret>"
@@ -475,10 +494,11 @@ the VPN. The procedure, from the keyholder's machine, logged in with
    CPU figure where it shows one) and the `queries` and `apiCalls` of its
    `probe.invocation` line, against the 10 ms CPU and the 50 subrequests of
    the Free plan.
-9. Tear down: `curl -s "https://api.telegram.org/bot$TOKEN/deleteWebhook"`,
+9. Tear down: `node --env-file=.env.probe --import ./src/node-hooks.ts
+   scripts/set-webhook.ts --delete` (the throwaway bot's webhook deleted),
    `npx wrangler delete --config wrangler.probe.jsonc`,
-   `npx wrangler d1 delete div-report-probe`, and revoke the throwaway
-   bot's token with @BotFather.
+   `npx wrangler d1 delete div-report-probe`, revoke the throwaway bot's
+   token with @BotFather, and delete `.env.probe`.
 
 Offline, the same counts are pinned by `src/probe.test.ts`: one link-free
 update (`/start`) costs one D1 query and two Bot API calls, and a quiet
@@ -517,7 +537,12 @@ is refused, as is an attach of a message the bot did not send; `/attach`
 then `/retract` edits the attached message. The storage-level ones are
 `test/invariants/approval-record.test.ts`,
 `test/invariants/storage-retention.test.ts` and
-`src/db/d1-schema.test.ts`; the rest land with the units that run them.
+`src/db/d1-schema.test.ts`; the rest are the always-run specs of the
+post, `test/invariants/post.test.ts`, of its edits,
+`test/invariants/closure.test.ts`, and of retention and the wipe,
+`test/invariants/retention.test.ts` and `test/invariants/wipe.test.ts`,
+with the unit tests beside `src/broadcast/` and, in the Workers runtime,
+`test/workers/scheduled.test.ts` and `test/workers/finalize.test.ts`.
 
 ## Alternatives considered
 
@@ -585,3 +610,10 @@ jobs with the shared conclusion, finalization as one bound batch with the
 merged rows deleted and a rejection counted off, the retention job's steps
 and bounds, the snapshot, `/stats` and `/budget`, and the emergency wipe as
 `scripts/wipe.sh`.
+
+Amended 2026-11-04 (Phase 3, unit U8, the reconciliation with the code):
+the deployed probe's webhook registered and deleted with
+`scripts/set-webhook.ts` (steps 4 and 9) instead of curl with the token in
+the URL, the probe still not run, an owner dependency; the one cron
+against the account's five; the cap alert as built, to the keyholders
+only; the edit handlers and the slots unit U6 filled; the tests named.

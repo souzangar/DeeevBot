@@ -139,7 +139,10 @@ From decision Q1 of 2026-10-28 (procedure in the runbook):
    about the sexual nature routes; doubt about whether a minor appears does
    not by itself (a child's public photo with insults is child safety or
    harassment).
-2. The card carries the URL as non-tappable code text and the links above.
+2. The card carries the URL, and the account's link when it differs, as
+   non-tappable code text, the platform's own path (for a Telegram-hosted
+   target naming stopCA@telegram.org, as code text), and the links of
+   NCMEC, the ICMEC-IWF portal, the IWF portal and the INHOPE directory.
    The admin files one report through the platform's path, one report to
    one hotline (NCMEC or the ICMEC-IWF portal by default, since both take
    reports from anywhere; the IWF portal; or the national hotline found in
@@ -147,10 +150,17 @@ From decision Q1 of 2026-10-28 (procedure in the runbook):
    an email to stopCA@telegram.org. The hotline report states "unverified
    member report, content not opened".
 3. On confirmation the bot records the admin's id and the timestamp,
-   deletes the URL and the comment at once (the aggregate row and the keyed
-   link hash remain), deletes the card from the venue, and sends the
-   reporter a neutral acknowledgement carrying the public hotline links so
-   the reporter can also report directly.
+   deletes the URL, the account's link, the comment and the
+   affected-person flag at once, on the report and on every report merged
+   into it (the aggregate fields and the keyed link hash remain), and
+   deletes the card from the venue (edits it to the outcome without links
+   when it is older than Telegram's 48 hours). It sends the reporter
+   nothing. Q1 as first decided had the bot send the reporter a neutral
+   acknowledgement with the public hotline links at routing; the scope
+   reduction of the same evening removed every decision message, so a
+   reporter whose label was "sexual content involving a minor" gets the
+   hotline links at intake instead, right after the acknowledgement, and
+   can also report directly.
 4. Why the link is never broadcast (recorded for the owner): platforms
    deduplicate, so volume buys no speed; every member who opens the link
    accesses the material, a crime for them almost everywhere and a harm; a

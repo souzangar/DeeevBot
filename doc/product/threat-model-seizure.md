@@ -57,8 +57,8 @@ still can change anything".
 | Seized asset | What it yields | What stops the rest |
 |---|---|---|
 | An admin's Telegram account | The review venue with its open reports (an opaque reporter reference, the reported URLs as code, the comment, the affected-person flag), the status cards, and the power to approve, reject, route, block a reference and write the recommended comment or a correction. | The venue shows no Telegram id, username or name of any reporter; `comment` and `affected_person` are nulled at the decision, so only open reports are readable. An approval can post only a link whose exact host is on the allowlist (the link policy below); the free text is validated and bounded; the post waits 30 minutes with a Cancel button and a Lockdown button on every keyholder's phone; `/halt` holds every post. The lockdown switch, held by the keyholders, refuses every admin action within seconds, and a keyholder id is never an admin id, so no seized account can both approve and unlock. The admins are never administrators of the channel or of the NGO's group, so the account lists no subscribers. |
-| An admin's phone, with its sessions open | The same as the account, plus the device's own history: whatever the venue's auto-delete has not yet removed, and the history of every chat the admin is in, the NGO's group included. | Review cards and prompts are deleted within 48 hours of the decision and the venue runs auto-delete; cards carry the reference only. Admins hold no Cloudflare session and no deploy rights, so the phone opens nothing on the hosting side. The group's history is outside the bot's control (below). |
-| A read of the database (the Cloudflare dashboard or a D1 query, without deploy rights) | The live tables: open reports' URLs, comments and references, the counters, the aggregate rows, and the allowlisted admins' own ids. No plaintext Telegram id of any member or reporter exists to be read. | Minimisation (below): a reference is re-identifiable only by whoever holds `REPORTER_REF_KEY`, and only by brute force over the id space; closed reports hold nothing but the aggregate row. The emergency wipe, run after lockdown, empties the live database of everything but `stats` and `meta`. What the wipe cannot remove is D1's 30-day point-in-time history (Time Travel), which the account holder can restore: the wipe defends against the seized admins, not against a seized account. |
+| An admin's phone, with its sessions open | The same as the account, plus the device's own history: whatever the venue's auto-delete has not yet removed, and the history of every chat the admin is in, the NGO's group included. | Review cards and prompts are deleted at the decision (a card past Telegram's 48 hours, which can no longer be deleted, is edited to its outcome without links instead) and the venue runs auto-delete; cards carry the reference only. Admins hold no Cloudflare session and no deploy rights, so the phone opens nothing on the hosting side. The group's history is outside the bot's control (below). |
+| A read of the database (the Cloudflare dashboard or a D1 query, without deploy rights) | The live tables: open reports' URLs, comments and references, the counters, the aggregate rows, and the allowlisted admins' and keyholders' own ids. No plaintext Telegram id of any member or reporter exists to be read. | Minimisation (below): a reference is re-identifiable only by whoever holds `REPORTER_REF_KEY`, and only by brute force over the id space; closed reports hold nothing but the aggregate row. The emergency wipe, run after lockdown, empties the live database of everything but `stats` and `meta`. What the wipe cannot remove is D1's 30-day point-in-time history (Time Travel), which the account holder can restore: the wipe defends against the seized admins, not against a seized account. |
 | The Cloudflare account, with deploy rights | Everything above, plus the secrets (the bot token, `REPORTER_REF_KEY`, the allowlists), the power to change the code, and the Time Travel history. Every control inside the bot falls with it. | Nothing in the bot. This is the keyholder's failure domain: the account is held by the keyholder outside the country, in-country admins have no access and no persistent dashboard session, and the answer is `wrangler d1 delete` and recreate (the only step that also removes the Time Travel history) plus the token re-issue from the BotFather owner account, which makes the seized deployment's token dead. |
 | The BotFather owner account | The bot's identity: the token can be re-issued and the bot transferred, and whoever holds a live token can run their own code as the bot towards every member. The bot is an administrator of the channel, so the threat model assumes whoever holds its token can see the channel's subscribers, as the channel's human administrators can in the app. | Held by the keyholder outside the country, used for nothing else, 2-step verification on, a non-Iranian number where possible; the token is re-issued after any compromise (operations runbook, section 1). |
 | Telegram itself | Telegram knows every subscriber of the channel and every member of the group, and shows a channel's subscriber list to the channel's administrators. | Nothing in the bot; stated as outside its control. What the design does decide: the broadcast chat is a channel, because a channel hides its subscribers from non-administrators and a group shows its member list to every member, a seized admin phone included; and the admins are never administrators of the channel. |
@@ -176,15 +176,20 @@ Two layers, either of which locks the bot:
   notice), and cleared only by `/unlock` from a keyholder; never by
   `/resume` and never by an admin.
 - The `LOCKDOWN` secret, set by the keyholder with `wrangler secret put
-  LOCKDOWN` (a secret change is itself a new deployment, global within
-  about a minute, with no code deploy). No Telegram command clears it, and
-  it works when D1 refuses queries (a daily cap exhausted, possibly by the
-  attacker).
+  LOCKDOWN` and the value `1` (a secret change is itself a new deployment,
+  global within about a minute, with no code deploy), and cleared by the
+  keyholder with `wrangler secret delete LOCKDOWN`. On the Node port it is
+  the line `LOCKDOWN=1` in the port's `.env` file, read at start only, so
+  setting it or clearing it there takes a restart (`docker compose up -d`;
+  [fallback drill runbook](../guides/fallback-drill.md), section 5). No
+  Telegram command clears it, and it works when D1 refuses queries (a daily
+  cap exhausted, possibly by the attacker).
 
 Under either layer: intake answers a neutral "temporarily unavailable"
 and stores nothing; presses are ignored; every admin action is refused;
-no post or edit job runs except a retraction edit ordered by a keyholder,
-since it removes harm. The post claim binds the lockdown state in the same
+no post or edit job runs except a retraction's edit, since it removes
+harm, and under lockdown only a keyholder can order a retraction. The
+post claim binds the lockdown state in the same
 statement as the approval, so a lockdown set after a tick's eligibility
 read claims nothing; the one request already in flight in that instant is
 the stated residual. The approval row binds it too, so a Lockdown tapped
@@ -198,8 +203,9 @@ Cancel and Lockdown buttons on the approval
 notices still work (the status cards sit in a venue the keyholder is not
 in, so `/open` is how an id is found); nobody may `/repost` under
 lockdown. Alerts go to the keyholders by direct message, never to the
-venue, which is compromised by assumption. `/halt` and `/resume` remain
-the admins' own pause and clear nothing of the above. The Node port reads
+venue, which is compromised by assumption. `/halt` and `/resume` remain a
+pause, not a lock (a keyholder's `/halt` included, which only an admin's
+`/resume` lifts), and clear nothing of the above. The Node port reads
 the same `meta` row.
 
 ### 5. The emergency wipe
@@ -213,7 +219,11 @@ Travel) of every database that the account holder can restore. When the
 account itself is in doubt, the second step is `wrangler d1 delete` and
 recreate, which also works when D1 refuses queries. With no plaintext ids
 in D1, the 30-day exposure is references, URLs and comments. The
-procedure is in the operations runbook.
+procedure is in the operations runbook; `scripts/wipe.sh --local`
+rehearses it on the local database. The script does not apply to the
+Node port: there the equivalent, after lockdown and a minute's wait, is
+to stop the port and destroy its SQLite database, aggregate rows included
+([fallback drill runbook](../guides/fallback-drill.md), section 7).
 
 ### 6. The keyholder role
 
@@ -234,8 +244,9 @@ bot first), and a keyholder's Cancel pressed before the approval's record
 lands writes nothing and says so, never "cancelled" (a notice more than
 five minutes old is settled as cancelled, its approval never to be
 recorded); and may run
-`/lockdown`, `/unlock`, `/retract`, `/attach` and `/halt` (which only an
-admin's `/resume` lifts), in their private chat with the bot only. A keyholder id is never also an admin id: the
+`/lockdown`, `/unlock`, `/open`, `/stats`, `/retract`, `/attach` and
+`/halt` (which only an admin's `/resume` lifts), in their private chat with
+the bot only. A keyholder id is never also an admin id: the
 configuration refuses a load whose `KEYHOLDER_IDS` and `ADMIN_IDS`
 overlap. A bot cannot start a private chat, so every keyholder sends
 `/start` once at go-live and the bot confirms "you will receive alerts";
@@ -272,8 +283,10 @@ reach therefore reviews each post before it goes out.
 
 ## Go-live blockers
 
-Go-live waits until each of these holds (the checklist is in the
-operations runbook):
+Go-live waits until each of these holds (the go-live checklist, with the
+deployment steps around them, is in the
+[operations and security runbook](../guides/operations-and-security.md),
+section 9):
 
 - A keyholder outside the country exists (the owner: "not yet, but I can
   arrange it") and holds the channel, the Cloudflare account, the
@@ -287,3 +300,10 @@ operations runbook):
   administrator list; the owner's probe confirms `getChatMember` answers
   for the plain-member bot, or `MEMBERSHIP_CHAT_ID` becomes the channel (a
   value change).
+- The keyholder has tried `/lockdown` and then `/unlock`, in their own
+  chat with the bot.
+- The emergency wipe has been rehearsed on the local database
+  (`npm run migrate:local`, then `scripts/wipe.sh --local`).
+- The deployed probe has been run once and its fidelity check has passed
+  ([ADR 0004](../architecture/adr-0004-storage-and-delivery-ledger.md),
+  "The deployed probe"), before `/attach` is relied on.

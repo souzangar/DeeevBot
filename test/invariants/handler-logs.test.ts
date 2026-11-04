@@ -20,7 +20,9 @@
 // edit failing; a stale job; a conclusion a hold overtook; the retention
 // job's steps, its abandon alert, its prompt deletions and card edits
 // failing; the snapshot's sends failing; reconciliation's finalization
-// failing; a keyholder's reply whose store fails).
+// failing; a keyholder's reply whose store fails), and the webhook
+// registration script (scripts/set-webhook.ts: wrong arguments, a
+// configuration that does not load, each of its three calls failing).
 // Each is driven with updates and texts that carry a reported URL, a
 // comment, the reporter's, the admins', the keyholders' and the chats'
 // Telegram ids, and with Bot API failures whose GrammyError payloads carry
@@ -35,7 +37,7 @@ import { createBotApi } from '../../src/telegram/api';
 import { handleWebhook, SECRET_HEADER } from '../../src/telegram/webhook';
 import { createWorker } from '../../src/worker';
 import { pressData } from '../../src/review/intake';
-import { FAILURES, rateLimited } from '../fakes/bot-api';
+import { FAILURES, fakeBotApi, rateLimited } from '../fakes/bot-api';
 import { botHarness, type BotHarness } from '../support/bot-harness';
 import { reporterIn } from '../support/intake-driver';
 import { reviewIn } from '../support/review-driver';
@@ -47,7 +49,8 @@ import { AppError } from '../../src/errors/app-error';
 import { sql } from '../../src/db/sql';
 import { IDS, TEST_VARIABLES } from '../support/variables';
 import { buttonPress, groupMessage, privateMessage } from '../support/updates';
-import type { RecordedLine } from '../fakes/logger';
+import { recordingLogger, type RecordedLine } from '../fakes/logger';
+import { runSetWebhook } from '../../scripts/set-webhook';
 import { plantApproved, plantPosted, TICK_AT, tickHarness, type TickHarness } from '../support/tick-harness';
 import { orderClosure } from '../../src/broadcast/closure';
 import { runSnapshot } from '../../src/broadcast/maintenance';
@@ -172,6 +175,33 @@ describe('critical invariant 6: no handler logs a URL, an id, a text or an updat
     await send(JSON.stringify({ chat_id: IDS.reporter, text: COMMENT }));
     expect(harness.log.records().map((record) => record.event)).toEqual(['update.failed', 'update.unreadable', 'update.unreadable']);
     expectClean(harness.log.lines);
+  });
+
+  it('the webhook registration script, for wrong arguments, a configuration that does not load and each failed call', async () => {
+    const telegram = fakeBotApi();
+    const log = recordingLogger();
+    const origin = 'https://div-report.test';
+    const run = (args: readonly string[], env: object = { ...TEST_VARIABLES }) =>
+      runSetWebhook({ args, env, fetch: telegram.fetch, logger: log.logger, write: () => undefined });
+    expect(await run([`${origin}/${TEST_VARIABLES.WEBHOOK_PATH_SEGMENT}`])).toBe(1);
+    expect(await run([origin], { ...TEST_VARIABLES, ADMIN_IDS: `${IDS.admin},@admin_handle` })).toBe(1);
+    for (const method of ['setWebhook', 'deleteWebhook', 'getWebhookInfo']) {
+      telegram.fail({ method }, { kind: 'error', errorCode: 400, description: `Bad Request: ${REPORTED_URL} ${TEST_VARIABLES.BOT_TOKEN}` }, 1);
+    }
+    // The setWebhook fails; then the deleteWebhook; then a setWebhook goes through and its getWebhookInfo fails.
+    expect(await run([origin])).toBe(1);
+    expect(await run(['--delete'])).toBe(1);
+    expect(await run([origin])).toBe(1);
+    expect(log.records().map((record) => [record.event, record.apiMethod])).toEqual([
+      ['webhook.usage', undefined],
+      ['config.invalid', undefined],
+      ['webhook.failed', 'setWebhook'],
+      ['webhook.failed', 'deleteWebhook'],
+      ['webhook.failed', 'getWebhookInfo'],
+    ]);
+    expectClean(log.lines);
+    expect(log.text()).not.toContain(TEST_VARIABLES.WEBHOOK_PATH_SEGMENT);
+    expect(log.text()).not.toContain('admin_handle');
   });
 
   it('the Worker entry, for a configuration that does not load', async () => {

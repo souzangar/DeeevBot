@@ -44,6 +44,7 @@ describe('the port', () => {
         'getChatMember',
         'getMe',
         'getUpdates',
+        'getWebhookInfo',
         'sendMessage',
         'setWebhook',
       ].sort(),
@@ -117,6 +118,30 @@ describe('the fake Bot API: envelopes and recording', () => {
     expect(await api.getUpdates()).toEqual([]);
     expect(await api.setWebhook('https://worker.example/segment', { secret_token: 'x' })).toBe(true);
     expect(await api.deleteWebhook({ drop_pending_updates: true })).toBe(true);
+  });
+
+  it('keeps the webhook as Telegram does: getWebhookInfo answers what setWebhook set, never its secret, and an empty url once deleted', async () => {
+    const { telegram, api } = setup();
+    expect(await api.getWebhookInfo()).toEqual({ url: '', has_custom_certificate: false, pending_update_count: 0 });
+    await api.setWebhook('https://worker.example/segment', {
+      secret_token: 'unit-test-webhook-secret',
+      max_connections: 10,
+      allowed_updates: ['message', 'callback_query'],
+      drop_pending_updates: true,
+    });
+    expect(await api.getWebhookInfo()).toEqual({
+      url: 'https://worker.example/segment',
+      has_custom_certificate: false,
+      pending_update_count: 0,
+      max_connections: 10,
+      allowed_updates: ['message', 'callback_query'],
+    });
+    telegram.setWebhookInfo({ last_error_date: 1_900_000_000, last_error_message: 'Wrong response from the webhook: 404 Not Found' });
+    expect(await api.getWebhookInfo()).toMatchObject({ url: 'https://worker.example/segment', last_error_message: 'Wrong response from the webhook: 404 Not Found' });
+    await api.setWebhook('https://worker.example/other');
+    expect(await api.getWebhookInfo()).toMatchObject({ url: 'https://worker.example/other', max_connections: 40 });
+    await api.deleteWebhook();
+    expect((await api.getWebhookInfo()).url).toBe('');
   });
 
   describe('long polling (getUpdates with a timeout)', () => {

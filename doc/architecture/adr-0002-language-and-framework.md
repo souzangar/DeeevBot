@@ -50,7 +50,9 @@ report data to a third-party service.
   from Node 22.18), with a resolve hook for their extensionless imports
   (`src/node-hooks.ts`): no build step, and the image installs the
   production packages only
-  ([developer setup](../guides/developer-setup.md), section 8).
+  ([developer setup](../guides/developer-setup.md), section 8). The
+  webhook registration script, `scripts/set-webhook.ts`
+  (`npm run set-webhook`), runs the same way.
 - i18n catalogs for `fa` and `en`; user-facing text is looked up by key
   ([ADR 0005](./adr-0005-error-handling-convention.md)).
 - No AI services.
@@ -83,7 +85,9 @@ Versions are as looked up on 2026-10-28.
 - The decision records no competing bot framework; grammY was chosen
   because the same bot code runs under `webhookCallback` on Workers and
   under long polling on Node, which is exactly the primary-plus-fallback
-  shape ADR 0001 requires.
+  shape ADR 0001 requires (as built, the Worker's own boundary hands each
+  update to `bot.handleUpdate` instead of `webhookCallback`: see the
+  Decision).
 - A heavier ORM or migration tool over D1: not adopted; plain SQL
   migrations keep the D1 and SQLite adapters identical.
 
@@ -102,3 +106,7 @@ Amended 2026-11-04 (Phase 3, unit U7): the port's long polling runs on
 `@grammyjs/runner` 2.0.3 (an exact dependency), and the port runs through
 Node's type stripping with a module hook rather than a `tsc` build, because
 `tsc` keeps the extensionless specifiers Node's resolver cannot load.
+
+Amended 2026-11-04 (Phase 3, unit U8): the webhook registration script,
+`scripts/set-webhook.ts`, runs as the port does, through Node's type
+stripping and the module hook.

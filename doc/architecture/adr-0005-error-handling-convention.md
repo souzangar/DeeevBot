@@ -40,8 +40,13 @@ the edits of that post.
 - Boundary. A grammY error middleware maps an `AppError` to a localised
   reply. An unknown error gets a generic reply and a log line with the
   error class only, never the update payload and never a GrammyError
-  payload. The webhook handler acknowledges Telegram with 200 after
-  handling so Telegram does not redeliver.
+  payload. The webhook handler acknowledges Telegram with 200 as soon as
+  the update is handed to `bot.handleUpdate` under `waitUntil` (as built,
+  `src/telegram/webhook.ts`; at first, after handling), so Telegram never
+  redelivers because of a bug, and every handler is idempotent per update,
+  the "I reported it" counter excepted; the Node port's long polling moves
+  past an update as soon as it is fetched, to the same effect
+  (`src/telegram/polling.ts`).
 - Telegram API failures on a send are classified by whether Telegram
   provably did not accept the message. Unambiguous (Telegram answered and
   refused): a 429 reverts a post's claim (`posting` back to `approved`,
@@ -58,10 +63,19 @@ the edits of that post.
   same holds for an invocation that dies between the send and the write
   that records it: reconciliation alerts, never re-sends.
 - Edit failures. "Message is not modified" and "message to edit not
-  found" are non-errors. Any other failure of a closure or retraction
-  edit, past its bound, leaves the report in `closing` or `retracting`
-  with its message id and correction intact, sets `needs_attention` and
-  alerts; nothing is finalized while the post is unaddressed.
+  found" are non-errors (a post gone concludes the job). Any other failure
+  of a closure or retraction edit leaves the report in `closing` or
+  `retracting` with its message id and correction intact; nothing is
+  finalized while the post is unaddressed. As built (unit U6,
+  `src/broadcast/concluding.ts` and `edits.ts`): a 429 moves the job and
+  the global pause to now plus `retry_after`; an ambiguous answer is
+  recorded on the job and the edit tried again after its back-off (an
+  edit is idempotent); any other refusal sets `needs_attention` and alerts
+  once, at the first refusal rather than past a bound (a retraction first
+  tries to delete a post younger than 48 hours, and concludes when it
+  can), and the job is tried again after its back-off until the retention
+  job abandons it at 20 attempts, after which reconciliation queues the
+  edit again (a nightly alert while the cause persists).
 - The cap contract. A cron run that meets a Free-plan cap error stops
   without writing; the next minute's run picks the due work up again once
   the 00:00 UTC reset has passed, and the keyholders are alerted once.
@@ -91,14 +105,24 @@ the edits of that post.
   amendment: no retry of a timeout, a network error or a 5xx on a send,
   and no 00:05 UTC reschedule.
 - The redacting logger lives in `src/privacy/` and is the only logger;
-  eslint's `no-console` fails the build on any `console` call in `src/`,
-  and the tripwire flags `console.*(` and `JSON.stringify(` of an error,
-  a context or an update on the critical paths
-  ([ADR 0006](./adr-0006-data-model-and-module-layout.md)).
+  eslint's `no-console` fails the build on any `console` call in a
+  TypeScript file, `scripts/` included, but the logger's own `console.log`
+  and `console.error`, and the tripwire flags `console.*(` and
+  `JSON.stringify(` of an error, a context or an update on the critical
+  paths ([ADR 0006](./adr-0006-data-model-and-module-layout.md)). A failure
+  line names the error's class only (with a GrammyError's code and method,
+  or an AppError's catalog code), on the Worker, the Node port and the
+  webhook registration script alike: the script ends any failure with one
+  such line, `config.invalid`, `webhook.usage` or `webhook.failed` naming
+  the Bot API method, and exit code 1, printing nothing else.
 - The i18n catalogs are the only source of user-facing text, so a new
   code needs a key in both `fa` and `en`.
 - The classification of Telegram errors is the same on Cloudflare and on
-  the Node port ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md)).
+  the Node port ([ADR 0004](./adr-0004-storage-and-delivery-ledger.md));
+  on the port it also tells `getUpdates`' two 409s apart by their text
+  (`src/telegram/errors.ts`): a webhook set meanwhile, to which the port
+  yields, and another poller on the token, a failure
+  ([ADR 0003](./adr-0003-update-transport-and-admin-authority.md)).
 
 ## Alternatives considered
 
@@ -129,3 +153,10 @@ tick.
 Amended 2026-10-28 (Phase 3, unit U2, from the domain audit): the
 catalog's `ambiguous` marker on `TELEGRAM_TRANSIENT`, which is no longer
 `retryable`.
+
+Amended 2026-11-04 (Phase 3, unit U8, the reconciliation with the code):
+the webhook's 200 given as soon as the update is handed on, as built since
+unit U2; the edit failures as built in unit U6 (retried after a back-off,
+flagged and alerted at the first refusal, abandoned at 20 attempts); the
+class-only failure lines of the Node port and of the webhook registration
+script; `getUpdates`' two 409s on the port.

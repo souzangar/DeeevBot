@@ -24,8 +24,10 @@ export const fa: Readonly<Record<MessageKey, string>> = {
   'lockdown.already_on': 'قفل اضطراری از پیش فعال بود.',
   'lockdown.off': '<b>قفل اضطراری برداشته شد.</b>',
   'lockdown.was_off': 'قفل اضطراری فعال نبود.',
+  // lockdown.override_on was amended in unit U8 (the override on the Node
+  // port); it stays a draft for native review.
   'lockdown.override_on':
-    'قفل استقرار (<code>LOCKDOWN</code>) هنوز تنظیم شده است، پس ربات قفل می‌ماند تا وقتی که با <code>wrangler secret delete LOCKDOWN</code> برداشته شود.',
+    'قفل استقرار (<code>LOCKDOWN</code>) هنوز تنظیم شده است، پس ربات قفل می‌ماند تا وقتی که همان‌جا که تنظیم شده برداشته شود: با <code>wrangler secret delete LOCKDOWN</code> در کلادفلر، یا از فایل <code>.env</code> نسخهٔ پشتیبان و راه‌اندازی دوبارهٔ آن.',
   'admin.refused': 'این کار اکنون پذیرفته نمی‌شود.',
   'language.set': 'زبان: فارسی.',
   'language.usage': 'زبان را انتخاب کنید: /language fa برای فارسی، /language en برای انگلیسی.',
@@ -278,8 +280,10 @@ export const fa: Readonly<Record<MessageKey, string>> = {
   'alert.attention.approved': '<code>{id}</code>: تأییدشده و منتشرنشده (پذیرفته‌نشده، نگه‌داشته یا دیرکرده). ربات را در کانال، /halt و هشدارهای پیشین را بررسی کنید، سپس /repost {id} یا لغو آن.',
   'alert.attention.edit': '<code>{id}</code> ({state}): پستش هنوز منتظر ویرایش بستن یا پس‌گرفتن است. هشدارهای پیشین را ببینید.',
   'alert.attention.other': '<code>{id}</code> ({state}): به رسیدگی کسی نیاز دارد. هشدارهای پیشین را ببینید.',
-  'alert.lockdown': '<b>ربات قفل است.</b> گزارشی پذیرفته نمی‌شود، فشار دکمه‌ها شمرده نمی‌شود، همهٔ کارهای مدیران رد می‌شود و جز پس‌گرفتنِ یک کلیددار هیچ چیز منتشر یا ویرایش نمی‌شود. کلیددار قفل را با /unlock برمی‌دارد؛ قفل استقرار (<code>LOCKDOWN</code>) را فقط با wrangler.',
-  'alert.storage': '<b>پایگاه داده پاسخ نمی‌دهد.</b> ربات نتوانست پایگاه داده‌اش را بخواند یا بنویسد، پس تا وقتی دوباره کار کند هیچ چیز منتشر یا ویرایش نمی‌شود؛ سقف روزانهٔ طرح رایگان ساعت ۰۰:۰۰ UTC بازنشانی می‌شود. برای متوقف کردن ربات بدون پایگاه داده، قفل استقرار <code>LOCKDOWN</code> را با wrangler تنظیم کنید.',
+  // alert.lockdown and alert.storage were amended in unit U8 (the override
+  // on the Node port); both stay drafts for native review.
+  'alert.lockdown': '<b>ربات قفل است.</b> گزارشی پذیرفته نمی‌شود، فشار دکمه‌ها شمرده نمی‌شود، همهٔ کارهای مدیران رد می‌شود و جز پس‌گرفتن، که اکنون فقط کلیددار می‌تواند دستورش را بدهد، هیچ چیز منتشر یا ویرایش نمی‌شود. کلیددار قفل را با /unlock برمی‌دارد؛ قفل استقرار (<code>LOCKDOWN</code>) را فقط همان‌جا که تنظیم شده است: با wrangler در کلادفلر، یا در فایل <code>.env</code> نسخهٔ پشتیبان و راه‌اندازی دوبارهٔ آن.',
+  'alert.storage': '<b>پایگاه داده پاسخ نمی‌دهد.</b> ربات نتوانست پایگاه داده‌اش را بخواند یا بنویسد، پس تا وقتی دوباره کار کند هیچ چیز منتشر یا ویرایش نمی‌شود؛ سقف روزانهٔ طرح رایگان ساعت ۰۰:۰۰ UTC بازنشانی می‌شود. برای متوقف کردن ربات بدون پایگاه داده، قفل استقرار <code>LOCKDOWN</code> را تنظیم کنید: با wrangler در کلادفلر، یا در فایل <code>.env</code> نسخهٔ پشتیبان و راه‌اندازی دوبارهٔ آن.',
   // The key below is a draft for native review (unit U7).
   'alert.port_yielded':
     '<b>نسخهٔ پشتیبانِ ربات متوقف شد.</b> برای ربات وب‌هوکی تنظیم شد، پس تلگرام از این پس به‌روزرسانی‌هایش را به آنجا می‌فرستد و این نسخه کنار رفت: خودش دوباره راه نمی‌افتد. اگر Worker ربات را پس گرفته است، کار دیگری لازم نیست. اگر کسی قرار نبود وب‌هوکی تنظیم کند، توکن را از حساب مالکِ BotFather دوباره صادر کنید.',

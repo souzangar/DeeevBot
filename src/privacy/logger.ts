@@ -179,6 +179,12 @@ export const LOG_EVENTS = [
   'polling.webhook_set',
   'polling.webhook_alerted',
   'tick.skipped',
+  // The webhook registration script (unit U8, scripts/set-webhook.ts): its
+  // arguments refused (neither one Worker origin nor --delete); a Bot API
+  // call that failed, `apiMethod` naming it (setWebhook, deleteWebhook or
+  // getWebhookInfo). Its refused configuration logs `config.invalid`.
+  'webhook.usage',
+  'webhook.failed',
 ] as const;
 export type LogEvent = (typeof LOG_EVENTS)[number];
 
@@ -188,6 +194,7 @@ export const API_METHODS = [
   'getUpdates',
   'setWebhook',
   'deleteWebhook',
+  'getWebhookInfo',
   'getChatMember',
   'sendMessage',
   'editMessageText',

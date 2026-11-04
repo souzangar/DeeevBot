@@ -400,13 +400,17 @@ All quotes [H] https://telegram.org/tos/bot-developers (the bot is a
 
 The points below are what a member makes, in their own words, in one
 Telegram report. They are the English source for the i18n catalogs (the
-Persian copy is written from them later). They apply the decision of
-2026-10-28 (Q7): one genuine report per member, no template text to paste,
-no promise of removal. On Telegram the target is usually a channel and a
-post in it, sometimes also the bot the post was forwarded from.
+Persian copy, written from them, is a draft awaiting a native speaker's
+review). They apply the decision of 2026-10-28 (Q7): one genuine report
+per member, no template text to paste, no promise of removal. On Telegram
+the target is usually a channel and a post in it, sometimes also the bot
+the post was forwarded from.
 
 Common frame, every category:
 
+- Find the channel through Telegram's own search, by the name the post
+  gives as code text; never press Start on anything, and do not join the
+  channel or open its links.
 - Report the channel once from its profile menu (Report), choosing the
   reason the broadcast names, and add a short comment in your own words.
 - Also report the specific post (open the post, Report), so the moderators
@@ -424,9 +428,12 @@ Common frame, every category:
 Personal details (doxxing):
 
 - Reason "Personal Details" on the channel, the post and the bot.
-- Routing (decision Q2): the broadcast names the channel (and the bot when
-  known) by default; a post link appears only by the admin's recorded
-  opt-in, and never when the reporter is the affected person.
+- Routing (decision Q2): the broadcast names the channel by default, as
+  code text (`@username`), never as a t.me link; the specific post
+  appears, as code text too (`post 123`), only by the admin's recorded
+  opt-in, and never when the reporter is the affected person. The bot the
+  post was forwarded from is not named: the block tells members to report
+  it from the post's "Forwarded from" header.
 - Points to make in the comment: the channel publishes a private person's
   personal data (say which kind) without consent, to intimidate or harass;
   do not repeat the data.
@@ -463,7 +470,9 @@ Impersonation:
 
 Intimate images shared without consent:
 
-- Never the post link; the broadcast names the channel and the bot.
+- Never the post; the broadcast names the channel, as code text, and the
+  block tells members to report the bot too when the post was forwarded
+  from one.
 - Reason: "Pornography" or "Personal Details" are the nearest static
   options [INF]; the affected person's own report carries most weight.
 
@@ -508,4 +517,5 @@ Items from the research note's "Unverified" section that concern this page:
 - The fields of https://telegram.org/dsa-report (behind a Cloudflare
   Turnstile challenge; not opened).
 - The reason mappings marked [INF] in "What the bot's instructions say"
-  need a check on a real device before the Persian copy is written.
+  need a check on a real device before the Persian copy, now a draft for
+  native review, is final.

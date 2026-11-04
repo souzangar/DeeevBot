@@ -101,6 +101,10 @@ record.
    25 messages per second with a global 429 pause and a per-day budget, three
    bulk message kinds, an optional mirror chat; see [Broadcast consent
    policy](./broadcast-consent-policy.md).
+   Superseded the same evening by the scope reduction after the seizure
+   threat: one post per approved report into a keyholder-owned channel,
+   joining it the consent, no subscription and no direct-message broadcast;
+   the consent policy holds the decision now.
 5. **Retention and minimisation.** How long resolved reports are kept, when
    the reporter's identity is severed from a report (proposal: at decision
    time), and the rule that reported URLs and reporter ids never reach
@@ -109,6 +113,9 @@ record.
    decision notice, report data is deleted at closure, only an aggregate row
    survives, nothing sensitive reaches logs or backups; see [Retention and
    minimisation](./retention-and-minimisation.md).
+   Tightened the same evening by the scope reduction: no reporter's or
+   member's Telegram id is ever stored, only the keyed reference, and no
+   decision notice exists.
 6. **The admin review runbook.** How admins verify content without the bot
    ever fetching it (an isolated browser, the platform's own view),
    including the path for a report labelled otherwise that looks like
@@ -118,6 +125,8 @@ record.
    Decided 2026-10-28: two runbooks; see the [admin review
    runbook](../guides/admin-review-runbook.md) and [operations and
    security](../guides/operations-and-security.md).
+   Unit U7 added a third, the [fallback drill
+   runbook](../guides/fallback-drill.md).
 7. **Platform policies on coordinated reporting.** An identical recommended
    comment across hundreds of reports is a spam signal platforms discount;
    check each target platform's policy before writing the instructions
@@ -148,3 +157,5 @@ record.
     0002](../architecture/adr-0002-language-and-framework.md), [ADR
     0004](../architecture/adr-0004-storage-and-delivery-ledger.md) and [ADR
     0006](../architecture/adr-0006-data-model-and-module-layout.md).
+    Amended the same evening by the scope reduction: no Durable Object, D1
+    the only store.

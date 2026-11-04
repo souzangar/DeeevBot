@@ -35,7 +35,7 @@ export const en = {
   'lockdown.off': '<b>Lockdown is off.</b>',
   'lockdown.was_off': 'Lockdown was not on.',
   'lockdown.override_on':
-    "The deployment's <code>LOCKDOWN</code> override is still set, so the bot stays locked until it is removed with <code>wrangler secret delete LOCKDOWN</code>.",
+    "The deployment's <code>LOCKDOWN</code> override is still set, so the bot stays locked until it is removed where it was set: with <code>wrangler secret delete LOCKDOWN</code> on Cloudflare, or from the Node port's <code>.env</code> file and a restart.",
   // Every admin action under lockdown (src/telegram/guards.ts): a refusal and nothing else.
   'admin.refused': 'This action is refused right now.',
   // /language: in the chosen locale.
@@ -314,8 +314,8 @@ export const en = {
   'alert.attention.approved': '<code>{id}</code>: approved and not posted (refused, held or overdue). Check the bot in the channel, /halt and the alerts before this one, then /repost {id}, or cancel it.',
   'alert.attention.edit': '<code>{id}</code> ({state}): its post still waits for its closing or retraction edit. See the alerts before this one.',
   'alert.attention.other': '<code>{id}</code> ({state}): it needs a human. See the alerts before this one.',
-  'alert.lockdown': "<b>The bot is locked down.</b> Reports are not taken, presses are not counted, every admin action is refused, and nothing is posted or edited but a keyholder's retraction. A keyholder lifts the switch with /unlock; the <code>LOCKDOWN</code> override only with wrangler.",
-  'alert.storage': '<b>Storage refused.</b> The bot could not read or write its database, so nothing is posted or edited until it works again; a Free-plan daily cap resets at 00:00 UTC. To stop the bot without the database, set the <code>LOCKDOWN</code> override with wrangler.',
+  'alert.lockdown': "<b>The bot is locked down.</b> Reports are not taken, presses are not counted, every admin action is refused, and nothing is posted or edited but a retraction, which only a keyholder can order now. A keyholder lifts the switch with /unlock; the <code>LOCKDOWN</code> override only where it was set: with wrangler on Cloudflare, or in the Node port's <code>.env</code> file and a restart.",
+  'alert.storage': '<b>Storage refused.</b> The bot could not read or write its database, so nothing is posted or edited until it works again; a Free-plan daily cap resets at 00:00 UTC. To stop the bot without the database, set the <code>LOCKDOWN</code> override: with wrangler on Cloudflare, or in the Node port\'s <code>.env</code> file and a restart.',
   // The Node port (unit U7, src/telegram/polling.ts): to the keyholders when
   // a webhook set for the bot ends the port's long polling and the port
   // yields to it.

@@ -25,6 +25,7 @@ import type {
   ReplyParameters,
   Update,
   UserFromGetMe,
+  WebhookInfo,
 } from 'grammy/types';
 
 /** The only link-preview setting the project ever sends. */
@@ -74,7 +75,7 @@ export interface GetUpdatesOptions {
   readonly allowed_updates?: readonly ('message' | 'callback_query')[];
 }
 
-/** The options the operations script passes to setWebhook (ADR 0003). */
+/** The options the operations script passes to setWebhook (scripts/set-webhook.ts; ADR 0003). */
 export interface SetWebhookOptions {
   readonly secret_token?: string;
   readonly max_connections?: number;
@@ -88,6 +89,8 @@ export interface BotApiPort {
   getUpdates(other?: GetUpdatesOptions): Promise<Update[]>;
   setWebhook(url: string, other?: SetWebhookOptions): Promise<true>;
   deleteWebhook(other?: { readonly drop_pending_updates?: boolean }): Promise<true>;
+  /** What the operations script prints after it set or deleted the webhook, the URL's path masked (scripts/set-webhook.ts). */
+  getWebhookInfo(): Promise<WebhookInfo>;
   /** The membership check (src/auth/membership.ts); its answer is never stored. */
   getChatMember(chatId: number, userId: number): Promise<ChatMember>;
   sendMessage(chatId: number, text: string, other?: SendOptions): Promise<Message>;
@@ -104,6 +107,7 @@ export const PORT_METHODS = [
   'getUpdates',
   'setWebhook',
   'deleteWebhook',
+  'getWebhookInfo',
   'getChatMember',
   'sendMessage',
   'editMessageText',

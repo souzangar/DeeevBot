@@ -51,8 +51,13 @@ reply recorded in `admin_prompts` with the confirmed category and the link
 mode, and matched on the replier's allowlisted id plus
 `reply_to_message.message_id`, the replier being the approving admin,
 prompt and reply deleted after capture; a refused reply gets a fresh
-prompt saying why. "Other" uses the catalog's fixed generic instruction
-block; there is no custom-instructions prompt. The procedure, step by
+prompt saying why. The keyholders' notice of the approval goes out before
+the approval is written, and a reply whose notice reached no keyholder is
+refused the same way, the fresh prompt saying that the keyholders must
+send `/start` to the bot first
+([Report lifecycle](./report-lifecycle.md)). "Other" uses the catalog's
+fixed generic instruction block; there is no custom-instructions prompt.
+The procedure, step by
 step, is in the [admin review runbook](../guides/admin-review-runbook.md),
 sections 2 and 4.
 
@@ -186,7 +191,11 @@ goes to anyone. `/halt` holds closure edits; retraction edits still run.
 Review cards, status cards and the routing card go to the configured
 private admin supergroup (`ADMIN_CHAT_ID`), and so do the admin commands,
 `/open`, `/block`, `/unblock` and `/card <id>` (which posts a report's card
-again when it is missing), typed there. Everything the bot writes in the
+again when it is missing), typed there. Every admin command, these and
+`/attach`, `/repost`, `/halt`, `/resume`, `/close`, `/retract`, `/stats`
+and `/budget`, works in the venue only: typed by an admin in a private
+chat it is no command, and gets the answer any unknown command gets and
+is deleted on receipt. Everything the bot writes in the
 venue, and every answer to a press there, is in one language,
 `VENUE_LOCALE` (Persian by default), whoever acts, so a card never changes
 language and the venue's text reveals no admin's client language; a
@@ -210,16 +219,20 @@ an authority: every admin action re-checks the numeric allowlist
 ## Lockdown
 
 While the lockdown switch is set (`meta.lockdown` by a keyholder's
-`/lockdown` or Lockdown button, or the `LOCKDOWN` secret): intake answers
+`/lockdown` or Lockdown button, or the `LOCKDOWN` secret, on the Node port
+a line of its `.env` file): intake answers
 a neutral "temporarily unavailable" and stores nothing; "I reported it"
 presses are ignored; every admin action is refused, Approve, Reject,
 Route, Cancel, `/close`, `/block`, `/halt` and `/resume` included; no
-post or edit job runs except a retraction edit ordered by a keyholder;
+post or edit job runs except a retraction's edit (and under lockdown only
+a keyholder can order a retraction);
 alerts go to the keyholders by direct message and never to the venue,
 which is compromised by assumption. A keyholder may still run `/open`,
 `/stats`, `/attach`, `/halt` and `/retract <id>`; nobody may `/repost`. Only a
-keyholder's `/unlock` clears the D1 layer, and only `wrangler secret put`
-clears the secret. Admins see refusals and nothing else; the procedure is
+keyholder's `/unlock` clears the D1 layer, and only the keyholder clears
+the override where it is set: `wrangler secret delete LOCKDOWN` on
+Cloudflare, or the line removed from the Node port's `.env` and a restart.
+Admins see refusals and nothing else; the procedure is
 in the [operations and security runbook](../guides/operations-and-security.md)
 and the reasons in the [threat model](./threat-model-seizure.md).
 

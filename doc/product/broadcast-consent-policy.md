@@ -56,11 +56,13 @@ Telegram facts it rests on are in
   button ([Report categories and routing](./report-categories-and-routing.md)).
 - Retraction and closure never send a new message: each edits the post in
   place (retraction replaces the text with the correction and removes the
-  button; closure appends the outcome line and removes the button), and
+  button, and deletes the post as well when it is younger than Telegram's
+  48 hours; closure appends the outcome line and removes the button), and
   expiry 90 days after posting runs the closure edit with the outcome
   `expired`. The only messages the channel ever receives about a report
   are its post and the edits of that post.
-- Nothing is sent to the channel under lockdown or `/halt`
+- No post and no closure edit goes to the channel under lockdown or
+  `/halt`; a retraction's edit still runs, since it removes harm
   ([Threat model: seizure](./threat-model-seizure.md)); a 429 on any job
   send sets `meta.paused_until`, which every job send honours.
 
@@ -69,9 +71,10 @@ Telegram facts it rests on are in
 Each post carries an "I reported it" button. A press answers the callback
 and increments the report's `presses` and the day's `counters` row (two
 D1 writes) while the report is `posted`, the day's total is under
-`MARKS_PER_DAY` (20,000 by default) and the report's total is under
-`MARKS_PER_REPORT` (5,000 by default); beyond either cap the button still
-answers and nothing is written. Nothing about the presser is stored, so
+`MARKS_PER_DAY` (20,000 by default), the report's total is under
+`MARKS_PER_REPORT` (5,000 by default) and the bot is not locked down;
+beyond either cap, and under lockdown, the button still answers and
+nothing is written. Nothing about the presser is stored, so
 presses count presses, not people: one account can inflate a report to
 its cap, and `/stats` labels the figure advisory. A keyed filter would
 stop inflation but would be a membership oracle for the key holder; it is
@@ -88,7 +91,10 @@ The bot sends a direct message only:
   replies;
 - as an alert to a configured keyholder (`KEYHOLDER_IDS`): the approval
   notice with its Cancel and Lockdown buttons, the lockdown alert, the
-  reconciliation alerts.
+  storage alert, the alerts of a post or an edit that failed, the
+  reconciliation alerts, the nightly alert of abandoned jobs, the monthly
+  stats snapshot and, on the Node port, the alert that it yielded to a
+  webhook.
 
 No decision message goes to a reporter, no closure or retraction message
 to anyone, no message to a member who did not write to the bot. The
@@ -97,10 +103,15 @@ Links in a keyholder's messages pass the same link policy as the post.
 
 ## Webhook registration
 
-The webhook is registered with `allowed_updates` set to `message` and
-`callback_query` only, a low `max_connections`, and
-`drop_pending_updates` on re-registration; the authenticity check is in
-[ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md).
+The webhook is registered by `scripts/set-webhook.ts`
+(`npm run set-webhook -- <Worker origin>`) with `allowed_updates` set to
+`message` and `callback_query` only, `max_connections` 10, and
+`drop_pending_updates` on every registration; the Node port's long
+polling asks for the same two kinds. The authenticity check is in
+[ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md),
+the registration in the
+[operations and security runbook](../guides/operations-and-security.md),
+section 2.1.
 
 ## Telegram's Bot Developer Terms
 

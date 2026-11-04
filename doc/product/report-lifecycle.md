@@ -228,8 +228,9 @@ Outside lockdown every message the bot receives in a private chat is
 deleted on receipt, whatever it is: every intake step, a refused or
 misplaced message, `/cancel`, `/skip`, a command the bot does not know,
 `/start` and `/language`. The only exceptions are a keyholder's own
-commands (`/start` from a keyholder, `/lockdown`, `/unlock`), whose chat
-is an operations log the keyholder keeps, and the lockdown path, which
+commands (`/start` from a keyholder, `/lockdown`, `/unlock`, `/open`,
+`/attach`, `/halt`, `/retract` and `/stats`), whose chat is an operations
+log the keyholder keeps, and the lockdown path, which
 reads, stores and deletes nothing. Each message is deleted by the handler
 that took it, after the write that recorded its content has committed
 and before the reply is sent; a refused or misplaced message records
@@ -276,8 +277,9 @@ stores and deletes nothing.
   `waitUntil` at `min(handlerStart + 25 s, ackSent + 20 s)`, so the
   runtime's 30-second lifetime after the response is never exceeded; no
   message id is stored for it. The handler waits for it on the clock
-  port, so on the Node port's long polling updates must be handled
-  concurrently. The replies before it echo nothing the reporter sent.
+  port, so the Node port's long polling handles updates concurrently
+  (grammY's runner, `src/telegram/polling.ts`). The replies before it echo
+  nothing the reporter sent.
 - When the reporter's label is "sexual content involving a minor", a
   second, persistent message carries the public hotline links and nothing
   else (no target URL), so the reporter can report directly whatever the

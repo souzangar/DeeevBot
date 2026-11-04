@@ -95,7 +95,11 @@ From the keyholder's or the owner's machine, on the host:
      over, so a new one loses nothing.
    - `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT`: the configuration requires
      them, but the port uses no webhook. Set fresh values of `A-Z`, `a-z`,
-     `0-9`, `_` and `-`, never the Worker's own.
+     `0-9`, `_` and `-`, never the Worker's own. The port needs no webhook
+     step either: it deletes the webhook itself at start (section 1).
+     `npm run set-webhook:delete`, the operations runbook's script, deletes
+     it without starting anything; it is for cleaning up, not part of the
+     switch.
    - The tunables keep their defaults. `SQLITE_PATH` stays empty:
      `docker-compose.yml` sets it to the volume's file.
    - Never define `DEBUG`, `NODE_DEBUG` or `NODE_DEBUG_NATIVE`, with any
@@ -184,9 +188,15 @@ The port deletes the webhook every time it starts, so the order matters:
 
 1. Stop the port for good: `docker compose down`, which stops and removes
    the container, so Docker does not restart it.
-2. Register the webhook again
+2. Register the webhook again from the keyholder's machine:
+   `npm run set-webhook -- https://div-report.<account subdomain>.workers.dev`
    ([operations and security runbook](./operations-and-security.md),
-   section 2.1).
+   section 2.1), with the Worker's own values in the environment, never the
+   port's `.env`: its `WEBHOOK_SECRET` and `WEBHOOK_PATH_SEGMENT` are fresh
+   ones (section 3), and a webhook registered with them would be answered
+   404 by the Worker. The printed answer shows the Worker's origin with
+   `<WEBHOOK_PATH_SEGMENT>`, `message` and `callback_query`, and
+   `max_connections` 10.
 3. Announce in the channel that reports still open on the port must be
    submitted again. The port's database is not carried over to D1.
 4. Destroy the port's database (section 7) once nothing in it is needed.
