@@ -28,7 +28,9 @@ SHAPES=(
   '(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}'     # GitHub token
 )
 
-cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null ||
+# The top level is tested for emptiness itself: `cd ""` is an error only
+# from bash 5.3 on, and succeeds silently on bash 5.2 (Ubuntu 24.04, CI).
+top=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] && cd "$top" 2>/dev/null ||
   { echo "secret-shape-scan: not inside a git work tree — cannot scan" >&2; exit 2; }
 args=(); for s in "${SHAPES[@]}"; do args+=(-e "$s"); done
 err=$(mktemp "${TMPDIR:-/tmp}/secret-scan-XXXXXX") || exit 2

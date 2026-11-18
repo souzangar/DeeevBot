@@ -189,3 +189,10 @@ secret-shape scan as a kit pattern.
   error-handling convention, the stack-dependent EDIT-MEs, and the owner's
   confirmation of the draft invariants) were decided in Phase 1 planning;
   see [Planning decisions (2026-10-28)](../product/planning-decisions-2026-10-28.md).
+- Settled on 2026-11-18: CI now runs that chain. `.github/workflows/ci.yml`
+  (GitHub Actions) runs the commit gate's build and test steps, then the
+  same `INVARIANT_CMD` chain in the gate's order, on a push and on a pull
+  request to `main`. It was rehearsed locally that day, before its first
+  push; see
+  [Developer setup](../guides/developer-setup.md), section 3, "Continuous
+  integration".

@@ -1,7 +1,7 @@
 ---
 type: guide
 title: "Developer setup"
-description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler, the webhook boundary and its registration script, the Node port and why it runs through Node's type stripping, critical paths and the tripwire, and the toolchain's known issues."
+description: "Working on the div-report code: prerequisites and install, the npm scripts and stack-independent checks, the commit gate and the CI workflow that runs the same steps on GitHub Actions, the three test tiers and the fake Bot API, lint and TypeScript settings, configuration and local secrets, wrangler, the webhook boundary and its registration script, the Node port and why it runs through Node's type stripping, critical paths and the tripwire, and the toolchain's known issues."
 status: active
 tags: [guide, development, toolchain, testing, cloudflare]
 timestamp: 2026-10-28T00:00:00Z
@@ -9,7 +9,8 @@ timestamp: 2026-10-28T00:00:00Z
 
 # Developer setup
 
-For whoever works on the code; facts as of 2026-10-28, updated 2026-11-11. Phase
+For whoever works on the code; facts as of 2026-10-28, updated 2026-11-11 and
+2026-11-18. Phase
 2 scaffolded the toolchain, and Phase 3 added the application modules: first the core
 (`src/errors/`, `src/config/`, the redacting logger and the reporter reference
 in `src/privacy/`, `src/i18n/` and `src/clock.ts`) and the storage (`src/db/`:
@@ -88,9 +89,10 @@ needs the scripts approved. Nothing else warns on install.
 
 `.claude/hooks/pre-commit-check.sh`, a Claude Code `PreToolUse` hook on Bash
 (wired in `.claude/settings.json`), gates the `git commit` commands Claude
-Code runs; a commit typed in a terminal runs no hook (there is no git hook and
-no CI yet), so run the same steps by hand first. All three steps run, even
-after one of them fails:
+Code runs; a commit typed in a terminal runs no hook (there is no git hook),
+and CI runs the same steps only after the push ("Continuous integration"
+below), so run them by hand before pushing. The gate runs all three steps,
+even after one of them fails:
 
 1. build: `npm run build` (`tsc --noEmit`, then `eslint .`);
 2. tests: `npm test` (the unit and workers projects);
@@ -98,7 +100,7 @@ after one of them fails:
    drift gate (`.claude/hooks/rules-sync-check.sh`), the secret-shape scan
    (`.claude/hooks/secret-shape-scan.sh`), the kit selftests
    (`bash selftest/run-all.sh`, with the critical-globs completeness and
-   tripwire-pattern checks of section 8), the OKF selftests
+   tripwire-pattern checks of section 9), the OKF selftests
    (`bash selftest-okf/run-all.sh`), the OKF docs gate
    (`node scripts/okf/check.mjs`), then `npm run test:invariants`.
 
@@ -109,6 +111,63 @@ re-run the gate. The gate checks the working tree, not the staged snapshot, so
 commit with the tree equal to the index (for example, `git add -A` right
 before). `SKIP_COMMIT_GATE=1`, prefixed to the commit command or exported, is
 the documented intentional bypass.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` (written 2026-11-18) is the GitHub Actions
+workflow "CI". It runs on a push to `main` and on a pull request to `main`,
+with `permissions: contents: read`, as one job, `gate` ("Build, tests,
+invariants"), on `ubuntu-latest` with a 20-minute timeout. A newer push to a
+pull request cancels that pull request's older run; every commit on `main`
+keeps its own run. Its steps, in order:
+
+1. `actions/checkout`, with `persist-credentials: false`;
+2. `actions/setup-node`, with `node-version: 22` and the package-manager
+   cache off;
+3. the install: `npm ci --ignore-scripts`;
+4. the build: `npm run build`;
+5. the tests: `npm test`;
+6. the invariants, the gate's `INVARIANT_CMD` chain in the gate's order:
+   `.claude/hooks/rules-sync-check.sh`, `.claude/hooks/secret-shape-scan.sh`,
+   `bash selftest/run-all.sh`, `bash selftest-okf/run-all.sh`,
+   `node scripts/okf/check.mjs`, then `npm run test:invariants`;
+7. the offline bundles of the Worker and the probe: `npm run dry-run`, then
+   `npm run probe:dry-run` (sections 2 and 7).
+
+It differs from the commit gate in three ways: it stops at its first failing
+step, where the gate runs all three; it checks the pushed commit on a clean,
+shallow checkout, where the gate checks the working tree; and it adds the
+two offline bundles. It does not run `npm audit`, does not build the Docker
+image and has no deploy step.
+
+- No secret: the workflow references none, no Cloudflare account and no
+  Telegram token, since the tests use the fake Bot API and a local D1
+  (section 4). That is deliberate (critical invariant 6) and must stay so.
+- Node and npm: Node 22 is the fallback image's line (`node:22-slim`,
+  section 8), and `engines` sets the floor at 22.18. The runner's Node 22
+  bundles npm 10, which runs dependency install scripts by default, hence
+  `--ignore-scripts`: it matches what npm 12 does by default on the
+  development machine, where esbuild and workerd resolve through their
+  platform packages without their `postinstall` scripts (section 1).
+- Pinned actions: both actions are pinned to a full commit id, with the
+  release named in a comment (`actions/checkout` v7.0.1,
+  `actions/setup-node` v7.1.0), like the exact versions in `package.json`.
+- The other workflow: `.github/workflows/codeql.yml` is the owner's,
+  GitHub's "CodeQL Advanced" template (commit 6cef24b). It uses floating
+  major tags instead (`actions/checkout@v7`, `github/codeql-action/init@v4`
+  and `github/codeql-action/analyze@v4`), and analyses
+  `javascript-typescript` with build mode `none`, on a push and on a pull
+  request to `main` and weekly (cron `27 0 * * 0`).
+
+Before its first push, on 2026-11-18, the workflow was rehearsed locally,
+in an Ubuntu 24.04 container, on a snapshot of the working tree as one
+shallow commit, as a non-root user with an empty home and no git identity:
+Node 22.22.3, npm 10.9.8, bash 5.2.21, git 2.43.0, jq 1.7 and mawk. Its
+five command steps (3 to 7 above) all passed: the install in 95 s, the
+build in 31 s, the tests in 29 s, the invariants in 36 s (the kit selftests
+380 assertions ok, the OKF selftests 42 and 15 ok) and the bundles in 6 s.
+The rehearsal found one defect, a difference between bash 5.2 and 5.3 in
+the secret-shape scan, fixed the same day (section 10).
 
 ## 4. Tests
 
@@ -716,7 +775,7 @@ Known false positive: a method-shorthand handler such as
 `async fetch(request, env, ctx) {` matches the bare-fetch pattern, which is
 why `src/worker.ts` writes its handlers as properties (`fetch: () => ...`).
 
-## 10. Known issues (2026-10-28, updated 2026-11-11)
+## 10. Known issues (2026-10-28, updated 2026-11-11 and 2026-11-18)
 
 Moving to `@cloudflare/vitest-plugin` on 2026-10-28 removed the deprecated
 Workers Vitest pool package, its six high-severity audit findings and the
@@ -762,3 +821,24 @@ bumped. What remains:
   when it loads. `vitest.config.ts` passes `--disable-warning=ExperimentalWarning`
   to the unit and invariants tiers, which hides every experimental warning
   there; the Node port prints it once at start.
+
+Fixed on 2026-11-18, the day the CI rehearsal found it (section 3,
+"Continuous integration"): the secret-shape scan's failure outside a git
+work tree depended on the bash version. `.claude/hooks/secret-shape-scan.sh`
+and its template twin, `.claude/hooks/secret-shape-scan.sh.example`, opened
+with:
+
+```bash
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null ||
+  { echo "secret-shape-scan: not inside a git work tree — cannot scan" >&2; exit 2; }
+```
+
+Outside a work tree the substitution is empty, and `cd ""` is an error on
+bash 5.3 (the development machine's, 5.3.9) but succeeds silently on bash
+5.2 (Ubuntu 24.04's, 5.2.21). On 5.2 the scan still failed closed (exit 2),
+but through its "the scan itself failed (rc=128)" path, so the assertion of
+`selftest/hooks-behavior.sh` on the message "not inside a git work tree"
+failed (46 ok, 1 failed). Both files now test the top level for emptiness
+before the `cd`, and the selftest passes on both bash versions (47 ok). The
+`.example` file is the kit's shipped template, so the owner's upstream kit
+may carry the same line; that was not checked.

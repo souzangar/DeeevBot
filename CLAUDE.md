@@ -277,7 +277,9 @@ amended the same day for the single-post model:
   is `test/invariants/*.test.ts`, the always-run specs the commit gate runs
   on every commit, one per stated "must not". Fixture values are never
   secret-shaped (the secret-shape scan reads test files too). No coverage
-  gate and no CI yet.
+  gate. CI (`.github/workflows/ci.yml`, GitHub Actions) runs the commit
+  gate's three steps and the two offline bundles on every push and pull
+  request to `main`, on Node 22, with no secret and no deploy step.
 - Tests are run, not just written — a claimed pass must be an observed pass.
 
 ## Commit style

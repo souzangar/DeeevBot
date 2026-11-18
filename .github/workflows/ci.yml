@@ -1,0 +1,69 @@
+# CI: the commit gate's three steps (doc/guides/developer-setup.md, section 3)
+# on a clean checkout, then the offline bundles of the Worker and the probe.
+#
+# It needs no secret, no Cloudflare account and no Telegram token: the tests
+# run against the fake Bot API and a local D1. Keep it that way (critical
+# invariant 6): no `secrets.*`, no deploy step, no step that prints the
+# environment. The actions are pinned to a commit, like every version in
+# package.json; the comment names the release the commit belongs to.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a pull request replaces its run; every commit on main
+  # keeps its own verdict.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    name: Build, tests, invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The line of the fallback image (node:22-slim); package.json's
+      # `engines` floor is 22.18.
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No dependency's install script runs: esbuild and workerd resolve
+      # through their platform packages (developer setup, section 1).
+      - name: Install from the lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Build (typecheck, lint)
+        run: npm run build
+
+      - name: Tests (unit, workers)
+        run: npm test
+
+      # The gate's INVARIANT_CMD, in its order; the first failure stops it.
+      - name: Invariants
+        run: |
+          .claude/hooks/rules-sync-check.sh
+          .claude/hooks/secret-shape-scan.sh
+          bash selftest/run-all.sh
+          bash selftest-okf/run-all.sh
+          node scripts/okf/check.mjs
+          npm run test:invariants
+
+      - name: Bundle the Worker and the probe (offline)
+        run: |
+          npm run dry-run
+          npm run probe:dry-run
