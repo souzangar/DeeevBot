@@ -2,7 +2,9 @@
 // or a chat. A loaded configuration must be unprintable in every form a
 // logger or an error reporter would use, and a configuration that fails to
 // load must never echo a supplied value (the admin and keyholder
-// allowlists, the broadcast channel and the link hosts included). And an
+// allowlists, the broadcast channel and the link hosts included, a key
+// refused as too short or as equal to another variable, and a review venue
+// refused as positive or as the channel or the membership chat). And an
 // environment that defines DEBUG, NODE_DEBUG or NODE_DEBUG_NATIVE is refused,
 // whatever its value: grammY's bundled `debug` package reads DEBUG from
 // process.env, which the runtime fills with every variable and secret under
@@ -22,11 +24,11 @@ const ENV = {
   BOT_TOKEN: 'invariant-bot-token-value',
   BOT_ID: '424242006',
   BOT_USERNAME: 'invariant_bot_username_value',
-  WEBHOOK_SECRET: 'invariant-webhook-secret-value',
+  WEBHOOK_SECRET: 'invariant-webhook-secret-value-at-least-32',
   WEBHOOK_PATH_SEGMENT: 'invariant-path-segment-value',
   ADMIN_IDS: '424242001,424242002',
   KEYHOLDER_IDS: '424242007,424242008',
-  REPORTER_REF_KEY: 'invariant-reporter-ref-key-value',
+  REPORTER_REF_KEY: 'invariant-reporter-ref-key-value-at-least-32',
   ADMIN_CHAT_ID: '-100424242003',
   MEMBERSHIP_CHAT_ID: '-100424242005',
   BROADCAST_CHAT_ID: '-100424242004',
@@ -109,10 +111,19 @@ describe('critical invariant 6: a failed load never echoes a value', () => {
     ['a username among the keyholders', { ...ENV, KEYHOLDER_IDS: '424242007,@leaky_keyholder_handle' }],
     ['a keyholder who is also an admin', { ...ENV, KEYHOLDER_IDS: '424242008,424242001' }],
     ['a positive broadcast chat id', { ...ENV, BROADCAST_CHAT_ID: '424242099' }],
+    ['a positive review venue', { ...ENV, ADMIN_CHAT_ID: '424242098' }],
+    ['a review venue that is the broadcast channel', { ...ENV, ADMIN_CHAT_ID: ENV.BROADCAST_CHAT_ID }],
+    ['a review venue that is the membership chat', { ...ENV, ADMIN_CHAT_ID: ENV.MEMBERSHIP_CHAT_ID }],
     ['a link host with a scheme', { ...ENV, ALLOWED_LINK_HOSTS: 'https://leaky-link-host.example' }],
     ['a lockdown value other than 1', { ...ENV, LOCKDOWN: 'leaky-lockdown-value' }],
     ['an out-of-range tunable', { ...ENV, MARKS_PER_REPORT: '424242046' }],
     ['a webhook secret outside the alphabet', { ...ENV, WEBHOOK_SECRET: 'leaky secret value' }],
+    ['a webhook secret shorter than 32 characters', { ...ENV, WEBHOOK_SECRET: 'leaky-short-webhook-secret' }],
+    ['a reporter reference key shorter than 32 characters', { ...ENV, REPORTER_REF_KEY: 'leaky-short-reporter-key' }],
+    ['the webhook secret equal to the path segment', { ...ENV, WEBHOOK_SECRET: 'leaky-shared-secret-value-of-32-chars', WEBHOOK_PATH_SEGMENT: 'leaky-shared-secret-value-of-32-chars' }],
+    ['the reference key equal to the webhook secret', { ...ENV, REPORTER_REF_KEY: 'leaky-shared-secret-value-of-32-chars', WEBHOOK_SECRET: 'leaky-shared-secret-value-of-32-chars' }],
+    ['the reference key equal to the path segment', { ...ENV, REPORTER_REF_KEY: 'leaky-shared-secret-value-of-32-chars', WEBHOOK_PATH_SEGMENT: 'leaky-shared-secret-value-of-32-chars' }],
+    ['the reference key equal to the bot token', { ...ENV, REPORTER_REF_KEY: 'leaky-shared-secret-value-of-32-chars', BOT_TOKEN: 'leaky-shared-secret-value-of-32-chars' }],
     ['a missing bot token', { ...ENV, BOT_TOKEN: undefined }],
     ['a DEBUG variable', { ...ENV, DEBUG: 'leaky-debug-value' }],
     ['a NODE_DEBUG variable', { ...ENV, NODE_DEBUG: 'leaky-node-debug-value' }],

@@ -82,7 +82,12 @@ the deployment are in
   job finalizes it with the outcome "no decision" and edits its card to
   "expired" without links (at most five cards a night and never under
   lockdown; the venue's auto-delete covers any card left).
-- The venue is not the NGO's group and not the broadcast channel. Nothing
+- The venue is not the NGO's group and not the broadcast channel: the bot
+  refuses to start when its chat id is the channel's or the membership
+  chat's, or is positive (a user's private chat). It compares ids and
+  nothing else, so it cannot stop a venue that other people can read (the
+  NGO's group, when the membership chat is the channel): the venue stays a
+  private supergroup by the go-live checklist, not by the bot. Nothing
   about a report is posted anywhere else, and nothing from the venue is
   forwarded out of it. The keyholder is not in the venue; alerts reach
   them by direct message.
@@ -178,9 +183,12 @@ How the card behaves:
   the first report, keeping no comment and no flag of their own; when a
   duplicate's reporter says they are the affected person while the report
   is still pending, the first report's flag is raised, and the card shows
-  it at your next step. A duplicate arriving after your approval changes
-  nothing of the approved post: if it should, Cancel. No reporter is told
-  anything at any decision.
+  it at your next step; if your approval is on its way at that moment, an
+  approval with the post is refused (section 4, step 9). The bot does not
+  tell you about a duplicate that arrives after your approval was
+  recorded: it is merged, nothing about it reaches the venue, and the
+  approved post is unchanged. No reporter is told anything at any
+  decision.
 
 ## 3. Step 0: the suspected-CSAM gate
 
@@ -266,7 +274,11 @@ Work through every step; approve only when every step passes.
    post for intimate images. The bot offers only the modes the report
    allows: the account link alone when the reporter is the affected person
    (or the flag was cleared by a cancelled approval), and when the report
-   has no post URL of its own (the reported link is the account). For a
+   has no post URL of its own (the reported link is the account). If the
+   flag is raised while the modes are on the card (a duplicate from the
+   affected person), a press on "The account link and the post" is
+   answered "That choice is not allowed for this report." and the card
+   shows the modes again, the account link alone, with the flag. For a
    private-data report you report the specific post yourself, from the
    isolated profile, before or right after approving.
 8. **Approve, and answer the prompts.** In order, each step on the card:
@@ -296,8 +308,9 @@ Work through every step; approve only when every step passes.
    another site whose host is not allowlisted is left out of the post,
    which says so. Then it sends the notice to every keyholder (step 9),
    and only once at least one of them has it does it write the approval,
-   in one step with the post's schedule; the prompt and your reply are
-   deleted.
+   in one step with the post's schedule, which checks once more that the
+   report still allows the link mode you chose with the links the post
+   shows; the prompt and your reply are deleted.
 9. **The grace period.** Approval starts the 30-minute grace period; the
    card and the status card show Cancel, and the status card says how many
    keyholders received the notice ("Keyholders notified: 2 of 2"). Cancel
@@ -324,11 +337,26 @@ Work through every step; approve only when every step passes.
    decision landed while the notices went out, the notices are edited to
    "Cancelled" and your prompt ends; so are they when a keyholder taps
    Lockdown in that moment, and then nothing is approved and the venue
-   gets nothing more. A keyholder who presses Cancel in the moment between
-   the notice and the approval's record is told that the approval is not
-   recorded yet, and presses again once it is; a notice more than five
-   minutes old whose approval was never recorded is settled as
-   "Cancelled" instead.
+   gets nothing more.
+
+   If the report changed while the notices went out, so that it no longer
+   allows the link mode you chose (a duplicate from the affected person
+   raised the flag, or another admin's approval was cancelled meanwhile
+   and the flag reads cleared), nothing is approved either: the notices
+   are edited to "Cancelled", your prompt and your reply are deleted with
+   no message, and the card returns to the category step, its flag line
+   saying why ("A reporter of this target says they are the affected
+   person: the post can carry the account link only.", or the line that
+   the flag was cleared at an earlier decision). Approve again: only the
+   account link is offered, and you write your points again. If the flag
+   is raised before you reply, your reply restarts the approval in the
+   same way, and no notice goes out. The bot does not tell you about a
+   duplicate that arrives after your approval was recorded (section 2).
+
+   A keyholder who presses Cancel in the moment between the notice and the
+   approval's record is told that the approval is not recorded yet, and
+   presses again once it is; a notice more than five minutes old whose
+   approval was never recorded is settled as "Cancelled" instead.
 10. **Reject** with one of the reasons the bot offers, internal codes
     shown to nobody: "No visible violation", "Dead link or wrong target",
     "The reported account may be the victim", "Another reason". The card

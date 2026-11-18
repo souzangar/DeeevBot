@@ -10,11 +10,11 @@ const VALID = {
   BOT_TOKEN: 'unit-test-bot-token',
   BOT_ID: '1000001',
   BOT_USERNAME: 'unit_test_bot',
-  WEBHOOK_SECRET: 'unit-test-webhook-secret',
+  WEBHOOK_SECRET: 'unit-test-webhook-secret-at-least-32-chars',
   WEBHOOK_PATH_SEGMENT: 'unit-test-path-segment',
   ADMIN_IDS: '1001,1002',
   KEYHOLDER_IDS: '2001',
-  REPORTER_REF_KEY: 'unit-test-reporter-ref-key',
+  REPORTER_REF_KEY: 'unit-test-reporter-ref-key-at-least-32-chars',
   ADMIN_CHAT_ID: '-1001234567890',
   MEMBERSHIP_CHAT_ID: '-1009876543210',
   BROADCAST_CHAT_ID: '-1005555555555',
@@ -24,16 +24,22 @@ type Overrides = Record<string, string | undefined>;
 
 const load = (overrides: Overrides = {}) => loadConfig({ ...VALID, ...overrides });
 
-/** The variable names a rejected load reports. */
-const rejectedVariables = (overrides: Overrides): readonly string[] => {
+/** The AppError CONFIG_INVALID a rejected load throws. */
+const refusal = (overrides: Overrides): AppError => {
   try {
     load(overrides);
   } catch (error) {
-    if (error instanceof AppError && error.code === 'CONFIG_INVALID') return error.variables ?? [];
+    if (error instanceof AppError && error.code === 'CONFIG_INVALID') return error;
     throw error;
   }
   throw new Error('expected loadConfig to reject the configuration');
 };
+
+/** The variable names a rejected load reports. */
+const rejectedVariables = (overrides: Overrides): readonly string[] => refusal(overrides).variables ?? [];
+
+/** One value every key variable takes on its own: 32 characters or more of the webhook secret's alphabet. */
+const SHARED = 'unit-test-shared-value-of-at-least-32-chars';
 
 /** Node's own debug switches: each case's values, and the reason a refusal names. */
 const NODE_DEBUG_CASES: [string, [string, string][], string][] = [
@@ -178,16 +184,74 @@ describe('loadConfig', () => {
       const error = caught as AppError;
       expect(error.code).toBe('CONFIG_INVALID');
       expect(error.variables).toEqual(['ADMIN_IDS', 'KEYHOLDER_IDS']);
-      expect(error.message).toContain('ADMIN_IDS and KEYHOLDER_IDS must not share an id');
+      expect(error.message).toBe('invalid configuration: ADMIN_IDS and KEYHOLDER_IDS must not share an id: a keyholder is never an admin');
       for (const id of ['1001', '1002', '1003', '2001']) expect(error.message).not.toContain(id);
       expect(error.cause).toBeUndefined();
     });
   });
 
+  describe('the rules between variables', () => {
+    it('refuses every broken rule in one error: the names of all, once each and sorted, each rule said', () => {
+      const error = refusal({ KEYHOLDER_IDS: '1002', ADMIN_CHAT_ID: VALID.BROADCAST_CHAT_ID, REPORTER_REF_KEY: SHARED, BOT_TOKEN: SHARED });
+      expect(error.code).toBe('CONFIG_INVALID');
+      expect(error.variables).toEqual(['ADMIN_CHAT_ID', 'ADMIN_IDS', 'BOT_TOKEN', 'BROADCAST_CHAT_ID', 'KEYHOLDER_IDS', 'REPORTER_REF_KEY']);
+      expect(error.message).toBe(
+        [
+          'invalid configuration: ADMIN_IDS and KEYHOLDER_IDS must not share an id: a keyholder is never an admin',
+          'REPORTER_REF_KEY and BOT_TOKEN must differ: Telegram holds the bot token',
+          'ADMIN_CHAT_ID and BROADCAST_CHAT_ID must differ: the review venue is never the broadcast channel',
+        ].join('; '),
+      );
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('are checked only once every variable holds on its own: a variable that does not is the one named', () => {
+      expect(rejectedVariables({ ADMIN_CHAT_ID: VALID.BROADCAST_CHAT_ID, BOT_ID: 'not-a-number' })).toEqual(['BOT_ID']);
+    });
+  });
+
   describe('chat ids', () => {
-    it('accepts negative and positive ids for the venue and the membership chat', () => {
+    it("takes only a negative id for the venue, a group's or a channel's", () => {
       expect(load({ ADMIN_CHAT_ID: '-100555' }).adminChatId).toBe(-100555);
+      expect(load({ ADMIN_CHAT_ID: '-1' }).adminChatId).toBe(-1);
+      for (const value of ['1', '777', '1001234567890', '-9007199254740992']) {
+        expect(rejectedVariables({ ADMIN_CHAT_ID: value }), value).toEqual(['ADMIN_CHAT_ID']);
+      }
+      const error = refusal({ ADMIN_CHAT_ID: '424242777' });
+      expect(error.message).toContain(
+        "ADMIN_CHAT_ID must be a negative integer chat id, the private admin supergroup's: never the broadcast channel's or the membership chat's",
+      );
+      expect(error.message).not.toContain('424242777');
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('accepts a positive id for the membership chat as well as a negative one', () => {
       expect(load({ MEMBERSHIP_CHAT_ID: '777' }).membershipChatId).toBe(777);
+      expect(load({ MEMBERSHIP_CHAT_ID: '-100777' }).membershipChatId).toBe(-100777);
+    });
+
+    it.each([
+      ['the broadcast channel', { ADMIN_CHAT_ID: VALID.BROADCAST_CHAT_ID }, ['ADMIN_CHAT_ID', 'BROADCAST_CHAT_ID'], ['ADMIN_CHAT_ID and BROADCAST_CHAT_ID must differ']],
+      ['the membership chat', { ADMIN_CHAT_ID: VALID.MEMBERSHIP_CHAT_ID }, ['ADMIN_CHAT_ID', 'MEMBERSHIP_CHAT_ID'], ['ADMIN_CHAT_ID and MEMBERSHIP_CHAT_ID must differ']],
+      [
+        'the broadcast channel that is also the membership chat',
+        { ADMIN_CHAT_ID: VALID.BROADCAST_CHAT_ID, MEMBERSHIP_CHAT_ID: VALID.BROADCAST_CHAT_ID },
+        ['ADMIN_CHAT_ID', 'BROADCAST_CHAT_ID', 'MEMBERSHIP_CHAT_ID'],
+        ['ADMIN_CHAT_ID and BROADCAST_CHAT_ID must differ', 'ADMIN_CHAT_ID and MEMBERSHIP_CHAT_ID must differ'],
+      ],
+    ] as const)('refuses a venue that is %s, naming the variables, every rule broken and no value', (_label, overrides, variables, rules) => {
+      const error = refusal(overrides);
+      expect(error.variables).toEqual(variables);
+      for (const rule of rules) expect(error.message).toContain(rule);
+      for (const digits of ['1234567890', '9876543210', '5555555555']) expect(error.message).not.toContain(digits);
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('loads a membership chat that is the broadcast channel, the supported fallback', () => {
+      const config = load({ MEMBERSHIP_CHAT_ID: VALID.BROADCAST_CHAT_ID });
+      expect(config.membershipChatId).toBe(-1005555555555);
+      expect(config.broadcastChatId).toBe(-1005555555555);
+      expect(config.adminChatId).toBe(-1001234567890);
     });
 
     it.each([
@@ -344,11 +408,62 @@ describe('loadConfig', () => {
       },
     );
 
-    it('limits the webhook secret to the alphabet Telegram accepts, 1 to 256 characters', () => {
-      expect(load({ WEBHOOK_SECRET: 'A'.repeat(256) }).webhookSecret).toHaveLength(256);
-      for (const value of ['A'.repeat(257), 'has space', 'semi;colon', 'slash/']) {
-        expect(rejectedVariables({ WEBHOOK_SECRET: value })).toEqual(['WEBHOOK_SECRET']);
+    it('limits the webhook secret to the alphabet Telegram accepts, 32 to 256 characters', () => {
+      for (const length of [32, 256]) expect(load({ WEBHOOK_SECRET: 'A'.repeat(length) }).webhookSecret).toHaveLength(length);
+      expect(load({ WEBHOOK_SECRET: `AZaz09_-${'w'.repeat(24)}` }).webhookSecret).toHaveLength(32);
+      const padding = 'w'.repeat(32);
+      for (const value of ['A'.repeat(31), 'A'.repeat(257), `has space${padding}`, `semi;colon${padding}`, `slash/${padding}`, `${'w'.repeat(31)}é`]) {
+        expect(rejectedVariables({ WEBHOOK_SECRET: value }), value).toEqual(['WEBHOOK_SECRET']);
       }
+    });
+
+    it('says what the webhook secret must hold, and no value', () => {
+      const error = refusal({ WEBHOOK_SECRET: 'w'.repeat(31) });
+      expect(error.message).toContain('WEBHOOK_SECRET must be 32 to 256 characters from A-Z, a-z, 0-9, _ and -');
+      expect(error.message).not.toContain('w'.repeat(31));
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('takes a reporter reference key of 32 characters or more, of any alphabet, and refuses a shorter or a blank one', () => {
+      expect(load({ REPORTER_REF_KEY: 'k'.repeat(32) }).reporterRefKey).toHaveLength(32);
+      expect(load({ REPORTER_REF_KEY: 'a key: of spaces, dots. and / 32 chars' }).reporterRefKey).toBe('a key: of spaces, dots. and / 32 chars');
+      expect(load({ REPORTER_REF_KEY: 'é'.repeat(32) }).reporterRefKey).toHaveLength(32);
+      for (const value of ['k'.repeat(31), 'é'.repeat(31), ' '.repeat(40), '\t'.repeat(32)]) {
+        expect(rejectedVariables({ REPORTER_REF_KEY: value }), JSON.stringify(value)).toEqual(['REPORTER_REF_KEY']);
+      }
+      const error = refusal({ REPORTER_REF_KEY: 'k'.repeat(31) });
+      expect(error.message).toContain('REPORTER_REF_KEY must be a non-blank secret of at least 32 characters');
+      expect(error.message).not.toContain('k'.repeat(31));
+    });
+
+    it.each([
+      ['the webhook secret and the path segment', { WEBHOOK_SECRET: SHARED, WEBHOOK_PATH_SEGMENT: SHARED }, ['WEBHOOK_PATH_SEGMENT', 'WEBHOOK_SECRET'], 'WEBHOOK_SECRET and WEBHOOK_PATH_SEGMENT must differ'],
+      ['the reference key and the webhook secret', { REPORTER_REF_KEY: SHARED, WEBHOOK_SECRET: SHARED }, ['REPORTER_REF_KEY', 'WEBHOOK_SECRET'], 'REPORTER_REF_KEY and WEBHOOK_SECRET must differ'],
+      ['the reference key and the path segment', { REPORTER_REF_KEY: SHARED, WEBHOOK_PATH_SEGMENT: SHARED }, ['REPORTER_REF_KEY', 'WEBHOOK_PATH_SEGMENT'], 'REPORTER_REF_KEY and WEBHOOK_PATH_SEGMENT must differ'],
+      ['the reference key and the bot token', { REPORTER_REF_KEY: SHARED, BOT_TOKEN: SHARED }, ['BOT_TOKEN', 'REPORTER_REF_KEY'], 'REPORTER_REF_KEY and BOT_TOKEN must differ'],
+    ] as const)('refuses %s holding one value, naming both and no value', (_label, overrides, variables, rule) => {
+      // Each variable takes the value on its own.
+      for (const name of Object.keys(overrides)) expect(load({ [name]: SHARED })).toBeDefined();
+      const error = refusal(overrides);
+      expect(error.variables).toEqual(variables);
+      expect(error.message.startsWith(`invalid configuration: ${rule}: `), error.message).toBe(true);
+      expect(error.message).not.toContain(SHARED);
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('refuses every broken pair in one error: each pair said, every name once, sorted', () => {
+      const error = refusal({ BOT_TOKEN: SHARED, WEBHOOK_SECRET: SHARED, WEBHOOK_PATH_SEGMENT: SHARED, REPORTER_REF_KEY: SHARED });
+      expect(error.variables).toEqual(['BOT_TOKEN', 'REPORTER_REF_KEY', 'WEBHOOK_PATH_SEGMENT', 'WEBHOOK_SECRET']);
+      for (const rule of [
+        'WEBHOOK_SECRET and WEBHOOK_PATH_SEGMENT must differ',
+        'REPORTER_REF_KEY and WEBHOOK_SECRET must differ',
+        'REPORTER_REF_KEY and WEBHOOK_PATH_SEGMENT must differ',
+        'REPORTER_REF_KEY and BOT_TOKEN must differ',
+      ]) {
+        expect(error.message).toContain(rule);
+      }
+      expect(error.message).not.toContain(SHARED);
+      expect(error.cause).toBeUndefined();
     });
 
     it('limits the webhook path segment to characters that need no escaping', () => {

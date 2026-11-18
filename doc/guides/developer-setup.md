@@ -9,7 +9,7 @@ timestamp: 2026-10-28T00:00:00Z
 
 # Developer setup
 
-For whoever works on the code; facts as of 2026-10-28, updated 2026-11-04. Phase
+For whoever works on the code; facts as of 2026-10-28, updated 2026-11-11. Phase
 2 scaffolded the toolchain, and Phase 3 added the application modules: first the core
 (`src/errors/`, `src/config/`, the redacting logger and the reporter reference
 in `src/privacy/`, `src/i18n/` and `src/clock.ts`) and the storage (`src/db/`:
@@ -132,8 +132,10 @@ bindings equal `test/support/variables.ts`) and `test/workers/d1.test.ts`
 same tables as node:sqlite, and drives the D1 adapter), and, from unit U4,
 `test/workers/review.test.ts` (the review's batches on D1: the approval's
 upsert over a SELECT, the post job's `ON CONFLICT DO NOTHING`, the Cancel
-and a re-approval under a new id, the rejection's counters and the
-routing's nulls), from unit U3 `test/workers/intake.test.ts` (the intake's
+and a re-approval under a new id, the rejection's counters, the routing's
+nulls, and, since the remediation of 2026-11-11, the approval's re-check
+of the link mode against the report as it stands, over every mode, flag
+and URL case and after a duplicate's real flag raise), from unit U3 `test/workers/intake.test.ts` (the intake's
 submit batch on D1), from unit U5 `test/workers/scheduled.test.ts` (the cron
 handler's run on D1: the post's claim and its record) and from unit U6
 `test/workers/finalize.test.ts` (the finalization's one batch on D1). The
@@ -151,7 +153,8 @@ approval record and the due query) and `test/invariants/storage-retention.test.t
 classified fate named in the deletion schedule), and, from unit U2,
 `test/invariants/webhook-authenticity.test.ts` (rule 2: nothing happens for a
 request off the path or without the secret, and the compare is
-`timingSafeEqual` over digests), `test/invariants/outgoing-messages.test.ts`
+`timingSafeEqual` over digests; since 2026-11-11, no configuration loads
+with a secret under 32 characters or equal to the path segment), `test/invariants/outgoing-messages.test.ts`
 (rules 4 and 5: every handler driven with every kind of update, under each
 lockdown layer and with failing replies; every send has previews off and HTML
 parse mode, goes only to the chat of the update it answers, and nothing is
@@ -272,9 +275,9 @@ and `moduleResolution: Bundler`, relative imports carry no extension
 Code reads the deployment's variables only through `configFor(env)` in
 `src/config/memo.ts`, which passes the string-valued properties of the
 Worker's `env` (its variables and secrets, never its bindings) to
-`loadConfig()` in `src/config/schema.ts` (critical invariants 2 and 6) and
-keeps the result for as long as that `env` object lives, so an isolate parses
-once per `env` object; a failed load is not kept. The Worker entry calls it
+`loadConfig()` in `src/config/schema.ts` (critical invariants 2, 3, 5, 6, 7
+and 8) and keeps the result for as long as that `env` object lives, so an
+isolate parses once per `env` object; a failed load is not kept. The Worker entry calls it
 on every request (section 7, "The webhook boundary"). Under `nodejs_compat`
 at this compatibility date the runtime also copies every variable and secret
 into `process.env` (observed on 2026-10-28 in the workers tier); nothing in
@@ -285,24 +288,25 @@ does the same (section 7, "Registering the webhook"). grammY's bundled `debug` p
 redacting logger; so does Node itself, for `NODE_DEBUG` and
 `NODE_DEBUG_NATIVE` (with `NODE_DEBUG=fetch` or `undici`, every Bot API
 request line, the token in its path). So the bot refuses to start with any
-of the three: the load fails with `CONFIG_INVALID` naming it, whatever its
-value, the Worker answers every request 500 until it is removed, and the
-Node port refuses to start, before any request
+of the three: the load fails with `CONFIG_INVALID`, whose error names it
+whatever its value (the log line names no variable, below), the Worker
+answers every request 500 until it is removed, and the Node port refuses
+to start, before any request
 ([operations and security runbook](./operations-and-security.md), section
 4).
 
 | Variable | Must hold | Default |
 |---|---|---|
-| `BOT_TOKEN` | a non-blank secret | required |
+| `BOT_TOKEN` | a non-blank secret, never equal to `REPORTER_REF_KEY` | required |
 | `BOT_ID` | a positive integer: the bot's numeric Telegram id, which grammY's `botInfo` needs with `BOT_USERNAME`, so no update costs a `getMe` call | required |
 | `BOT_USERNAME` | the bot's username without the @: 5 to 32 characters from A-Z, a-z, 0-9 and `_` | required |
-| `WEBHOOK_SECRET` | 1 to 256 characters from A-Z, a-z, 0-9, `_` and `-` (Telegram's `secret_token` alphabet) | required |
-| `WEBHOOK_PATH_SEGMENT` | a URL path segment of A-Z, a-z, 0-9, `_` and `-` | required |
+| `WEBHOOK_SECRET` | 32 to 256 characters from A-Z, a-z, 0-9, `_` and `-` (Telegram's `secret_token` alphabet and maximum, with a floor of the project's own); never equal to `WEBHOOK_PATH_SEGMENT` or `REPORTER_REF_KEY`; generated as below | required |
+| `WEBHOOK_PATH_SEGMENT` | a URL path segment of A-Z, a-z, 0-9, `_` and `-`; no length floor, since it is not the check (section 7), but generated as below like the secrets, and never equal to `WEBHOOK_SECRET` or `REPORTER_REF_KEY` | required |
 | `ADMIN_IDS` | comma-separated numeric Telegram user ids, never usernames; at least one | required |
 | `KEYHOLDER_IDS` | comma-separated numeric Telegram user ids of the keyholders, never usernames; at least one; the same rules as `ADMIN_IDS`, and no id in both lists (a keyholder is never an admin). The keyholders receive the alerts and may run `/lockdown`, `/unlock` and `/retract` | required |
-| `REPORTER_REF_KEY` | a non-blank secret | required |
-| `ADMIN_CHAT_ID` | a non-zero integer chat id, negative for groups and channels | required |
-| `MEMBERSHIP_CHAT_ID` | a non-zero integer chat id, negative for groups and channels: the chat whose members get the members' intake limits | required |
+| `REPORTER_REF_KEY` | a secret of at least 32 characters, any characters, not blank; never equal to `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT` or `BOT_TOKEN`; generated as below | required |
+| `ADMIN_CHAT_ID` | a negative integer chat id, the private admin supergroup's: never the broadcast channel's (`BROADCAST_CHAT_ID`) or the membership chat's (`MEMBERSHIP_CHAT_ID`) | required |
+| `MEMBERSHIP_CHAT_ID` | a non-zero integer chat id, negative for groups and channels: the chat whose members get the members' intake limits; it may be `BROADCAST_CHAT_ID` (the fallback when `getChatMember` does not answer in the group), never `ADMIN_CHAT_ID` | required |
 | `BROADCAST_CHAT_ID` | a negative integer chat id: the channel each approved report is posted into, once | required |
 | `ALLOWED_LINK_HOSTS` | comma-separated exact lowercase hostnames, each of a-z, 0-9, dots and hyphens, with no scheme, path or port: the only hosts a post may link to | `instagram.com,www.instagram.com,x.com,twitter.com,www.facebook.com,facebook.com,www.tiktok.com,tiktok.com,t.me` |
 | `LOCKDOWN` | `1` or nothing: the keyholder's override, which no Telegram command can clear | none: off |
@@ -331,14 +335,90 @@ Node port refuses to start, before any request
   hyphen fails the load.
 - `LOCKDOWN` accepts `1` and nothing else; any other value fails the load
   rather than being read as "off".
+- The review venue: `ADMIN_CHAT_ID` must be negative and differ from
+  `BROADCAST_CHAT_ID` and from `MEMBERSHIP_CHAT_ID`, so that no review card,
+  with its URLs, comment and reporter reference, reaches the members of
+  those two chats (critical invariants 3, 5 and 7); a positive id, a user's
+  private chat, is refused. The check compares ids and nothing else: it
+  cannot tell any other chat the members can read, and under the fallback
+  where `MEMBERSHIP_CHAT_ID` equals `BROADCAST_CHAT_ID` (allowed: the
+  fallback of the membership check) the NGO group's id is configured
+  nowhere, so a venue set to that group loads. That the venue is a private
+  supergroup the keyholder is not in stays the go-live checklist's to check
+  ([operations and security runbook](./operations-and-security.md),
+  section 9). Changing `ADMIN_CHAT_ID` on a deployment that holds reports
+  has consequences of its own (the same runbook, section 7).
+- The secrets: `WEBHOOK_SECRET` has 32 to 256 characters and
+  `REPORTER_REF_KEY` at least 32, counted as JavaScript counts a string's
+  length (UTF-16 code units); each unit is at least one byte of the key's
+  UTF-8 encoding, so the key has at least 32 bytes, the minimum RFC 2104
+  recommends for HMAC-SHA-256 (the hash's output length). Four pairs must
+  differ: `WEBHOOK_SECRET` and `WEBHOOK_PATH_SEGMENT`, since the secret
+  would otherwise sit in the webhook's URL, which `getWebhookInfo` and the
+  platform's logs show; and `REPORTER_REF_KEY` and each of `WEBHOOK_SECRET`,
+  `WEBHOOK_PATH_SEGMENT` and `BOT_TOKEN`, each of which leaves the
+  keyholder's hands (Telegram holds the token and the secret, and the
+  segment is in URLs). The check is exact equality: it catches a value
+  pasted into two variables, not a weak or a related one. A length floor
+  rejects a short value but proves no randomness: only generating each value
+  on its own, as below, gives the strength.
+- The rules across variables (`CROSS_FIELD_RULES` in
+  `src/config/schema.ts`: no id in both `ADMIN_IDS` and `KEYHOLDER_IDS`,
+  the venue's two, the four pairs) are checked only once every variable
+  holds on its own: a variable that breaks its own rule is reported alone,
+  with what it must hold, so fixing it can bring a broken rule across
+  variables to light at the next load. Every rule across variables that
+  fails is named in the one `CONFIG_INVALID`: its message joins the failed
+  rules' sentences, each naming its variables and why (for example
+  "ADMIN_CHAT_ID and BROADCAST_CHAT_ID must differ: the review venue is
+  never the broadcast channel"), its `variables` field lists theirs, sorted
+  and each once, and no value appears.
 - A failed load throws an `AppError` with the code `CONFIG_INVALID`
   (`src/errors/`), naming each offending variable with what it must hold in its
   message and listing the names in its `variables` field, never a value, and
-  carrying no cause. The loaded object is
-  frozen and unprintable: `JSON.stringify` and `util.inspect` render it, and
-  any spread copy, as `[config redacted]` (critical invariant 6). That covers
+  carrying no cause.
+- That error never reaches a log or a chat. The Worker (every request
+  answered 500, its cron running nothing), the Node port (no start, before
+  its database) and the webhook script (exit code 1) each log one
+  class-only line, `config.invalid` (`errorClass` `AppError`, `errorCode`
+  `CONFIG_INVALID`), which names no variable. A refusal is diagnosed by
+  checking the values against this section: each variable's own rule in the
+  table; `DEBUG`, `NODE_DEBUG` and `NODE_DEBUG_NATIVE` absent; no id in both
+  `ADMIN_IDS` and `KEYHOLDER_IDS`; `ADMIN_CHAT_ID` negative and other than
+  `BROADCAST_CHAT_ID` and `MEMBERSHIP_CHAT_ID`; `WEBHOOK_SECRET` 32 to 256
+  characters and `REPORTER_REF_KEY` at least 32; `WEBHOOK_SECRET` other
+  than `WEBHOOK_PATH_SEGMENT`, and `REPORTER_REF_KEY` other than
+  `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT` and `BOT_TOKEN`. The webhook
+  script run with the configuration and no argument checks it without
+  calling Telegram (section 7, "Registering the webhook"). Carrying the
+  failing variables' names, never their values, on that line is a
+  side-finding of the
+  [2026-11-11 audit](../audits/2026-11-11-security-audit-remediation.md),
+  not done.
+- The loaded object is frozen and unprintable: `JSON.stringify` and
+  `util.inspect` render it, and any spread copy, as `[config redacted]`
+  (critical invariant 6). That covers
   the object, not a field read from it: `config.botToken` is a plain string,
   and logging it leaks the token.
+
+Generate `WEBHOOK_SECRET`, `REPORTER_REF_KEY` and `WEBHOOK_PATH_SEGMENT`
+each with its own run of this command, which prints 32 random bytes from
+the operating system's cryptographic generator as base64url: 43
+characters of A-Z, a-z, 0-9, `-` and `_`, Telegram's `secret_token`
+alphabet and the path segment's.
+
+```bash
+node -p "require('node:crypto').randomBytes(32).toString('base64url')"
+```
+
+One run per variable and per deployment: never one value for two
+variables, or for two deployments (the Node port's webhook secret and
+segment are fresh ones too, [fallback drill runbook](./fallback-drill.md),
+section 3). The value goes straight where it is used (`.dev.vars` on a
+development machine; for a deployment, its owner-only environment file and
+`wrangler secret put`'s prompt), never into a chat, a commit, a ticket or
+this bundle: no doc gives an example value, and `.dev.vars.example` and
+`.env.example` keep every secret empty.
 
 Locally, copy `.dev.vars.example` to `.dev.vars` and fill in `.dev.vars`,
 never the example, which is committed with every secret and id empty, the
@@ -430,7 +510,9 @@ critical invariant 2), which works in this order:
 
 A configuration that does not load is answered 500 with an empty body and
 logged by class (`config.invalid`) before any of this: no bot, no body read,
-and Telegram keeps the update and retries it.
+and Telegram keeps the update and retries it. The cron handler then runs
+nothing either (no post, no retention pass, no alert). The line names no
+variable; section 6 lists every rule a value can break.
 
 grammY's `webhookCallback` is not used: it reads the body and builds the
 answer itself (it can even turn the first API call into the webhook's
@@ -465,7 +547,13 @@ with `createBotApi()` (the one transformer, bounded at
 URL's path masked and every string, the URL's origin included, scrubbed of
 the token, the secret and the segment in any letter case. A refusal or a
 failed call is one class-only line (`config.invalid`, `webhook.usage`,
-`webhook.failed` with the method) and exit code 1. Its test,
+`webhook.failed` with the method) and exit code 1. The script loads the
+configuration before it reads its arguments and calls nothing before both
+pass, so a run with the configuration and no argument checks the
+configuration alone and never reaches Telegram: it ends with
+`webhook.usage` when the configuration loads, and with `config.invalid`
+when a value breaks a rule of section 6 (the operations runbook's rollout,
+section 2.4, starts with it). Its test,
 `scripts/set-webhook.test.ts`, drives it over the fake Bot API and never
 against Telegram, and the always-run `test/invariants/webhook-script.test.ts`
 pins its must-not with the production logger: no stream ever holds the
@@ -581,7 +669,7 @@ the source of truth for the module map and the rules each module carries.
 | `*src/review/*` | the report state machine, routing table, approval records, grace and cancel | 1, 3, 7 |
 | `*src/broadcast/*` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains, the finalization that leaves only the aggregate row | 1, 5, 8 |
 | `*src/privacy/*` | HMAC references, log redaction, the retention job | 6, 8 |
-| `*src/config/*` | the zod schema and loaders | 2, 6 |
+| `*src/config/*` | the zod schema and loaders: the secrets' floors and independence, the review venue's id kept apart from the channel's and the membership chat's | 2, 3, 5, 6, 7, 8 |
 | `*src/db/*` | the `SqlDb` port and its adapters | 1, 8 |
 | `*migrations/*` | the D1 schema migrations | 1, 8 |
 | `*src/platforms/*` | URL parsing, per-platform instruction keys and the link policy (the exact hosts a post may link to) | 4 |
@@ -628,7 +716,7 @@ Known false positive: a method-shorthand handler such as
 `async fetch(request, env, ctx) {` matches the bare-fetch pattern, which is
 why `src/worker.ts` writes its handlers as properties (`fetch: () => ...`).
 
-## 10. Known issues (2026-10-28, updated 2026-11-04)
+## 10. Known issues (2026-10-28, updated 2026-11-11)
 
 Moving to `@cloudflare/vitest-plugin` on 2026-10-28 removed the deprecated
 Workers Vitest pool package, its six high-severity audit findings and the
@@ -638,7 +726,22 @@ all one advisory published since (GHSA-g3hv-75wg-m249: minimatch, a denial
 of service through glob patterns), reached through eslint and
 typescript-eslint, development tools only; the committed lockfile of
 2026-10-28 gets the same 10, and `npm audit --omit=dev` finds none, which is
-all the port's image installs. What remains:
+all the port's image installs. On 2026-11-11 it reports 9 moderate
+entries, the same advisory, and `npm audit --omit=dev` still none. No
+supported fix exists: minimatch has no 10.x release after 10.2.6; the
+latest stable eslint, `@eslint/config-array` and typescript-eslint still
+require ^10; npm's two offers are downgrades, eslint 9
+(`npm audit fix --force`) and typescript-eslint 8.36.0, whose
+typescript-estree requires a minimatch 9 inside the affected range; and
+an override to minimatch 11, in which a static review of the 11.0
+changelog against the consumers' calls found no incompatibility, has not
+been validated by the eslint-level check. The vulnerable branch
+(`optimizationLevel` 2 or more) is one no consumer's call reaches. The
+[remediation audit](../audits/2026-11-11-security-audit-remediation.md),
+finding 4, records the evidence, the check an override would need, and
+the trigger: the go-live checklist runs `npm audit` again, and once stable
+releases declare minimatch ^11, typescript-eslint, then eslint, are
+bumped. What remains:
 
 - `SELF` from `cloudflare:test` is marked deprecated in the plugin's types, in
   favour of `exports` from `cloudflare:workers` (`exports.default.fetch()`);

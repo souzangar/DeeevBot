@@ -83,7 +83,13 @@ export async function showStep(deps: ReviewDeps, report: ReviewReport, step: Car
   await editMessage(deps, report.cardMessageId, reviewCard(await cardFacts(deps.db, report), deps.config.venueLocale, step));
 }
 
-/** Edits `report`'s card (when it has one) to `view` after a decision committed; a failure is logged. */
+/**
+ * Edits `report`'s card (when it has one) to `view` where a failed edit must
+ * not end the flow: after a decision committed, after an approval's batch
+ * that lost, or before a stale press is answered "not allowed"
+ * (src/review/approve.ts). A card already gone is left alone, any other
+ * failure is logged by class; nothing is thrown.
+ */
 export async function showAfterCommit(deps: ReviewDeps, report: ReviewReport, view: CardView): Promise<void> {
   if (report.cardMessageId !== null) await editAfterCommit(deps, report.cardMessageId, view);
 }

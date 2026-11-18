@@ -13,7 +13,15 @@
 // or fails after the notices went out edits them to "cancelled" only when
 // the approval surely did not land, and one that failed after committing
 // goes on as approved; a keyholder's Cancel while the approval is on its
-// way writes nothing and says so. And the gates on
+// way writes nothing and says so. A report that changes under an approval
+// (an affected reporter's duplicate raising its flag; another admin's
+// approval cleared it and a keyholder's Cancel) never gets a post-mode
+// approval the report no longer allows: a stale mode press gets the modes
+// as they are now, and a reply, or a batch, the report no longer allows
+// starts again at the category, the notices withdrawn, a card edit that
+// fails then logged by class and never answered with the generic error;
+// neither a forged press nor a reply to a prompt row the routing table
+// does not allow (intimate images with the post) passes it. And the gates on
 // every press, reply and command (critical invariant 2). Cancel, Reject,
 // Route, Block reporter and the commands are in
 // src/telegram/review-decisions.test.ts.
@@ -33,9 +41,10 @@ import { isPlainKey, LOCALES, t, type MessageKey } from '../i18n/index';
 import { outgoingLinkProblems } from '../platforms/link-policy';
 import { reporterRef } from '../privacy/reporter-ref';
 import { parseNoticeData, parseReviewData, reviewData } from '../review/callbacks';
-import { CATEGORIES } from '../review/categories';
+import { CATEGORIES, type LinkMode } from '../review/categories';
 import { STATUS_NAME_KEYS } from '../review/names';
 import { cancelledNoticeText, createNoticeMemory } from '../review/notify';
+import { createPrompt } from '../review/prompts';
 import { rejectStatements } from '../review/reject';
 import { renderBilingualPost } from '../review/render-post';
 import { REPORT_STATUSES } from '../review/reports';
@@ -127,6 +136,51 @@ describe('Approve', () => {
     expect(answers(harness).slice(-2)).toEqual([t(V, 'review.answer.not_allowed'), t(V, 'review.answer.not_allowed')]);
     expect(await snapshot(harness.db)).toEqual(before);
     expect(review.lastPrompt()).toBeUndefined();
+  });
+
+  it("refuses a forged press of the post mode for intimate images on a report that is not the affected person's, the routing table's rule: no prompt, nothing written", async () => {
+    const { harness, review, report } = await submitted({ affected: false });
+    await review.press(IDS.admin, { kind: 'approve', reportId: report.reportId }, report.cardId);
+    const before = await snapshot(harness.db);
+    await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'intimate_images', mode: 'post' }, report.cardId);
+    expect(answers(harness).at(-1)).toBe(t(V, 'review.answer.not_allowed'));
+    expect(review.lastPrompt()).toBeUndefined();
+    expect(await snapshot(harness.db)).toEqual(before);
+    // The card offers what the category allows: the account link alone.
+    expect(review.buttonsOf(review.card(report))).toEqual([
+      reviewData({ kind: 'mode', reportId: report.reportId, category: 'intimate_images', mode: 'account' }),
+      reviewData({ kind: 'back', reportId: report.reportId }),
+    ]);
+  });
+
+  it("starts again at the category for a reply to a prompt recording intimate images with the post mode, the routing table's rule at the reply: nothing to a keyholder, nothing written", async () => {
+    const { harness, review, report } = await submitted({ affected: false });
+    // The report itself would allow the post: not the affected person's, a post URL distinct from the account's.
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ affected_person: 0, url: X_POST, account_url: X_ACCOUNT });
+    // A prompt no flow writes (the press is refused), put in the real store, its message in the venue.
+    const promptId = report.cardId + 100;
+    harness.telegram.seedMessage(IDS.adminChat, { message_id: promptId, text: t(V, 'review.prompt.points', { id: report.reportId }) });
+    await createPrompt(harness.db, {
+      chatId: IDS.adminChat,
+      promptMessageId: promptId,
+      adminId: IDS.admin,
+      reportId: report.reportId,
+      kind: 'recommended_comment',
+      category: 'intimate_images',
+      linkMode: 'post',
+      createdAt: harness.clock.now(),
+    });
+    const replyId = await review.reply(IDS.admin, promptId, POINTS);
+    const keyholders: unknown[] = [IDS.keyholder, IDS.secondKeyholder];
+    expect(harness.telegram.calls.filter((call) => keyholders.includes(call.chatId))).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM approvals`)).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending', link_mode: null, broadcast_text: null });
+    expect(await harness.db.all(sql`SELECT * FROM admin_prompts`)).toEqual([]);
+    expect(harness.telegram.messageIn(IDS.adminChat, promptId)).toBeUndefined();
+    expect(harness.telegram.messageIn(IDS.adminChat, replyId)).toBeUndefined();
+    expect(cardText(review, report)).toContain(t(V, 'review.step.category'));
+    expect(review.buttonsOf(review.card(report)).map((data) => parseReviewData(data)?.kind)).toEqual([...CATEGORIES.map(() => 'category'), 'back']);
   });
 
   it('never approves suspected CSAM: its category leads to the routing card', async () => {
@@ -456,12 +510,15 @@ const submittedOver = async (over: (db: SqlDb, harness: () => BotHarness) => Sql
   return { harness, review, report };
 };
 
-/** Approve, the category and the mode pressed by IDS.admin on `report`'s card: the points prompt is out. */
-const toPoints = async (review: ReviewDriver, report: SubmittedReport): Promise<void> => {
+/** Approve, the category and `mode` (the account link unless given) pressed by IDS.admin on `report`'s card: the points prompt is out. */
+const toPoints = async (review: ReviewDriver, report: SubmittedReport, mode: LinkMode = 'account'): Promise<void> => {
   await review.press(IDS.admin, { kind: 'approve', reportId: report.reportId }, report.cardId);
   await review.press(IDS.admin, { kind: 'category', reportId: report.reportId, category: 'harassment' }, report.cardId);
-  await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'account' }, report.cardId);
+  await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'harassment', mode }, report.cardId);
 };
+
+/** The kinds of the buttons the card of `report` shows. */
+const cardKinds = (review: ReviewDriver, report: SubmittedReport) => review.buttonsOf(review.card(report)).map((data) => parseReviewData(data)?.kind);
 
 describe('an approval whose notice reaches no keyholder', () => {
   it.each([
@@ -571,6 +628,157 @@ describe('an approval whose batch does not win after its notices went out', () =
     expect(review.buttonsOf(review.card(report)).map((data) => parseReviewData(data)?.kind)).not.toContain('cancel');
   });
 
+  it("writes no post-mode approval once an affected reporter's duplicate raised the flag meanwhile: the notices \"cancelled\", the card back at the category", async () => {
+    let fired = false;
+    const { harness, review, report } = await submittedOver((db, self) =>
+      storeWith(db, {
+        batch: async (statements) => {
+          if (!fired) {
+            fired = true;
+            // The notices are out, the batch on its way: the affected person's duplicate of the target lands now, through the intake.
+            await reviewIn(self()).submit({ url: X_POST, category: 'harassment', affected: true, comment: 'it is my account' }, IDS.stranger);
+          }
+          return db.batch(statements);
+        },
+      }),
+    );
+    await toPoints(review, report, 'post');
+    const prompt = review.lastPrompt();
+    const replyId = await review.reply(IDS.admin, prompt?.message_id ?? 0, POINTS);
+    expect(fired).toBe(true);
+    expect(await harness.db.all(sql`SELECT * FROM approvals`)).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending', affected_person: 1, link_mode: null, broadcast_text: null });
+    expect(await harness.db.all(sql`SELECT status, merged_into FROM reports WHERE id <> ?`, [report.reportId])).toEqual([{ status: 'merged', merged_into: report.reportId }]);
+    for (const keyholder of [IDS.keyholder, IDS.secondKeyholder]) {
+      expect(harness.telegram.messageIn(keyholder, 1)).toMatchObject({ text: cancelledNoticeText(report.reportId) });
+      expect(harness.telegram.messageIn(keyholder, 1)?.reply_markup).toBeUndefined();
+    }
+    expect(harness.telegram.messageIn(IDS.adminChat, prompt?.message_id ?? 0)).toBeUndefined();
+    expect(harness.telegram.messageIn(IDS.adminChat, replyId)).toBeUndefined();
+    expect(await harness.db.all(sql`SELECT * FROM admin_prompts`)).toEqual([]);
+    // The card at the category step, the raised flag on it.
+    expect(cardText(review, report)).toContain(t(V, 'review.step.category'));
+    expect(cardText(review, report)).toContain(t(V, 'review.card.affected_yes'));
+    expect(cardKinds(review, report)).toEqual([...CATEGORIES.map(() => 'category'), 'back']);
+    // Approving again offers the account link alone, and takes it.
+    await review.press(IDS.admin, { kind: 'category', reportId: report.reportId, category: 'harassment' }, report.cardId);
+    expect(review.buttonsOf(review.card(report))).toEqual([
+      reviewData({ kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'account' }),
+      reviewData({ kind: 'back', reportId: report.reportId }),
+    ]);
+    await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'account' }, report.cardId);
+    await review.reply(IDS.admin, review.lastPrompt()?.message_id ?? 0, POINTS);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'approved', link_mode: 'account' });
+    expect(harness.log.records().filter((record) => record.level === 'error')).toEqual([]);
+  });
+
+  it('ends such a lost approval all the same when the card cannot be edited after the batch: the failure logged by class, no generic error in the venue', async () => {
+    let fired = false;
+    const { harness, review, report } = await submittedOver((db, self) =>
+      storeWith(db, {
+        batch: async (statements) => {
+          if (!fired) {
+            fired = true;
+            await reviewIn(self()).submit({ url: X_POST, category: 'harassment', affected: true, comment: 'it is my account' }, IDS.stranger);
+            // The venue's next edit, the card's once the batch has lost, fails.
+            self().telegram.fail({ method: 'editMessageText', chatId: IDS.adminChat }, FAILURES.serverError, 1);
+          }
+          return db.batch(statements);
+        },
+      }),
+    );
+    await toPoints(review, report, 'post');
+    const prompt = review.lastPrompt();
+    const replyId = await review.reply(IDS.admin, prompt?.message_id ?? 0, POINTS);
+    expect(fired).toBe(true);
+    expect(await harness.db.all(sql`SELECT * FROM approvals`)).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending', affected_person: 1 });
+    for (const keyholder of [IDS.keyholder, IDS.secondKeyholder]) {
+      expect(harness.telegram.messageIn(keyholder, 1)).toMatchObject({ text: cancelledNoticeText(report.reportId) });
+      expect(harness.telegram.messageIn(keyholder, 1)?.reply_markup).toBeUndefined();
+    }
+    expect(harness.telegram.messageIn(IDS.adminChat, prompt?.message_id ?? 0)).toBeUndefined();
+    expect(harness.telegram.messageIn(IDS.adminChat, replyId)).toBeUndefined();
+    expect(await harness.db.all(sql`SELECT * FROM admin_prompts`)).toEqual([]);
+    // The edit that failed is the card's: the venue's last edit, and the card is not at the category step.
+    expect(harness.telegram.callsOf('editMessageText').filter((call) => call.chatId === IDS.adminChat).at(-1)?.payload.message_id).toBe(report.cardId);
+    expect(cardText(review, report)).not.toContain(t(V, 'review.step.category'));
+    expect(harness.log.records().filter((record) => record.level === 'error')).toEqual([
+      { level: 'error', event: 'review.message_not_edited', errorClass: 'GrammyError', telegramErrorCode: 502, apiMethod: 'editMessageText' },
+    ]);
+    for (const locale of LOCALES) expect(harness.textsTo(IDS.adminChat)).not.toContain(t(locale, 'error.unexpected'));
+  });
+
+  it("still writes the post-mode approval when the duplicate that lands meanwhile is not the affected person's", async () => {
+    let fired = false;
+    const { harness, review, report } = await submittedOver((db, self) =>
+      storeWith(db, {
+        batch: async (statements) => {
+          if (!fired) {
+            fired = true;
+            await reviewIn(self()).submit({ url: X_POST, category: 'harassment', affected: false }, IDS.stranger);
+          }
+          return db.batch(statements);
+        },
+      }),
+    );
+    await toPoints(review, report, 'post');
+    await review.reply(IDS.admin, review.lastPrompt()?.message_id ?? 0, POINTS);
+    expect(fired).toBe(true);
+    expect(await harness.db.all(sql`SELECT status FROM reports WHERE id <> ?`, [report.reportId])).toEqual([{ status: 'merged' }]);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'approved', link_mode: 'post' });
+    expect(await harness.db.all(sql`SELECT link_mode, voided_at FROM approvals`)).toEqual([{ link_mode: 'post', voided_at: null }]);
+  });
+
+  it("writes no post-mode approval over another admin's approval that a keyholder cancelled meanwhile: that voided row untouched, the notices withdrawn, the card back at the category", async () => {
+    let fired = false;
+    const meanwhile: { approvals?: unknown[]; cancelled?: unknown; firstNoticesLive?: boolean[] } = {};
+    const { harness, review, report } = await submittedOver((db, self) =>
+      storeWith(db, {
+        batch: async (statements) => {
+          if (!fired) {
+            // Set first: the nested approval's own batch passes through here too.
+            fired = true;
+            const second = reviewIn(self());
+            await second.approve(IDS.secondAdmin, report, { category: 'harassment', mode: 'account', points: POINTS });
+            // The keyholder cancels the second approval on its own notice: id 2 (id 1 is the first admin's, on its way).
+            const [cancel] = second.buttonsOf(self().telegram.messageIn(IDS.keyholder, 2));
+            await second.pressData(IDS.keyholder, cancel ?? '', 2, IDS.keyholder);
+            meanwhile.cancelled = self().telegram.callsOf('answerCallbackQuery').at(-1)?.payload.text;
+            meanwhile.approvals = await db.all(sql`SELECT * FROM approvals`);
+            meanwhile.firstNoticesLive = [IDS.keyholder, IDS.secondKeyholder].map((keyholder) => self().telegram.messageIn(keyholder, 1)?.reply_markup !== undefined);
+          }
+          return db.batch(statements);
+        },
+      }),
+    );
+    await toPoints(review, report, 'post');
+    const prompt = review.lastPrompt();
+    const replyId = await review.reply(IDS.admin, prompt?.message_id ?? 0, POINTS);
+    expect(fired).toBe(true);
+    expect(meanwhile.cancelled).toBe(t('en', 'review.answer.cancelled'));
+    expect(meanwhile.firstNoticesLive).toEqual([true, true]);
+    // The first approval is not written: the approvals table holds the second admin's voided row, as the Cancel left it.
+    expect(meanwhile.approvals).toEqual([expect.objectContaining({ admin_id: IDS.secondAdmin, link_mode: 'account', voided_at: expect.any(Number) as number })]);
+    expect(await harness.db.all(sql`SELECT * FROM approvals`)).toEqual(meanwhile.approvals);
+    expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending', affected_person: null, link_mode: null, broadcast_text: null });
+    // The first admin's notices withdrawn.
+    for (const keyholder of [IDS.keyholder, IDS.secondKeyholder]) {
+      expect(harness.telegram.messageIn(keyholder, 1)).toMatchObject({ text: cancelledNoticeText(report.reportId) });
+      expect(harness.telegram.messageIn(keyholder, 1)?.reply_markup).toBeUndefined();
+    }
+    // The card at the category step, the cleared flag on it; the prompt and the reply gone.
+    expect(cardText(review, report)).toContain(t(V, 'review.step.category'));
+    expect(cardText(review, report)).toContain(t(V, 'review.card.affected_cleared'));
+    expect(cardKinds(review, report)).toEqual([...CATEGORIES.map(() => 'category'), 'back']);
+    expect(harness.telegram.messageIn(IDS.adminChat, prompt?.message_id ?? 0)).toBeUndefined();
+    expect(harness.telegram.messageIn(IDS.adminChat, replyId)).toBeUndefined();
+    expect(harness.log.records().filter((record) => record.level === 'error')).toEqual([]);
+  });
+
   it('edits the notices to "cancelled" when the batch failed and a read shows it did not land; the failure goes on', async () => {
     const { harness, review, report } = await submittedOver((db) =>
       storeWith(db, { batch: () => Promise.reject(new AppError('STORAGE_FAILURE', 'D1 batch failed')) }),
@@ -675,6 +883,64 @@ describe("a keyholder's Cancel while the approval is on its way", () => {
     expect(harness.telegram.callsOf('answerCallbackQuery').at(-1)?.payload.text).toBe(t('en', 'review.answer.cancelled'));
     expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending' });
     expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+  });
+});
+
+describe('the report changing under an open approval step', () => {
+  it('starts again at the category when an affected duplicate raised the flag under an open post-mode prompt: nothing to a keyholder, nothing written', async () => {
+    const { harness, review, report } = await submitted();
+    await toPoints(review, report, 'post');
+    const prompt = review.lastPrompt();
+    await review.submit({ url: X_POST, category: 'harassment', affected: true, comment: 'it is my account' }, IDS.stranger);
+    expect(await reportRow(harness.db, report.reportId)).toMatchObject({ status: 'pending', affected_person: 1 });
+    const replyId = await review.reply(IDS.admin, prompt?.message_id ?? 0, POINTS);
+    const keyholders: unknown[] = [IDS.keyholder, IDS.secondKeyholder];
+    expect(harness.telegram.calls.filter((call) => keyholders.includes(call.chatId))).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM approvals`)).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM jobs`)).toEqual([]);
+    expect(await harness.db.all(sql`SELECT * FROM admin_prompts`)).toEqual([]);
+    expect(harness.telegram.messageIn(IDS.adminChat, prompt?.message_id ?? 0)).toBeUndefined();
+    expect(harness.telegram.messageIn(IDS.adminChat, replyId)).toBeUndefined();
+    expect(cardText(review, report)).toContain(t(V, 'review.step.category'));
+    expect(cardText(review, report)).toContain(t(V, 'review.card.affected_yes'));
+    expect(cardKinds(review, report)).toEqual([...CATEGORIES.map(() => 'category'), 'back']);
+  });
+
+  it('shows the modes again and refuses a stale press of the post mode after an affected duplicate raised the flag: nothing written', async () => {
+    const { harness, review, report } = await submitted();
+    await review.press(IDS.admin, { kind: 'approve', reportId: report.reportId }, report.cardId);
+    await review.press(IDS.admin, { kind: 'category', reportId: report.reportId, category: 'harassment' }, report.cardId);
+    const post = reviewData({ kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'post' });
+    expect(review.buttonsOf(review.card(report))).toContain(post);
+    expect(cardText(review, report)).toContain(t(V, 'review.card.affected_no'));
+    // The duplicate leaves the open card as it was: it still offers the post.
+    await review.submit({ url: X_POST, category: 'harassment', affected: true, comment: 'it is my account' }, IDS.stranger);
+    expect(review.buttonsOf(review.card(report))).toContain(post);
+    const before = await snapshot(harness.db);
+    await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'post' }, report.cardId);
+    expect(answers(harness).at(-1)).toBe(t(V, 'review.answer.not_allowed'));
+    expect(review.buttonsOf(review.card(report))).toEqual([
+      reviewData({ kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'account' }),
+      reviewData({ kind: 'back', reportId: report.reportId }),
+    ]);
+    expect(cardText(review, report)).toContain(t(V, 'review.step.mode', { category: t(V, 'review.category.harassment') }));
+    expect(cardText(review, report)).toContain(t(V, 'review.card.affected_yes'));
+    expect(review.lastPrompt()).toBeUndefined();
+    expect(await snapshot(harness.db)).toEqual(before);
+  });
+
+  it('answers a stale press "not allowed" even when the card cannot be edited, the failure logged by class', async () => {
+    const { harness, review, report } = await submitted();
+    await review.press(IDS.admin, { kind: 'approve', reportId: report.reportId }, report.cardId);
+    await review.press(IDS.admin, { kind: 'category', reportId: report.reportId, category: 'harassment' }, report.cardId);
+    await review.submit({ url: X_POST, category: 'harassment', affected: true }, IDS.stranger);
+    harness.telegram.fail({ method: 'editMessageText', chatId: IDS.adminChat }, FAILURES.serverError, 1);
+    await review.press(IDS.admin, { kind: 'mode', reportId: report.reportId, category: 'harassment', mode: 'post' }, report.cardId);
+    expect(answers(harness).at(-1)).toBe(t(V, 'review.answer.not_allowed'));
+    expect(harness.log.records().filter((record) => record.level === 'error')).toEqual([
+      { level: 'error', event: 'review.message_not_edited', errorClass: 'GrammyError', telegramErrorCode: 502, apiMethod: 'editMessageText' },
+    ]);
+    expect(review.lastPrompt()).toBeUndefined();
   });
 });
 

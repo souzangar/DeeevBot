@@ -46,7 +46,10 @@ account link, a force-reply prompt for it, which the link policy screens
 and which must be an account on the report's platform; the link mode
 within the category's set (the affected-person flag, or a flag a
 cancelled approval cleared, forces account only, and so does a report
-without a post URL of its own); the recommended-comment prompt, a force
+without a post URL of its own; a press of a mode the report no longer
+allows, its flag raised while the step was open, is answered "not
+allowed" and shows the modes again from the report as it stands); the
+recommended-comment prompt, a force
 reply recorded in `admin_prompts` with the confirmed category and the link
 mode, and matched on the replier's allowlisted id plus
 `reply_to_message.message_id`, the replier being the approving admin,
@@ -55,7 +58,15 @@ prompt saying why. The keyholders' notice of the approval goes out before
 the approval is written, and a reply whose notice reached no keyholder is
 refused the same way, the fresh prompt saying that the keyholders must
 send `/start` to the bot first
-([Report lifecycle](./report-lifecycle.md)). "Other" uses the catalog's
+([Report lifecycle](./report-lifecycle.md)). The mode rule is checked
+again at the reply, where a report that changed under the prompt (its
+flag raised by a duplicate) restarts at the category step before any
+notice goes out, and once more in the approval's own write, together with
+the links the post was rendered from, because the report can also change
+while the notices go out: there a report that no longer allows the chosen
+mode gets no approval, its notices are edited to "cancelled", the prompt
+and the reply are deleted, and its card returns to the category step from
+the report as it stands. "Other" uses the catalog's
 fixed generic instruction block; there is no custom-instructions prompt.
 The procedure, step by
 step, is in the [admin review runbook](../guides/admin-review-runbook.md),
@@ -120,9 +131,15 @@ target, and a routing nulls the links and comment of the merged rows in
 the same batch. A merged report stores no comment and no affected-person
 flag; when its reporter is the affected person and the target is still
 pending, the target's flag is raised, so its post can carry the account
-link only. A duplicate reported by the affected person after the approval
-does not change the approved post; the admin's Cancel does. The
-acknowledgement is identical for new and merged reports, so nobody can
+link only, and a flag raised while an approval's notices are out refuses
+a post-URL approval, since the approval's write checks the flag
+([Report lifecycle](./report-lifecycle.md)). A duplicate reported by the
+affected person after the approval was written changes nothing: the
+target is no longer pending, so no flag is raised, and a merged report
+sends nothing to the venue, so no admin is told of it. Whether it should
+reach the admins is open, for the owner
+([the remediation audit](../audits/2026-11-11-security-audit-remediation.md)).
+The acknowledgement is identical for new and merged reports, so nobody can
 probe whether a target was already reported. For a
 target that was reported and closed before, the keyed link hash in the
 aggregate row lets the admin's card say "previously reported, outcome X";
@@ -156,7 +173,9 @@ channel through the edited post.
 
 A status change is a conditional update (`WHERE status = 'pending'`,
 exactly one row changed). The losing admin's card is edited to show the
-outcome. The grace period (30 minutes), Cancel, the keyholder's Cancel
+outcome. An approval also loses when the report, still pending, no longer
+allows its link mode (above); its card then returns to the category step.
+The grace period (30 minutes), Cancel, the keyholder's Cancel
 and Lockdown buttons and `/halt` are in
 [Report lifecycle](./report-lifecycle.md).
 
@@ -211,9 +230,18 @@ the id, username or name), every reported URL as non-tappable code text
 whatever its host, with link previews disabled, the platform, the
 reporter's category label, the comment as escaped text, the
 affected-person flag and the prior outcome for a re-reported target. The
-venue is not the NGO's group and not the broadcast channel; the admins
-are never administrators of either. The admin chat id is a venue, never
-an authority: every admin action re-checks the numeric allowlist
+venue is not the NGO's group and not the broadcast channel, and the
+admins are never administrators of either. The configuration checks what
+an id comparison can: `ADMIN_CHAT_ID` must be a negative id other than
+`BROADCAST_CHAT_ID` and `MEMBERSHIP_CHAT_ID`, or the bot does not start,
+so no card, with its URLs, comment and reference, reaches the members of
+those two chats. It refuses nothing else: it cannot tell any other chat
+the members can read, and under the fallback where the membership chat is
+the channel, the NGO group's id is configured nowhere. That the venue is
+a private supergroup the keyholder is not in stays the go-live
+checklist's to check
+([operations and security runbook](../guides/operations-and-security.md),
+section 9). The admin chat id is a venue, never an authority: every admin action re-checks the numeric allowlist
 ([ADR 0003](../architecture/adr-0003-update-transport-and-admin-authority.md)).
 
 ## Lockdown
@@ -251,6 +279,13 @@ and the reasons in the [threat model](./threat-model-seizure.md).
   characters; the fixed warning line is present in both locales of the
   rendered post.
 - Two concurrent decisions on one pending report change exactly one row.
+- An approval whose report changed under it (the affected-person flag
+  raised by a duplicate while the notices were out, or cleared by a
+  cancelled approval) writes no mode the report no longer allows, and the
+  post URL reaches neither the channel nor a keyholder.
+- The configuration refuses a venue id equal to the broadcast channel's or
+  the membership chat's, or a positive one, and the membership chat equal
+  to the channel still works.
 - Retraction and closure edit the post and never send a new message; the
   terminal status is written only on the edit's success.
 - Under lockdown: intake stores nothing, presses are ignored, every admin

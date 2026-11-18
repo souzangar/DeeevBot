@@ -9,6 +9,9 @@
 // - the secret is compared with node:crypto's timingSafeEqual over SHA-256
 //   digests, so the compare's time does not depend on how much of the
 //   header matches;
+// - no configuration loads with a secret shorter than 32 characters, or
+//   equal to the path segment, so no deployment runs on a short one or on
+//   one its webhook URL shows (a length is no proof of randomness);
 // - grammY's webhookCallback, which reads the body itself, is used nowhere
 //   in src/.
 // The commit gate runs this file on every commit (`npm run test:invariants`).
@@ -17,6 +20,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AppError } from '../../src/errors/app-error';
 import { handleWebhook, SECRET_HEADER } from '../../src/telegram/webhook';
 import { recordingLogger } from '../fakes/logger';
 import { botHarness } from '../support/bot-harness';
@@ -118,6 +122,34 @@ describe('critical invariant 2: the secret compare takes constant time', () => {
     for (const [left, right] of calls) {
       expect([(left as Buffer).byteLength, (right as Buffer).byteLength]).toEqual([32, 32]);
     }
+  });
+});
+
+describe('critical invariant 2: the secret has 32 characters or more, and is not the path segment', () => {
+  /** The AppError CONFIG_INVALID a configuration with `overrides` is refused with. */
+  const refused = (overrides: Readonly<Record<string, string>>): AppError => {
+    try {
+      testConfig(overrides);
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'CONFIG_INVALID') return error;
+      throw error;
+    }
+    throw new Error('expected the configuration to be refused');
+  };
+
+  it('refuses a secret of 31 characters, and takes one of 32', () => {
+    expect(refused({ WEBHOOK_SECRET: 's'.repeat(31) }).variables).toEqual(['WEBHOOK_SECRET']);
+    expect(testConfig({ WEBHOOK_SECRET: 's'.repeat(32) }).webhookSecret).toHaveLength(32);
+  });
+
+  it('refuses a secret equal to the path segment, which the webhook URL shows', () => {
+    const shared = 'webhook-secret-and-path-of-32-chars';
+    expect(refused({ WEBHOOK_SECRET: shared, WEBHOOK_PATH_SEGMENT: shared }).variables).toEqual(['WEBHOOK_PATH_SEGMENT', 'WEBHOOK_SECRET']);
+  });
+
+  it('runs on a test secret above the floor, so the checks above are not vacuous', () => {
+    expect(SECRET.length).toBeGreaterThanOrEqual(32);
+    expect(SECRET).not.toBe(config.webhookPathSegment);
   });
 });
 

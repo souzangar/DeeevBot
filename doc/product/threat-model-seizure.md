@@ -123,6 +123,12 @@ deletion schedule is in
   comments group under auto-delete).
 - The review venue is a private supergroup the admins are in; it is not
   the group and not the channel, and nothing from it is forwarded out.
+  The configuration refuses a positive venue id and one equal to the
+  channel's or the membership chat's, and nothing else: it compares ids,
+  so it cannot tell another chat the members can read, and when the
+  membership chat is the channel (the fallback) the group's id is
+  configured nowhere. The go-live checklist, not the configuration, checks
+  that the venue is a private supergroup.
 
 ### 3. The link policy
 

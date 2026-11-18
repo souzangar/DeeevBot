@@ -1,7 +1,7 @@
 ---
 type: runbook
 title: "Operations and security runbook"
-description: "Running the bot safely after the seizure threat: the keyholder outside the country as the root of trust (the BotFather owner account, the Cloudflare account, the channel, the secrets), admin accounts that administer nothing, the configuration, webhook registration with its script, the chats the bot sits in and its role in each, the grace period with Cancel and /halt, the single post and its edits, lockdown and the emergency wipe, quota exhaustion, logs, the single cron with retention and the stats snapshot, the fallback deployment and the yearly drill, incident procedures, the risk register, and the go-live, weekly, monthly and yearly checklists."
+description: "Running the bot safely after the seizure threat: the keyholder outside the country as the root of trust (the BotFather owner account, the Cloudflare account, the channel, the secrets), admin accounts that administer nothing, the configuration with its generated secrets, webhook registration with its script, moving a running deployment to stricter configuration rules, the chats the bot sits in and its role in each, the grace period with Cancel and /halt, the single post and its edits, lockdown and the emergency wipe, quota exhaustion, logs, the single cron with retention and the stats snapshot, the fallback deployment and the yearly drill, incident procedures, the risk register, and the go-live, weekly, monthly and yearly checklists."
 status: active
 tags: [runbook, operations, security, cloudflare, telegram, keyholder, lockdown, iran]
 timestamp: 2026-10-28T00:00:00Z
@@ -114,15 +114,26 @@ the bot, or transfer it. Held by the keyholder. Requirements:
 | Value | Where it lives | Never |
 |---|---|---|
 | Bot token | the deployment's secret store (Workers secrets; on the Node port, the gitignored `.env` file beside `docker-compose.yml`, filled in from `.env.example`: [fallback drill runbook](./fallback-drill.md)) | VCS, logs, any chat message |
-| Webhook `secret_token` (`WEBHOOK_SECRET`) and the path segment (`WEBHOOK_PATH_SEGMENT`) | same | same; re-issued whenever the token is re-issued; a new value of either needs the webhook registered again (2.1), since the Worker answers 404 to anything else |
-| Reporter-reference HMAC key | same; never exported; the only thing that could re-identify a reporter reference | VCS, logs, exports, backups; note that changing it severs every existing counter and block from its reference |
+| Webhook `secret_token` (`WEBHOOK_SECRET`, 32 to 256 characters) and the path segment (`WEBHOOK_PATH_SEGMENT`), each generated on its own (below) | same | same; never equal to each other or to the reference key, which the configuration refuses; re-issued whenever the token is re-issued; a new value of either needs the webhook registered again (2.1), since the Worker answers 404 to anything else |
+| Reporter-reference HMAC key (`REPORTER_REF_KEY`, at least 32 characters, generated on its own) | same; never exported; the only thing that could re-identify a reporter reference | VCS, logs, exports, backups; never equal to the token, the webhook secret or the path segment, which the configuration refuses. Changing it severs every reporter reference and every keyed link hash: open drafts are orphaned (they expire within 24 hours); the reporters' counters, throttles and blocks no longer match (a blocked reporter is unblocked); a new report of an open target no longer merges into it; "previously reported" loses its history. No migration exists: set it once, before go-live, and replace it only where it breaks a rule (2.4) |
 | `ADMIN_IDS` | same (deployment configuration kept out of VCS) | VCS |
 | `KEYHOLDER_IDS`, the keyholders' numeric Telegram ids (alerts, `/lockdown`, `/unlock`, `/retract`); never an admin's id, which the configuration refuses | same (deployment configuration kept out of VCS), set by the keyholder | VCS |
 | `LOCKDOWN`, the keyholder's override (the value `1`; a secret change is itself a new deployment, global within about a minute, with no code deploy); no Telegram command clears it | the secret store, set by the keyholder with `wrangler secret put LOCKDOWN` (value `1`) and cleared with `wrangler secret delete LOCKDOWN`; on the Node port, `LOCKDOWN=1` in its `.env`, read at start only, so setting or clearing it takes a restart (`docker compose up -d`) | VCS; never set or cleared by an admin |
-| Chat ids: the admin review venue (`ADMIN_CHAT_ID`), the membership chat (`MEMBERSHIP_CHAT_ID`), the broadcast channel (`BROADCAST_CHAT_ID`, a channel the keyholder owns, with the bot as its only posting administrator) | deployment configuration validated by the zod schema | VCS |
+| Chat ids: the admin review venue (`ADMIN_CHAT_ID`, a negative id, never the channel's or the membership chat's, which the configuration refuses), the membership chat (`MEMBERSHIP_CHAT_ID`, which may be the channel's), the broadcast channel (`BROADCAST_CHAT_ID`, a channel the keyholder owns, with the bot as its only posting administrator) | deployment configuration validated by the zod schema | VCS; `ADMIN_CHAT_ID` never changed on a deployment that holds reports without the procedure of section 7 (the stored card ids carry no chat id), and `BROADCAST_CHAT_ID` never while a report holds a post id (3.4) |
 | The bot's numeric id and username (`BOT_ID`, `BOT_USERNAME`), which spare every update a `getMe` call; set again if the bot is ever re-created | deployment configuration validated by the zod schema | |
 | The exact link hosts a post may carry (`ALLOWED_LINK_HOSTS`, the platforms' own hosts by default), the grace period (`APPROVAL_GRACE_MINUTES`, 30 minutes by default), the caps on recorded "I reported it" presses (`MARKS_PER_DAY`, 20,000 a day by default; `MARKS_PER_REPORT`, 5,000 per report by default), the review venue's one language (`VENUE_LOCALE`, `fa` by default, or `en`) | deployment configuration validated by the zod schema | |
 | Database | Cloudflare D1 through a binding (no credentials); on the Node port, a local SQLite file in a Docker volume, owner-only, destroyed with `docker compose down --volumes` ([fallback drill runbook](./fallback-drill.md), section 7) | copied into any backup containing per-user tables |
+
+The webhook secret, the path segment and the reference key are each
+generated on their own with the command of the
+[developer setup](./developer-setup.md), section 6 (32 random bytes as
+base64url, 43 characters), never derived from one another, never reused
+from another deployment, and never written anywhere but the deployment's
+secret store (on the Node port, its `.env` file) and the owner-only
+environment file of 2.1. The configuration refuses a value repeated
+across the four pairs that must differ (the secret and the segment; the
+key and each of the secret, the segment and the token): that catches a
+paste, not a weak value, and the length floors prove no randomness.
 
 The commit gate's secret-shape scan (`.claude/hooks/secret-shape-scan.sh`)
 is the last line of defence against a token in the tree; it is not a
@@ -161,7 +172,7 @@ host, never a path: the script appends the segment itself. It calls
 1. `url`: the origin, then `/` and `WEBHOOK_PATH_SEGMENT`. The random
    segment keeps scanner traffic off the daily request budget; it is not
    the check.
-2. `secret_token`: `WEBHOOK_SECRET`, 1 to 256 characters from A-Z, a-z,
+2. `secret_token`: `WEBHOOK_SECRET`, 32 to 256 characters from A-Z, a-z,
    0-9, `_` and `-`. The Worker rejects any request whose
    `X-Telegram-Bot-Api-Secret-Token` header does not equal it, by
    constant-time compare, before reading the body, with a 404 and an empty
@@ -191,14 +202,29 @@ probe's throwaway bot after its run, ADR 0004) and takes the bot off the
 Worker without starting the port, which deletes the webhook itself at
 every start anyway. A failure prints one class-only line on standard
 error and exits 1, and nothing else: `config.invalid` (a value missing or
-malformed, or a debug variable set), `webhook.usage` (not one https origin
-and not `--delete`), or `webhook.failed` naming the Bot API method, with
-Telegram's error code when there is one (401: the token is wrong or
-revoked). No line names a value, the argument included.
+malformed, a rule across values broken, or a debug variable set),
+`webhook.usage` (not one https origin and not `--delete`), or
+`webhook.failed` naming the Bot API method, with Telegram's error code
+when there is one (401: the token is wrong or revoked). No line names a
+value, the argument included, and `config.invalid` names no variable
+either: check the values against every rule of the
+[developer setup](./developer-setup.md), section 6, those across values
+included (`ADMIN_CHAT_ID` negative and other than `BROADCAST_CHAT_ID` and
+`MEMBERSHIP_CHAT_ID`; `WEBHOOK_SECRET` 32 to 256 characters and
+`REPORTER_REF_KEY` at least 32; the secret other than the segment, and
+the key other than the secret, the segment and the token; no id in both
+`ADMIN_IDS` and `KEYHOLDER_IDS`).
 
-After a token re-issue: set the new token and a new secret in the secret
-store, redeploy, run the script again. On the Node fallback there is no webhook:
-long polling with `getUpdates` and no inbound port; the port deletes the
+The script loads the configuration before it reads its argument and calls
+nothing before both pass, so a run with the environment file and no
+argument checks a configuration without touching Telegram: it ends with
+`webhook.usage` when the configuration loads, and with `config.invalid`
+when a value breaks a rule. Section 2.4 starts with this check.
+
+After a token re-issue: set the new token and a new secret (generated as
+in 1.4) in the secret store, redeploy, run the script again. On the Node
+fallback there is no webhook: long polling with `getUpdates` and no
+inbound port; the port deletes the
 webhook itself at every start (the two are mutually exclusive), so it is
 stopped for good before the webhook is registered again, and a webhook set
 while it runs makes it yield, alerting the keyholders
@@ -209,7 +235,7 @@ while it runs makes it yield, alerting the keyholders
 | Chat | The bot's role | Why |
 |---|---|---|
 | The broadcast channel (`BROADCAST_CHAT_ID`, a channel, negative id) | the only posting administrator; the keyholder owns the channel; no human admin is among its administrators | one post per approved report, edited at retraction and closure; joining is the consent and leaving the opt-out; a channel hides its subscribers from non-administrators, which a group never does, so a seized admin phone lists nobody; the bot stores no ids for its readers |
-| Admin review venue (`ADMIN_CHAT_ID`, a private supergroup) | administrator holding `can_delete_messages`; auto-delete enabled | review cards are deleted at the decision, prompts and admins' replies once answered (and by the nightly retention job); a card past the Bot API's 48-hour deletion limit, which binds an administrator bot too, is edited to its outcome without links instead, and the venue's auto-delete covers the rest; the keyholder is not in it |
+| Admin review venue (`ADMIN_CHAT_ID`, a private supergroup: a negative id, never the channel's or the membership chat's, which the configuration refuses) | administrator holding `can_delete_messages`; auto-delete enabled | review cards are deleted at the decision, prompts and admins' replies once answered (and by the nightly retention job); a card past the Bot API's 48-hour deletion limit, which binds an administrator bot too, is edited to its outcome without links instead, and the venue's auto-delete covers the rest; the keyholder is not in it |
 | The NGO's membership group (`MEMBERSHIP_CHAT_ID`) | a plain member in privacy mode, never an administrator; hidden members on; the admins out of its administrator list | an administrator bot receives every group message, which would route the members' chatter through the Worker and burn the request meter; membership is checked with `getChatMember` on the update's user id to set a reporter's limits, and never stored. The owner's go-live probe verifies that `getChatMember` answers for a plain-member bot; if it does not, `MEMBERSHIP_CHAT_ID` becomes the channel (a value change). Hidden members protect only people who never write: the group's history exposes its authors, which is outside the bot's control and the owner's decision |
 | Keyholders' private chats | ordinary private chats, opened by the keyholder's `/start` | alerts, the approval notices with Cancel and Lockdown, `/lockdown`, `/unlock`, `/retract`, `/attach`, `/halt`, `/open`, `/stats` |
 | Reporters' private chats | ordinary private chats | intake, its one self-deleting acknowledgement, the hotline links for a "sexual content involving a minor" label; nothing else, ever |
@@ -226,6 +252,51 @@ the channel.
   wipe and `wrangler d1 delete` run through wrangler from the keyholder's
   machine; nothing in day-to-day operation requires the dashboard.
 - The keyholder keeps the recovery codes (1.3).
+
+### 2.4 Moving a running deployment to stricter configuration rules
+
+The rules of 2026-11-11
+([remediation audit](../audits/2026-11-11-security-audit-remediation.md))
+refuse values an earlier deployment may hold: a `WEBHOOK_SECRET` or a
+`REPORTER_REF_KEY` under 32 characters, a value repeated across the four
+pairs that must differ (1.4), a review venue that is positive or equal to
+the channel or the membership chat. The new code refuses such a
+configuration whole: the Worker answers every request 500 (Telegram keeps
+the updates and retries them) and its cron runs nothing, no post, no
+retention pass and no alert, until it is fixed, and its one log line,
+`config.invalid`, names no variable. So the values change first, while
+the old code, which accepts the new values, still runs, and the new code
+is deployed last:
+
+1. Prepare the complete configuration in the owner-only environment file
+   of 2.1: every new value (each secret generated as in 1.4; chat ids that
+   pass the venue rules) and every unchanged one, the Worker's own. Check
+   it without calling Telegram: from a checkout of the new commit, whose
+   configuration rules are the new ones, run the webhook script with that
+   file and no argument (`env -i PATH="$PATH" node --env-file=<file>
+   --import ./src/node-hooks.ts scripts/set-webhook.ts`). It exits 1
+   either way, and its one line decides: `webhook.usage` means the
+   configuration loads; `config.invalid` that a value breaks a rule (the
+   line names none: check the values against the
+   [developer setup](./developer-setup.md), section 6, and run the check
+   again until it ends with `webhook.usage`; a variable that breaks its own
+   rule is reported before any rule across variables is checked, so a
+   second run can refuse what the first did not).
+2. If the venue must change on a deployment that holds reports, follow the
+   venue procedure of section 7 first.
+3. Put each changed value with `npx wrangler secret put <NAME>` (the
+   running code accepts them), then register the webhook (2.1) with the
+   checked file right away, back to back: updates Telegram sends between
+   the two still carry the old secret, are answered 404, and are dropped
+   by the registration (`drop_pending_updates`). Then deploy the new code
+   (`npx wrangler deploy`).
+
+A Workers secret is write-only: neither wrangler nor the dashboard shows
+its value. A value the new code refuses is fixed by putting it again, from
+the checked file, never by trying to read it back. Replace
+`REPORTER_REF_KEY` only where the old one breaks a rule (shorter than 32
+characters, or equal to the token, the secret or the segment), since a new
+key severs every reference and link hash (1.4); best before go-live.
 
 ## 3. Daily operation
 
@@ -474,8 +545,9 @@ is throttled to 1 report per day; blocks persist.
   2026-10-28), and grammY's bundled `debug` package reads `DEBUG` there and
   then writes its own lines to the console, outside the redacting logger
   (method names and update ids, among others). So the configuration fails
-  with `CONFIG_INVALID` naming `DEBUG`, the Worker answers every request 500
-  (Telegram keeps the updates), and the fix is `wrangler secret delete
+  with `CONFIG_INVALID` (the error names `DEBUG`; its one log line,
+  `config.invalid`, names no variable), the Worker answers every request
+  500 (Telegram keeps the updates), and the fix is `wrangler secret delete
   DEBUG`. The same holds for `NODE_DEBUG` and `NODE_DEBUG_NATIVE`, Node's
   own debug switches: on the Node port, `NODE_DEBUG=fetch` or `undici` would
   print every Bot API request, the token in its path, so the port refuses to
@@ -610,6 +682,37 @@ Record the date and outcome in an audit doc under `doc/audits/`.
      the `LOCKDOWN` secret still stops all activity without a query, and
      `wrangler d1 delete` still works, so the second step is then the
      first; otherwise wait for the 00:00 UTC reset and wipe.
+- **A review venue that was ever a chat others can read: the broadcast
+  channel, the membership chat, the NGO's group, a user's private chat.**
+  Every review card (the reported URLs as code, the comment, the reporter
+  reference), status card and prompt the bot wrote there was exposed to
+  that chat's members or user: treat it as an incident. Since the
+  remediation of 2026-11-11 the configuration refuses a venue id equal to
+  the channel's or the membership chat's, or a positive one, so the check
+  that starts 2.4 finds those still configured; it compares ids and
+  nothing else, so it cannot find any other readable chat (the NGO's group
+  when the membership chat is the channel), which only a look at the
+  venue finds.
+  1. Lock down at once (3.6).
+  2. The owner of that chat deletes the bot's review cards, status cards
+     and prompts there by hand: once the venue is changed, the bot cannot
+     address them any more.
+  3. Before running with the new venue (a private supergroup, a negative
+     id, neither the channel's nor the membership chat's), the owner
+     decides about the stored card ids. They carry no chat id, and every
+     later venue operation addresses the configured venue, so `/card`, the
+     decisions, the closures and the retention job would delete or edit
+     whatever message holds the same id in the new venue: an integrity
+     hazard inside the private venue, not a further exposure. The
+     emergency wipe (above) is the only existing way to clear them; it
+     also drops the open reports, the drafts, the counters and the block
+     list, so the open reports must be submitted again (announce it in the
+     channel). Without the wipe, the reports keep their stale ids and the
+     operations above act on them in the new venue.
+  4. Change `ADMIN_CHAT_ID` (2.4), then `/unlock` once satisfied.
+
+  The same stale-id hazard comes with any change of `ADMIN_CHAT_ID` on a
+  deployment that holds reports, and the same choice with it (step 3).
 - **Token compromise or suspicion of it.** Re-issue the token in
   @BotFather from the owner account, set it and a new webhook secret in the
   secret store, redeploy, register the webhook again with the script (2.1).
@@ -689,6 +792,18 @@ blocker of the [threat model](../product/threat-model-seizure.md)):
 - [ ] Review venue created as a private supergroup, the bot an
       administrator with `can_delete_messages`, auto-delete on, the
       keyholder not in it (2.2)
+- [ ] `ADMIN_CHAT_ID` the venue's own negative id, the private supergroup
+      of the item above and no other chat; `MEMBERSHIP_CHAT_ID` the
+      group's, or the channel's (2.2). The configuration refuses only a
+      positive venue id and one equal to the channel's or the membership
+      chat's: it compares ids, so it cannot tell another chat the members
+      can read (the NGO's group, when the membership chat is the
+      channel), and the item above is the real control (1.4)
+- [ ] `WEBHOOK_SECRET` (32 to 256 characters), `WEBHOOK_PATH_SEGMENT` and
+      `REPORTER_REF_KEY` (at least 32 characters) each generated on its own
+      with the developer setup's command, none equal to another or to the
+      token (1.4); the complete configuration checked with the webhook
+      script and no argument, which ends with `webhook.usage` (2.1)
 - [ ] Deployed from the keyholder's machine: `npx wrangler d1 create
       div-report`, its id in wrangler.jsonc's `database_id` on that machine
       only (never committed), `npx wrangler d1 migrations apply div-report
@@ -713,6 +828,13 @@ blocker of the [threat model](../product/threat-model-seizure.md)):
       the procedure)
 - [ ] The lockdown and wipe procedures and the fallback drill runbook read
       by the keyholder (3.6, 6, 7)
+- [ ] `npm audit` and `npm audit --omit=dev` run on the commit to deploy:
+      the production audit finds nothing, and the full audit nothing but
+      the development-only minimatch advisory (GHSA-g3hv-75wg-m249); once
+      stable releases declare minimatch ^11, typescript-eslint, then
+      eslint, bumped
+      ([remediation audit](../audits/2026-11-11-security-audit-remediation.md),
+      finding 4)
 
 Weekly:
 

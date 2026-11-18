@@ -184,7 +184,10 @@ traffic off the daily request budget, but the path is not itself the check;
 an authentic update is handed to the bot under `waitUntil` and answered 200
 at once, so Telegram does not redeliver (decisions Q8, Q9;
 `src/telegram/webhook.ts`). The IP ranges are not used as the check (they
-can change; the secret is the contract).
+can change; the secret is the contract). The configuration takes 32 to 256
+characters of Telegram's alphabet for the secret: Telegram's maximum, and
+a floor of the project's own, since Telegram's 1 is no protection
+([developer setup](../guides/developer-setup.md), section 6).
 
 Project use, the registration: the webhook is registered by
 `scripts/set-webhook.ts` (`npm run set-webhook -- <Worker origin>`;

@@ -89,6 +89,7 @@ describe('the Cancel batch', () => {
           adminId: IDS.secondAdmin,
           category: 'harassment',
           linkMode: 'account',
+          links: { url: 'https://x.com/someone/status/1234567890', accountUrl: 'https://x.com/someone' },
           recommendedComment: 'points',
           broadcastText: 'a post',
           now: NOW + 10,

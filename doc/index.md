@@ -23,7 +23,7 @@ Binding rules — read before touching the relevant code path.
 - [architecture/](./architecture/index.md) — System design, data model, and decision records. _(7)_
 - [guides/](./guides/index.md) — How-to guides and runbooks: operating the bot, admin procedures. _(4)_
 - [reference/](./reference/index.md) — External contracts and lookup material: Telegram Bot API notes, per-platform reporting instructions. _(10)_
-- [audits/](./audits/index.md) — Dated findings of reviews and security audits. _(2)_
+- [audits/](./audits/index.md) — Dated findings of reviews and security audits. _(3)_
 
 ## Bundle
 

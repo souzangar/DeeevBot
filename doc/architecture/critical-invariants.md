@@ -108,7 +108,8 @@ webhook request with a missing or wrong secret header is answered 404
 before the body is parsed and before any Bot API call; the compare is
 constant time; a callback pressed in the admin chat by an id outside
 `ADMIN_IDS` is refused; the configuration schema rejects a username in
-`ADMIN_IDS` and in `KEYHOLDER_IDS`; a forwarded message from an admin
+`ADMIN_IDS` and in `KEYHOLDER_IDS`, and a webhook secret shorter than 32
+characters or equal to the path segment; a forwarded message from an admin
 grants nothing; under lockdown every admin action is refused, intake
 stores nothing, presses are ignored, alerts reach keyholders only, and
 only a keyholder's `/unlock` clears `meta.lockdown`.
@@ -118,7 +119,10 @@ Tests:
 - `test/invariants/webhook-authenticity.test.ts`: a request off the
   webhook's path or without the secret is answered 404 before its body is
   read, a bot is built or the Bot API is called; the compare is
-  `timingSafeEqual` over SHA-256 digests; no grammY webhook handler.
+  `timingSafeEqual` over SHA-256 digests; no grammY webhook handler; no
+  configuration loads with a secret of 31 characters (one of 32 does) or
+  with the secret equal to the path segment, and the test secret itself is
+  above the floor.
 - `test/invariants/polling-authenticity.test.ts`: on the Node port, only the
   webhook boundary and long polling hand updates to the bot, nothing in
   `src/` opens a server or listens on a port, and the import graphs of the
@@ -133,7 +137,9 @@ Tests:
   `/resume` are no commands from anyone off the allowlists or outside their
   chats; nobody may `/repost` under lockdown.
 - `src/config/schema.test.ts`: `ADMIN_IDS` and `KEYHOLDER_IDS` take numeric
-  ids only, a username or an @handle refused.
+  ids only, a username or an @handle refused; `WEBHOOK_SECRET` takes 32 to
+  256 characters (31 and 257 refused), and never the value of
+  `WEBHOOK_PATH_SEGMENT`.
 - `src/auth/allowlist.test.ts`: the gates admit exactly the configured
   numeric ids, and never a string.
 - `src/auth/lockdown.test.ts`: the override needs no query, and a switch
@@ -190,16 +196,23 @@ comment, the reporter's id, username and name, an approving admin id and a
 post URL under account-only link mode; assert none of them appears in the
 rendered text or in the keyholders' notice and only the allowed links do;
 offer a report whose reporter is the affected person the account link alone,
-a forged press for another mode writing nothing; render the review card and
-assert it shows the opaque reference and not a Telegram id, username or
-name.
+a forged press for another mode writing nothing; let a duplicate by the
+affected person raise the flag after the post mode was picked and before
+the approval is written, and assert that no approval is written in that
+mode and the post URL reaches neither the channel nor a keyholder; render
+the review card and assert it shows the opaque reference and not a
+Telegram id, username or name.
 
 Tests:
 
 - `test/invariants/review.test.ts`: the post and the keyholders' notice
   carry no reporter reference, comment, id, username or name, no admin id
   and no post URL under the account mode, in both locales; the card shows
-  the reference, never a reporter's id, username or name.
+  the reference, never a reporter's id, username or name; a duplicate by
+  the affected person submitted just before the approval's batch keeps the
+  post URL out of the channel and out of every keyholder's chat, and the
+  approval made again posts the account link alone; the bot cannot be
+  built with the venue set to the channel or the membership chat.
 - `test/invariants/intake.test.ts`: nothing the bot sends a reporter echoes
   a reported URL, an account link, a comment or anyone's id, username, name
   or reference; the acknowledgement is the same bytes for a new and a merged
@@ -211,7 +224,29 @@ Tests:
   post for intimate images, and the account link alone when the reporter is
   the affected person.
 - `src/telegram/review.test.ts`: the affected person's report is offered the
-  account link alone, and a forged press for another mode writes nothing.
+  account link alone, and a forged press for another mode writes nothing,
+  the post mode for intimate images included; a reply to a prompt that
+  records intimate images with the post mode sends nothing to the
+  keyholders and writes nothing; an approval whose report changed under
+  it, by a duplicate by the affected person or by another admin's approval
+  that a keyholder's Cancel undid, writes nothing, its notices cancelled
+  and its card back at the category step, and ends all the same when that
+  card edit fails, the failure logged by class and no generic error in the
+  venue; a reply after the flag was raised sends nothing to the
+  keyholders; a stale mode press shows the modes again from the report as
+  it stands, and is answered "not allowed" even when that edit fails, the
+  failure logged by class.
+- `src/review/approve.test.ts`: the approval's write admits a link mode
+  exactly when `allowedModes()` admits it for the report as stored (every
+  mode, flag and URL case), refuses links other than those the post was
+  rendered from, and never writes over a voided approval in a mode the
+  report no longer allows.
+- `test/workers/review.test.ts`: on D1, the same table, a post-mode
+  approval succeeding beside every refusal, and a duplicate's real flag
+  raise refusing the post mode.
+- `src/config/schema.test.ts`: the review venue's id is never the
+  broadcast channel's or the membership chat's, so no card's comment or
+  reference reaches those two chats' members.
 - `src/review/card.test.ts`: the card shows the reference, never an id, a
   username or a name.
 - `src/review/open.test.ts`: `/open` lists the open reports by id, platform,
@@ -308,7 +343,9 @@ and closure edit, never send); no direct message is sent to anyone but as
 a reply to their own message in their own chat or as an alert to a
 keyholder id (the fake records every send's chat id); two ticks racing on
 one due job post once; a timed-out send is never re-sent; the schema
-holds no subscriber, ledger or per-presser table.
+holds no subscriber, ledger or per-presser table; the configuration
+refuses a review venue that is the channel or the membership chat, so no
+review card reaches the channel before an approval.
 
 Tests:
 
@@ -331,7 +368,18 @@ Tests:
   the venue once.
 - `test/invariants/review.test.ts`: the review sends to the venue and, by
   direct message, to the keyholders only, never to the channel, a reporter
-  or the membership group.
+  or the membership group; the bot cannot be built with the venue set to
+  the channel or the membership chat, and with the membership chat set to
+  the channel (the supported fallback) the channel gets no message before
+  an approval.
+- `src/config/schema.test.ts`: `ADMIN_CHAT_ID` must be negative and other
+  than `BROADCAST_CHAT_ID` and `MEMBERSHIP_CHAT_ID`, every broken rule
+  named in the one error; `MEMBERSHIP_CHAT_ID` equal to `BROADCAST_CHAT_ID`
+  still loads.
+- `src/worker.test.ts`: a venue equal to the channel is answered 500 with no
+  Bot API call, and the cron runs nothing.
+- `src/node.test.ts`: the port refuses a venue equal to the channel before
+  it opens its database.
 - `test/invariants/storage-retention.test.ts`: no subscriber, ledger or
   per-presser table (asserted under rule 8).
 - `src/telegram/respond.test.ts`: a press is answered by its callback
@@ -358,13 +406,19 @@ test with a real GrammyError whose payload carries the outgoing text and
 chat id, asserting neither reaches the log line; the configuration has no
 default for a secret: `BOT_TOKEN`, `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT`
 and `REPORTER_REF_KEY` are refused when the environment lacks them or holds
-them blank.
+them blank; `WEBHOOK_SECRET` and `REPORTER_REF_KEY` are refused below 32
+characters, and so is a value repeated across the four pairs that must
+differ (the secret and the path segment; the reference key and each of the
+secret, the path segment and the token), a refusal echoing no value.
 
 Tests:
 
 - `test/invariants/config-redaction.test.ts`: the loaded configuration is
-  unprintable; a failed load never echoes a value; an environment that
-  defines `DEBUG`, `NODE_DEBUG` or `NODE_DEBUG_NATIVE` is refused.
+  unprintable; a failed load never echoes a value, nine refusals of
+  2026-11-11 included (a positive venue, the venue equal to the channel or
+  to the membership chat, the two keys under 32 characters, the four pairs
+  that must differ); an environment that defines `DEBUG`,
+  `NODE_DEBUG` or `NODE_DEBUG_NATIVE` is refused.
 - `test/invariants/logger-redaction.test.ts`: an error is logged by class,
   never by content (a real `GrammyError` carrying a reported URL, a comment
   and a chat id, a real `HttpError` carrying the token URL); no Telegram id
@@ -375,7 +429,12 @@ Tests:
   an update.
 - `src/config/schema.test.ts`: no secret has a default; `DEBUG` and Node's
   debug switches are refused; a failed load names its variables and echoes
-  no value.
+  no value; `WEBHOOK_SECRET` and `REPORTER_REF_KEY` refused at 31
+  characters and loaded at 32 (the secret also at 256, and refused at
+  257); each of the four pairs that must differ refused, naming both
+  variables; every broken rule across variables named in one error, its
+  variables sorted and once each, and those rules checked only once every
+  variable holds on its own.
 - `src/privacy/logger.test.ts`: the redacting logger's allow-list and each
   drop rule, and `logError` recording an error by class and code only.
 - `src/telegram/polling.test.ts`: long polling logs a failure by class,
@@ -411,9 +470,10 @@ an approval for a report the admin categorises as suspected CSAM, by the
 card or by a forged press (Approve offers Route only), and routing leaves no
 un-voided approval behind; routing nulls `url`, `account_url` and `comment`
 on the report and its merged rows in the same batch; the routing card goes
-only to the admin review venue; the intake message for a "sexual content
-involving a minor" label carries the hotline links alone, never the reported
-URL.
+only to the admin review venue, whose id the configuration never lets be
+the channel's or the membership chat's; the intake message for a "sexual
+content involving a minor" label carries the hotline links alone, never
+the reported URL.
 
 Tests:
 
@@ -421,7 +481,12 @@ Tests:
   suspected CSAM gets no approval, by the card or by a forged press, and the
   post renderer refuses it; Route nulls the links, the comment and the flag
   of the report and its merged rows in one batch; the routing card is only
-  ever in the venue, and the reporter gets nothing at routing.
+  ever in the venue, and the reporter gets nothing at routing; the bot
+  cannot be built with the venue set to the channel or the membership
+  chat, so no card of a report labelled as suspected CSAM reaches their
+  members.
+- `src/config/schema.test.ts`: `ADMIN_CHAT_ID` must be negative and other
+  than `BROADCAST_CHAT_ID` and `MEMBERSHIP_CHAT_ID`.
 - `src/review/categories.test.ts`: suspected CSAM has no link mode, with or
   without the flag.
 - `src/review/render-post.test.ts`: suspected CSAM is never rendered,
@@ -690,3 +755,19 @@ each declares exactly the one cron the Worker runs, pinned there too; rule
 so never the webhook script). Every
 rule now has the specs that pin it listed at the end of its own section,
 under "Tests:".
+
+The security remediation of 2026-11-11
+([audit](../audits/2026-11-11-security-audit-remediation.md)) changed no
+rule and extended three always-run specs:
+`test/invariants/review.test.ts` (rule 3: a duplicate by the affected
+person submitted just before the approval's batch keeps the post URL out
+of the channel and out of every keyholder's chat, and the approval made
+again posts the account link alone; rules 3, 5 and 7: the bot cannot be
+built with the review venue set to the channel or the membership chat,
+while the membership chat set to the channel, the supported fallback,
+still works and sends the channel nothing before an approval),
+`test/invariants/webhook-authenticity.test.ts` (rule 2: no configuration
+loads with a secret of 31 characters or one equal to the path segment)
+and `test/invariants/config-redaction.test.ts` (rule 6: nine new refusals
+echo no value); the unit and workers tests it added are listed under
+rules 2, 3, 5, 6 and 7.

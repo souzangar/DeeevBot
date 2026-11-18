@@ -7,8 +7,15 @@
 // or when the lockdown switch is set (critical invariant 2: the switch
 // bound in the approval row's own statement); a re-approval over a voided
 // row under a new id, never over a live one;
-// and one of two decisions at the same moment, only. The conversation
-// itself is tested through the bot (src/telegram/review.test.ts).
+// and one of two decisions at the same moment, only. Then the report as it
+// is when the batch runs: the link mode re-checked in the batch's own
+// statement against allowedModes() of the report as read, over the 18
+// cells of a known account (mode, flag 0, 1 or cleared, a post URL distinct
+// from the account's, equal to it, or none), nothing written when it
+// refuses; nothing approved for a report that no longer holds the links the
+// post was rendered from; and no post-mode upsert over a voided approval
+// once the flag is cleared, the voided row left as it was. The
+// conversation itself is tested through the bot (src/telegram/review.test.ts).
 import { describe, expect, it } from 'vitest';
 import { fakeClock } from '../../test/fakes/clock';
 import { setLockdown } from '../auth/lockdown';
@@ -18,12 +25,18 @@ import { IDS } from '../../test/support/variables';
 import { randomId } from '../db/ids';
 import { sql, type SqlDb } from '../db/sql';
 import { approveStatements, APPROVAL_STATUS_STATEMENT, writeApproval, type ApprovalInput } from './approve';
+import { allowedModes } from './card';
+import { LINK_MODES } from './categories';
 import { rejectStatements, REJECT_STATUS_STATEMENT } from './reject';
 import { createPrompt } from './prompts';
+import { readReport } from './reports';
 
 const NOW = 1_800_000_000_000;
 const GRACE = 30 * 60_000;
 const setup = () => migratedDatabase(fakeClock(NOW));
+/** insertReport()'s links: an X post and its account. */
+const POST_URL = 'https://x.com/someone/status/1234567890';
+const ACCOUNT_URL = 'https://x.com/someone';
 
 const input = (reportId: string, fields: Partial<ApprovalInput> = {}): ApprovalInput => ({
   reportId,
@@ -32,6 +45,7 @@ const input = (reportId: string, fields: Partial<ApprovalInput> = {}): ApprovalI
   adminId: IDS.admin,
   category: 'harassment',
   linkMode: 'post',
+  links: { url: POST_URL, accountUrl: ACCOUNT_URL },
   recommendedComment: 'Say it mocks a private person.',
   broadcastText: '<b>The post</b>',
   now: NOW,
@@ -173,5 +187,91 @@ describe('the approval batch', () => {
     // The status change alone is bound to an approval that does not exist: it changes nothing.
     expect(await db.run(statusChange.sql, statusChange.params)).toEqual({ changes: 0 });
     await expect(db.run(sql`UPDATE reports SET status = 'approved' WHERE id = ?`, [reportId])).rejects.toMatchObject({ code: 'STORAGE_FAILURE' });
+  });
+});
+
+describe('the approval batch and the report as it is when the batch runs', () => {
+  /** The report's post URL in each cell: the account's own, another, or none. */
+  const URLS = { distinct: POST_URL, equal: ACCOUNT_URL, none: null } as const;
+  const FLAGS = [0, 1, null] as const;
+  const CELLS = LINK_MODES.flatMap((mode) => FLAGS.flatMap((flag) => Object.entries(URLS).map(([shape, url]) => ({ mode, flag, shape, url }))));
+
+  /** Runs `approval` on report `reportId` with its answered prompt (31) and another admin's (32); whether it won, and the snapshots around it. */
+  const attempt = async (db: SqlDb, reportId: string, approval: ApprovalInput) => {
+    await prompt(db, reportId, 31);
+    await prompt(db, reportId, 32, IDS.secondAdmin);
+    const before = await snapshot(db);
+    const won = await writeApproval({ db }, approval);
+    return { won, before, after: await snapshot(db) };
+  };
+
+  /** Nothing written but the answered prompt's deletion. */
+  const expectNothingWritten = (outcome: { before: Record<string, unknown>; after: Record<string, unknown> }, label: string): void => {
+    expect(outcome.after.admin_prompts, label).toEqual([expect.objectContaining({ prompt_message_id: 32 })]);
+    expect({ ...outcome.after, admin_prompts: [] }, label).toEqual({ ...outcome.before, admin_prompts: [] });
+  };
+
+  it("approves exactly when allowedModes() of the report as read allows the mode, a known account's 18 cells, and writes nothing otherwise", async () => {
+    expect(CELLS).toHaveLength(18);
+    const won: string[] = [];
+    for (const { mode, flag, shape, url } of CELLS) {
+      const label = `${mode}, flag ${String(flag)}, URL ${shape}`;
+      const { db } = setup();
+      const reportId = await insertReport(db, { url, account_url: ACCOUNT_URL, affected_person: flag });
+      const report = await readReport(db, reportId);
+      if (report === null) throw new Error('the report was not written');
+      const allowed = allowedModes(report, 'harassment').includes(mode);
+      const approval = input(reportId, { linkMode: mode, links: { url: report.url, accountUrl: ACCOUNT_URL } });
+      const outcome = await attempt(db, reportId, approval);
+      expect(outcome.won, label).toBe(allowed);
+      if (!allowed) {
+        expectNothingWritten(outcome, label);
+        continue;
+      }
+      won.push(label);
+      expect(await reportRow(db, reportId), label).toMatchObject({ status: 'approved', link_mode: mode });
+      expect(await db.all(sql`SELECT approval_id, link_mode, voided_at FROM approvals`), label).toEqual([{ approval_id: approval.approvalId, link_mode: mode, voided_at: null }]);
+      expect(await db.all(sql`SELECT kind, report_id FROM jobs`), label).toEqual([{ kind: 'post', report_id: reportId }]);
+    }
+    // The account link on all nine; the post's URL only with the flag exactly 0 and a URL that is not the account's.
+    expect(won).toEqual([...FLAGS.flatMap((flag) => Object.keys(URLS).map((shape) => `account, flag ${String(flag)}, URL ${shape}`)), 'post, flag 0, URL distinct']);
+  });
+
+  it('approves nothing when the report no longer holds the links the post was rendered from', async () => {
+    const cases = [
+      ['another post URL', { url: POST_URL }, { url: 'https://x.com/someone/status/9999999999', accountUrl: ACCOUNT_URL }],
+      ['another account', { url: POST_URL }, { url: POST_URL, accountUrl: 'https://x.com/someone_else' }],
+      ['no post URL, where the report has one', { url: POST_URL }, { url: null, accountUrl: ACCOUNT_URL }],
+      ['a post URL, where the report has none', { url: null }, { url: POST_URL, accountUrl: ACCOUNT_URL }],
+    ] as const;
+    for (const [label, fields, links] of cases) {
+      for (const mode of LINK_MODES) {
+        const { db } = setup();
+        const reportId = await insertReport(db, fields);
+        const outcome = await attempt(db, reportId, input(reportId, { linkMode: mode, links }));
+        expect(outcome.won, `${label}, ${mode}`).toBe(false);
+        expectNothingWritten(outcome, `${label}, ${mode}`);
+      }
+    }
+  });
+
+  it('never upserts the post mode over a voided approval once the flag is cleared, and takes the account mode over it', async () => {
+    const { db } = setup();
+    // Another admin's approval cleared the flag, and a keyholder's Cancel returned the report to review.
+    const reportId = await insertReport(db, { affected_person: null });
+    const voided = await insertApproval(db, reportId, { adminId: IDS.secondAdmin, voidedAt: NOW - 10, approvedAt: NOW - 100, startsAt: NOW - 50 });
+    const stale = await attempt(db, reportId, input(reportId, { linkMode: 'post' }));
+    expect(stale.won).toBe(false);
+    expectNothingWritten(stale, 'post');
+    expect(await db.all(sql`SELECT approval_id, admin_id, link_mode, voided_at FROM approvals`)).toEqual([
+      { approval_id: voided, admin_id: IDS.secondAdmin, link_mode: 'account', voided_at: NOW - 10 },
+    ]);
+    await db.run(sql`DELETE FROM admin_prompts`);
+    const account = input(reportId, { linkMode: 'account' });
+    expect((await attempt(db, reportId, account)).won).toBe(true);
+    expect(await db.all(sql`SELECT approval_id, admin_id, link_mode, voided_at FROM approvals`)).toEqual([
+      { approval_id: account.approvalId, admin_id: IDS.admin, link_mode: 'account', voided_at: null },
+    ]);
+    expect(await reportRow(db, reportId)).toMatchObject({ status: 'approved', link_mode: 'account' });
   });
 });

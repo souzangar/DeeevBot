@@ -95,7 +95,7 @@ then `src/db/` and `migrations/`:
 | `src/review/` | report state machine, categories and routing table, approval records, grace and cancel | yes (1, 3, 7) |
 | `src/broadcast/` | the single post of an approved report, its edits (retraction, closure), the jobs the minute cron drains (the port's minute loop), the finalization that leaves only the aggregate row, the counts | yes (1, 5, 8) |
 | `src/privacy/` | HMAC references, the redacting logger, the retention job | yes (6, 8) |
-| `src/config/` | the zod schema and loaders | yes (2, 6) |
+| `src/config/` | the zod schema and loaders | yes (2, 3, 5, 6, 7, 8) |
 | `src/db/` | the `SqlDb` port and its adapters | yes (1, 8) |
 | `migrations/` | D1 SQL migrations (wrangler's `migrations_dir`) | yes (1, 8) |
 | `src/errors/` | `AppError` and the catalog | no |

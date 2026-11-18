@@ -90,13 +90,22 @@ From the keyholder's or the owner's machine, on the host:
      compromise, the re-issued token.
    - `ADMIN_IDS`, `KEYHOLDER_IDS`: numeric ids, no id in both lists.
    - `ADMIN_CHAT_ID`, `MEMBERSHIP_CHAT_ID`, `BROADCAST_CHAT_ID`: the review
-     venue, the membership chat and the channel.
-   - `REPORTER_REF_KEY`: the existing key or a new one. Nothing is carried
-     over, so a new one loses nothing.
+     venue, the membership chat and the channel. The venue's id is
+     negative and is neither the channel's nor the membership chat's; the
+     membership chat may be the channel. The port refuses to start
+     otherwise.
+   - `REPORTER_REF_KEY`: the existing key or a new one, generated with the
+     command of `doc/guides/developer-setup.md`, section 6; either way at
+     least 32 characters, and never equal to the token, the webhook secret
+     or the path segment. Nothing is carried over, so a new one loses
+     nothing.
    - `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT`: the configuration requires
-     them, but the port uses no webhook. Set fresh values of `A-Z`, `a-z`,
-     `0-9`, `_` and `-`, never the Worker's own. The port needs no webhook
-     step either: it deletes the webhook itself at start (section 1).
+     them, but the port uses no webhook. Set fresh values, each from its
+     own run of the same command (43 characters of `A-Z`, `a-z`, `0-9`,
+     `_` and `-`), never the Worker's own: the secret has at least 32
+     characters, and the two differ from each other and from the key. The
+     port needs no webhook step either: it deletes the webhook itself at
+     start (section 1).
      `npm run set-webhook:delete`, the operations runbook's script, deletes
      it without starting anything; it is for cleaning up, not part of the
      switch.
@@ -111,9 +120,17 @@ From the keyholder's or the owner's machine, on the host:
    database you see `port.migrated` with `"count":2` (the migrations
    applied), then `port.started`. Any of the following means the port
    refused to start and exited with code 1, before polling:
-   - `config.invalid`: a value missing or malformed. The line names no
-     value; check `.env` against `.env.example` and
-     `doc/guides/developer-setup.md`, section 6.
+   - `config.invalid`: a value missing or malformed, or a rule across
+     values broken. The line names no value and no variable; check `.env`
+     against `.env.example` and every rule of
+     `doc/guides/developer-setup.md`, section 6: each variable's own rule,
+     and across them: no id in both `ADMIN_IDS` and `KEYHOLDER_IDS`;
+     `ADMIN_CHAT_ID` negative and other than `BROADCAST_CHAT_ID` and
+     `MEMBERSHIP_CHAT_ID`; `WEBHOOK_SECRET` 32 to 256 characters and
+     `REPORTER_REF_KEY` at least 32; `WEBHOOK_SECRET` other than
+     `WEBHOOK_PATH_SEGMENT`, and `REPORTER_REF_KEY` other than
+     `WEBHOOK_SECRET`, `WEBHOOK_PATH_SEGMENT` and `BOT_TOKEN`; no `DEBUG`,
+     `NODE_DEBUG` or `NODE_DEBUG_NATIVE`.
    - `port.database_failed`: the volume or the file could not be opened.
    - `port.migration_failed`: a migration failed. Nothing ran, and nothing
      was sent.

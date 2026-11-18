@@ -13,7 +13,14 @@
 //    the intake's link policy (checkReportedLink(): exact host, https, no
 //    redirector, Telegram's two shapes only), is an account on the report's
 //    own platform, and is stored in `account_url`.
-// 3. The link mode, within allowedModes() (src/review/card.ts).
+// 3. The link mode, within allowedModes() (src/review/card.ts). A press of
+//    a mode the report does not allow, for a category that is posted and a
+//    report whose account is known (a stale press: the report changed
+//    under the open card, an affected duplicate raising its flag, say; or
+//    a forged one), gets the card's modes shown again as the report allows
+//    them now, by the edit that logs its failure, and is answered "not
+//    allowed"; a press for a category that is never posted is only
+//    answered so.
 // 4. A force-reply prompt for the recommended points, `recommended_comment`,
 //    recording the confirmed category and the link mode. Only the admin who
 //    was asked can answer it (src/review/prompts.ts): the replier is the
@@ -24,14 +31,29 @@
 // keyholders' notice that carries it, checked against Telegram's 4096
 // characters and the link policy. A refusal at any of these sends a fresh
 // prompt saying why, and writes nothing. Then ONE batch (approveStatements):
-// - the approval row, written only while the report is pending and the
-//   lockdown switch is not set (NOT_LOCKED_DOWN, in the statement itself:
-//   the gates read the switch when the reply came, and the notices, with
-//   their Lockdown button, go out between that read and this batch): a
+// - the approval row, written only while the report is pending, still holds
+//   the links the post was rendered from (`url` and `account_url`) and
+//   still allows the link mode, and the lockdown switch is not set, all in
+//   the statement itself. The report was read, the mode checked and the
+//   post rendered before the notices went out (up to ten seconds per
+//   keyholder), and the report may change meanwhile: an affected
+//   duplicate's submit raises its flag, or another admin's approval clears
+//   it and a keyholder's Cancel returns the report to review. So the
+//   statement holds allowedModes()'s rule for the flag and the links, in
+//   SQL: the account link always; the post's URL only while the flag is
+//   exactly 0 and the report has a URL that is not the account's (a
+//   cleared flag fails closed). The category's own set needs no such
+//   check: the category and the mode are the prompt row's, checked before
+//   the render, and no window opens on them. NOT_LOCKED_DOWN is there
+//   because the gates read the switch when the reply came, and the
+//   notices, with their Lockdown button, go out between that read and this
+//   batch. The row: a
 //   random `approval_id`, the admin's numeric id, `approved_at`, the link
 //   mode, the recommended points, `starts_at` = now +
 //   APPROVAL_GRACE_MINUTES; over a voided row (a re-approval after Cancel)
-//   with a new `approval_id`, never over a live one;
+//   with a new `approval_id`, never over a live one, and never when the
+//   statement's own condition fails, since a SELECT that yields no row
+//   attempts no insert, and so no update over the conflicting row;
 // - the conditional `pending` to `approved`, bound to that approval_id
 //   (exactly one row changes for the one decision that wins), with the
 //   admin's category, the link mode and the rendered post
@@ -50,11 +72,15 @@
 // saying that the keyholders must /start the bot first, and nothing is
 // written, so no approval nobody outside could see ever exists. One
 // delivered notice of several suffices. When the batch then loses (another
-// decision won, or a keyholder locked the bot down meanwhile, when it
-// writes nothing but the answered prompt's deletion), the notices sent are
-// edited to "cancelled" as Cancel edits them, and the prompt is ended in
-// the venue unless the bot is locked down (the venue is compromised by
-// assumption then, and gets nothing). When the batch fails, a read decides:
+// decision won, the report changed under the approval, or a keyholder
+// locked the bot down meanwhile, when it writes nothing but the answered
+// prompt's deletion), the notices sent are edited to "cancelled" as Cancel
+// edits them, and, unless the bot is locked down (the venue is compromised
+// by assumption then, and gets nothing), the prompt is ended in the venue
+// and the card shows the report as it is now, by an edit that logs its
+// failure (the batch has run): at the category step while it is still
+// pending, so the admin starts again on what it allows now, its outcome
+// otherwise. When the batch fails, a read decides:
 // the approval did not land, and the notices are edited so and the failure
 // goes on; it landed (a failed batch may still have committed), and the
 // failure is logged by class and the approval goes on as if the batch had
@@ -73,7 +99,7 @@ import { randomId } from '../db/ids';
 import { concatSql, sql, type SqlStatement } from '../db/sql';
 import { t, type Locale } from '../i18n/index';
 import { checkReportedLink } from '../platforms/link-policy';
-import { allowedModes, approvedCard, cardFacts, currentCard, routingCard } from './card';
+import { allowedModes, approvedCard, cardFacts, currentCard, reviewCard, routingCard } from './card';
 import { isPostedCategory, type Category, type LinkMode, type PostedCategory } from './categories';
 import { clearActorPrompts, deletePromptMessages, loadPress, promptView, sendPrompt, showAfterCommit, showStep } from './flow';
 import { extractLink } from './intake';
@@ -86,7 +112,7 @@ import { checkAdminText, type AdminTextProblem } from './text-policy';
 import { deleteInVenue, editMessage, sendToVenue, type Actor, type Pressed, type PressOutcome, type ReviewDeps } from './venue';
 
 const UPSERT_APPROVAL = concatSql(
-  sql`INSERT INTO approvals (report_id, approval_id, admin_id, approved_at, link_mode, recommended_comment, starts_at, voided_at) SELECT ?, ?, ?, ?, ?, ?, ?, NULL WHERE EXISTS (SELECT 1 FROM reports WHERE id = ? AND status = 'pending') AND `,
+  sql`INSERT INTO approvals (report_id, approval_id, admin_id, approved_at, link_mode, recommended_comment, starts_at, voided_at) SELECT ?, ?, ?, ?, ?, ?, ?, NULL WHERE EXISTS (SELECT 1 FROM reports WHERE id = ? AND status = 'pending' AND url IS ? AND account_url IS ? AND (? = 'account' OR (affected_person = 0 AND url <> account_url))) AND `,
   NOT_LOCKED_DOWN,
   sql` ON CONFLICT (report_id) DO UPDATE SET approval_id = excluded.approval_id, admin_id = excluded.admin_id, approved_at = excluded.approved_at, link_mode = excluded.link_mode, recommended_comment = excluded.recommended_comment, starts_at = excluded.starts_at, voided_at = NULL WHERE approvals.voided_at IS NOT NULL`,
 );
@@ -104,6 +130,8 @@ export interface ApprovalInput {
   readonly adminId: number;
   readonly category: PostedCategory;
   readonly linkMode: LinkMode;
+  /** The report's links as the post was rendered from them: the batch approves only a report that still holds them. */
+  readonly links: { readonly url: string | null; readonly accountUrl: string };
   readonly recommendedComment: string;
   /** The bilingual post, as rendered and validated. */
   readonly broadcastText: string;
@@ -122,7 +150,19 @@ export function approveStatements(input: ApprovalInput): SqlStatement[] {
   return [
     {
       sql: UPSERT_APPROVAL,
-      params: [reportId, approvalId, input.adminId, input.now, input.linkMode, input.recommendedComment, input.startsAt, reportId],
+      params: [
+        reportId,
+        approvalId,
+        input.adminId,
+        input.now,
+        input.linkMode,
+        input.recommendedComment,
+        input.startsAt,
+        reportId,
+        input.links.url,
+        input.links.accountUrl,
+        input.linkMode,
+      ],
     },
     { sql: APPROVE_REPORT, params: [input.category, input.linkMode, input.broadcastText, reportId, approvalId] },
     enqueuePostStatement({ jobId: input.jobId, reportId, approvalId, startsAt: input.startsAt, now: input.now }),
@@ -132,7 +172,11 @@ export function approveStatements(input: ApprovalInput): SqlStatement[] {
   ];
 }
 
-/** Runs the approval's batch; true when it won (the report was still pending, and the bot not locked down). */
+/**
+ * Runs the approval's batch; true when it won: the report was still
+ * pending, held the links and still allowed the mode, and the bot was not
+ * locked down.
+ */
 export async function writeApproval(deps: Pick<ReviewDeps, 'db'>, input: ApprovalInput): Promise<boolean> {
   const results = await deps.db.batch(approveStatements(input));
   return results[APPROVAL_STATUS_STATEMENT]?.changes === 1;
@@ -175,7 +219,7 @@ export async function chooseCategory(
   return {};
 }
 
-/** A link mode chosen: the recommended-points prompt, if the mode is one the report allows. */
+/** A link mode chosen: the recommended-points prompt, if the mode is one the report allows; else "not allowed", the card's modes shown again as they are now (see the header, step 3). */
 export async function chooseLinkMode(
   deps: ReviewDeps,
   actor: Actor,
@@ -187,7 +231,12 @@ export async function chooseLinkMode(
   const loaded = await loadPress(deps, actor, reportId, pressed, { pendingOnly: true });
   if (!loaded.ok) return loaded.outcome;
   const { report } = loaded;
-  if (!isPostedCategory(category) || (report.accountUrl !== null && !allowedModes(report, category).includes(mode))) {
+  if (!isPostedCategory(category)) return { answer: t(actor.locale, 'review.answer.not_allowed') };
+  if (report.accountUrl !== null && !allowedModes(report, category).includes(mode)) {
+    // A stale press (the report changed under the open card: an affected duplicate raised its flag, say) or a forged one:
+    // the card shows the modes the report allows now, by the edit that logs its failure, so a failed edit never keeps the refusal from its answer.
+    const modes = reviewCard(await cardFacts(deps.db, report), deps.config.venueLocale, { kind: 'modes', category, modes: allowedModes(report, category) });
+    await showAfterCommit(deps, report, modes);
     return { answer: t(actor.locale, 'review.answer.not_allowed') };
   }
   if (report.accountUrl === null) {
@@ -236,7 +285,13 @@ async function refuse(deps: ReviewDeps, report: ReviewReport, prompt: AdminPromp
   await deleteInVenue(deps, reply.messageId);
 }
 
-/** Ends a prompt whose report is no longer pending: the row, the prompt and the reply go, the card shows the outcome. */
+/**
+ * Ends a prompt: its row, its message and the reply go. Given the report,
+ * the card then shows it as it is now (a decided report's outcome), by the
+ * edit that logs its failure; given null, the card is the caller's to show
+ * (a report still pending that changed under the prompt starts again at the
+ * category).
+ */
 async function endPrompt(deps: ReviewDeps, report: ReviewReport | null, prompt: AdminPrompt, reply: PromptReply): Promise<void> {
   await deps.db.batch([deletePromptStatement(prompt.chatId, prompt.promptMessageId)]);
   await deletePromptMessages(deps, [prompt]);
@@ -333,6 +388,7 @@ async function capturePoints(deps: ReviewDeps, actor: Actor, report: ReviewRepor
       adminId: actor.id,
       category,
       linkMode,
+      links: { url: report.url, accountUrl: report.accountUrl },
       recommendedComment: points,
       broadcastText: rendering.text,
       now,
@@ -350,10 +406,18 @@ async function capturePoints(deps: ReviewDeps, actor: Actor, report: ReviewRepor
     won = true;
   }
   if (!won) {
-    // Another decision won, or the bot was locked down, after the notices went out: they say "cancelled", as Cancel leaves them.
+    // Another decision won, the report changed under the approval, or the bot was locked down, after the notices went out: they say "cancelled", as Cancel leaves them.
     await withdrawNotices(deps, report.id, approvalId);
     if (await isLockedDown(deps.config, deps.db)) return;
-    await endPrompt(deps, await readReport(deps.db, report.id), prompt, reply);
+    const current = await readReport(deps.db, report.id);
+    if (current?.status === 'pending') {
+      // Still in review: the admin starts again at the category, on the card as the report is now (its flag included),
+      // by the edit that logs its failure, as the edit of the non-pending card below does.
+      await endPrompt(deps, null, prompt, reply);
+      await showAfterCommit(deps, current, reviewCard(await cardFacts(deps.db, current), deps.config.venueLocale, { kind: 'categories' }));
+      return;
+    }
+    await endPrompt(deps, current, prompt, reply);
     return;
   }
   await afterApproval(deps, report, approvalId, { sent: notified.sent, total: deps.config.keyholderIds.length }, open, reply);

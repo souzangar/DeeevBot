@@ -77,7 +77,10 @@ themselves", and X says "we need a first person report" for private media
 and "we may need to hear directly from the owner" for private
 information, so a third party's report may not be acted on. The post
 never promises removal. The flag serves the review only and is nulled at
-the decision, with the comment.
+the decision, with the comment. The rule is checked again in the
+approval's own write, so a flag a duplicate raises while the keyholders'
+notices are out refuses a post-URL approval
+([Report lifecycle](./report-lifecycle.md)).
 
 ## The link policy
 

@@ -1,7 +1,7 @@
 // @critical-path
 // The configuration schema (doc/architecture/adr-0002-language-and-framework.md,
 // doc/architecture/adr-0003-update-transport-and-admin-authority.md;
-// critical invariants 2 and 6).
+// critical invariants 2, 3, 5, 6, 7 and 8).
 //
 // Every value comes from the deployment's secret store or environment
 // (Workers secrets in production, .dev.vars locally, the environment on the
@@ -23,14 +23,36 @@
 //   and secret into process.env, and the Node port hands process.env to this
 //   loader whole, so each of them would write to the console past the
 //   redacting logger. The port refuses before any request is made.
+// The two keys have a floor, and neither may equal a value disclosed more
+// widely than itself: WEBHOOK_SECRET, the proof that an update came from
+// Telegram (rule 2, src/telegram/webhook.ts), which Telegram holds too, has
+// 32 to 256 characters of Telegram's alphabet and is never
+// WEBHOOK_PATH_SEGMENT's value, which is in the webhook's URL;
+// REPORTER_REF_KEY, the key of every reporter reference and link hash
+// (rule 8, src/privacy/), has at least 32 characters (UTF-16 units, so at
+// least 32 bytes of key) and is never the value of WEBHOOK_SECRET or
+// BOT_TOKEN, which Telegram holds, or of WEBHOOK_PATH_SEGMENT. Equality is
+// all these checks see: they catch a value pasted twice, never a weak or a
+// related one, and no length proves that a value is random.
 // The posts go to one channel, BROADCAST_CHAT_ID, and only to links on the
-// exact hosts of ALLOWED_LINK_HOSTS. VENUE_LOCALE is the one language of
-// every message the bot writes in the admin review venue, whoever acts, so
-// the venue's text reveals no admin's client language. LOCKDOWN is the keyholder's override
+// exact hosts of ALLOWED_LINK_HOSTS. ADMIN_CHAT_ID, the admin review venue,
+// is a group's or a channel's chat id (negative), and never the value of
+// BROADCAST_CHAT_ID or MEMBERSHIP_CHAT_ID: the venue's cards show the
+// reported links, the reporter's comment and reference and the routing card
+// of suspected CSAM, which no member of the channel or of the membership
+// chat may see (rules 3, 5 and 7). MEMBERSHIP_CHAT_ID may be the channel
+// itself. VENUE_LOCALE is the one language of every message the bot writes
+// in the admin review venue, whoever acts, so the venue's text reveals no
+// admin's client language. LOCKDOWN is the keyholder's override
 // (`wrangler secret put LOCKDOWN` with the value 1), which no Telegram
 // command can clear.
 // SQLITE_PATH is the Node port's alone (src/node.ts): the SQLite file it
 // keeps its database in; the Worker never reads it and never needs it.
+// The rules between variables (CROSS_FIELD_RULES: the admins and the
+// keyholders, the keys apart from one another, the venue apart from the
+// channel and the membership chat) are checked once every variable holds
+// on its own; every one that fails goes into the one CONFIG_INVALID,
+// naming the variables it binds and never a value.
 // The Worker and the Node port read their configuration through
 // configFor(env) in src/config/memo.ts, which parses once per env object.
 import { z } from 'zod';
@@ -46,8 +68,10 @@ const INSPECT_CUSTOM = Symbol.for('nodejs.util.inspect.custom');
 const INTEGER = /^-?(?:0|[1-9][0-9]*)$/;
 /** One entry of a user-id list: a positive decimal integer in canonical form. */
 const USER_ID = /^[1-9][0-9]*$/;
-/** Telegram's setWebhook secret_token alphabet (doc/guides/operations-and-security.md, 2.1). */
-const WEBHOOK_SECRET = /^[A-Za-z0-9_-]{1,256}$/;
+/** Telegram's setWebhook secret_token alphabet and maximum (doc/guides/operations-and-security.md, 2.1), at least 32 characters. */
+const WEBHOOK_SECRET = /^[A-Za-z0-9_-]{32,256}$/;
+/** The fewest UTF-16 units REPORTER_REF_KEY holds: each encodes to a byte of key or more, so 32 bytes at least, RFC 2104's floor for HMAC-SHA-256. */
+const REFERENCE_KEY_MIN_LENGTH = 32;
 /** A URL path segment that needs no escaping. */
 const PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
 /** A Telegram bot username, without the @. */
@@ -78,6 +102,13 @@ export const DEFAULT_LINK_HOSTS = Object.freeze([
 
 const secret = z.string().regex(NOT_BLANK);
 
+/**
+ * REPORTER_REF_KEY: a non-blank secret of any alphabet, at least
+ * REFERENCE_KEY_MIN_LENGTH UTF-16 units long. `.length` on purpose: zod's
+ * own min() counts code points.
+ */
+const referenceKey = secret.refine((value) => value.length >= REFERENCE_KEY_MIN_LENGTH);
+
 /** A decimal integer in [min, max]; zod's int() also bounds it to the safe-integer range. */
 const integer = (min: number, max: number) =>
   z
@@ -93,8 +124,8 @@ const chatId = z
   .transform((value) => Number(value))
   .pipe(z.int().refine((id) => id !== 0));
 
-/** A channel's chat id: a negative safe integer. */
-const channelId = z
+/** A group's or a channel's chat id: a negative safe integer. */
+const negativeChatId = z
   .string()
   .regex(INTEGER)
   .transform((value) => Number(value))
@@ -142,10 +173,10 @@ const envSchema = z.object({
   WEBHOOK_PATH_SEGMENT: z.string().regex(PATH_SEGMENT),
   ADMIN_IDS: userIds,
   KEYHOLDER_IDS: userIds,
-  REPORTER_REF_KEY: secret,
-  ADMIN_CHAT_ID: chatId,
+  REPORTER_REF_KEY: referenceKey,
+  ADMIN_CHAT_ID: negativeChatId,
   MEMBERSHIP_CHAT_ID: chatId,
-  BROADCAST_CHAT_ID: channelId,
+  BROADCAST_CHAT_ID: negativeChatId,
   ALLOWED_LINK_HOSTS: hostList.default([...DEFAULT_LINK_HOSTS]),
   LOCKDOWN: z.literal('1').optional(),
   APPROVAL_GRACE_MINUTES: integer(1, 1440).default(30),
@@ -162,12 +193,12 @@ const REQUIREMENTS: Readonly<Record<VariableName, string>> = {
   BOT_TOKEN: 'a non-blank secret',
   BOT_ID: "a positive integer, the bot's numeric Telegram id",
   BOT_USERNAME: "the bot's username without the @: 5 to 32 characters from A-Z, a-z, 0-9 and _",
-  WEBHOOK_SECRET: '1 to 256 characters from A-Z, a-z, 0-9, _ and -',
+  WEBHOOK_SECRET: '32 to 256 characters from A-Z, a-z, 0-9, _ and -, equal to neither WEBHOOK_PATH_SEGMENT nor REPORTER_REF_KEY',
   WEBHOOK_PATH_SEGMENT: 'a URL path segment of A-Z, a-z, 0-9, _ and -',
   ADMIN_IDS: 'comma-separated numeric Telegram user ids, never usernames',
   KEYHOLDER_IDS: 'comma-separated numeric Telegram user ids, never usernames, none of them in ADMIN_IDS',
-  REPORTER_REF_KEY: 'a non-blank secret',
-  ADMIN_CHAT_ID: 'a non-zero integer chat id',
+  REPORTER_REF_KEY: 'a non-blank secret of at least 32 characters, equal to none of BOT_TOKEN, WEBHOOK_SECRET and WEBHOOK_PATH_SEGMENT',
+  ADMIN_CHAT_ID: "a negative integer chat id, the private admin supergroup's: never the broadcast channel's or the membership chat's",
   MEMBERSHIP_CHAT_ID: 'a non-zero integer chat id',
   BROADCAST_CHAT_ID: "a negative integer chat id, the broadcast channel's",
   ALLOWED_LINK_HOSTS:
@@ -194,13 +225,68 @@ const FORBIDDEN: Readonly<Record<string, string>> = {
 const forbiddenBecause = (name: string): string | undefined =>
   Object.hasOwn(FORBIDDEN, name) ? FORBIDDEN[name] : undefined;
 
-/** The error for an id in both ADMIN_IDS and KEYHOLDER_IDS: both names, no value. */
-const sharedId = (): AppError =>
-  new AppError(
-    'CONFIG_INVALID',
-    'invalid configuration: ADMIN_IDS and KEYHOLDER_IDS must not share an id: a keyholder is never an admin',
-    { variables: ['ADMIN_IDS', 'KEYHOLDER_IDS'] },
-  );
+/** The variables once each holds on its own. */
+type Values = z.output<typeof envSchema>;
+
+/**
+ * A rule between variables, checked once each holds on its own: the
+ * variables it binds, and the sentence a refusal gives, which names them
+ * and why, never a value.
+ */
+interface CrossFieldRule {
+  readonly variables: readonly VariableName[];
+  readonly sentence: string;
+  readonly holds: (values: Values) => boolean;
+}
+
+/** The rules between variables (see the header), in the order a refusal gives them. */
+const CROSS_FIELD_RULES: readonly CrossFieldRule[] = [
+  {
+    variables: ['ADMIN_IDS', 'KEYHOLDER_IDS'],
+    sentence: 'ADMIN_IDS and KEYHOLDER_IDS must not share an id: a keyholder is never an admin',
+    holds: (values) => !values.KEYHOLDER_IDS.some((id) => values.ADMIN_IDS.includes(id)),
+  },
+  {
+    variables: ['WEBHOOK_PATH_SEGMENT', 'WEBHOOK_SECRET'],
+    sentence: "WEBHOOK_SECRET and WEBHOOK_PATH_SEGMENT must differ: the path segment is in the webhook's URL, which getWebhookInfo and request logs show",
+    holds: (values) => values.WEBHOOK_SECRET !== values.WEBHOOK_PATH_SEGMENT,
+  },
+  {
+    variables: ['REPORTER_REF_KEY', 'WEBHOOK_SECRET'],
+    sentence: 'REPORTER_REF_KEY and WEBHOOK_SECRET must differ: Telegram holds the webhook secret',
+    holds: (values) => values.REPORTER_REF_KEY !== values.WEBHOOK_SECRET,
+  },
+  {
+    variables: ['REPORTER_REF_KEY', 'WEBHOOK_PATH_SEGMENT'],
+    sentence: "REPORTER_REF_KEY and WEBHOOK_PATH_SEGMENT must differ: the path segment is in the webhook's URL",
+    holds: (values) => values.REPORTER_REF_KEY !== values.WEBHOOK_PATH_SEGMENT,
+  },
+  {
+    variables: ['BOT_TOKEN', 'REPORTER_REF_KEY'],
+    sentence: 'REPORTER_REF_KEY and BOT_TOKEN must differ: Telegram holds the bot token',
+    holds: (values) => values.REPORTER_REF_KEY !== values.BOT_TOKEN,
+  },
+  {
+    variables: ['ADMIN_CHAT_ID', 'BROADCAST_CHAT_ID'],
+    sentence: 'ADMIN_CHAT_ID and BROADCAST_CHAT_ID must differ: the review venue is never the broadcast channel',
+    holds: (values) => values.ADMIN_CHAT_ID !== values.BROADCAST_CHAT_ID,
+  },
+  {
+    variables: ['ADMIN_CHAT_ID', 'MEMBERSHIP_CHAT_ID'],
+    sentence: 'ADMIN_CHAT_ID and MEMBERSHIP_CHAT_ID must differ: the review venue is never the membership chat',
+    holds: (values) => values.ADMIN_CHAT_ID !== values.MEMBERSHIP_CHAT_ID,
+  },
+];
+
+/**
+ * The error for the rules of CROSS_FIELD_RULES that failed: the variables
+ * they bind, sorted, once each, and each one's sentence; never a value, and
+ * no cause.
+ */
+const crossFieldInvalid = (failed: readonly CrossFieldRule[]): AppError =>
+  new AppError('CONFIG_INVALID', `invalid configuration: ${failed.map((rule) => rule.sentence).join('; ')}`, {
+    variables: [...new Set(failed.flatMap((rule) => rule.variables))].sort(),
+  });
 
 /** The validated configuration. Printing it in any form yields CONFIG_REDACTED. */
 export interface Config {
@@ -208,12 +294,15 @@ export interface Config {
   /** With botUsername, the bot's identity for grammY's botInfo: no getMe call per update. */
   readonly botId: number;
   readonly botUsername: string;
+  /** The webhook's secret_token: 32 to 256 characters, never the path segment's value. */
   readonly webhookSecret: string;
   readonly webhookPathSegment: string;
   readonly adminIds: readonly number[];
   /** The keyholders: they receive the alerts and may run /lockdown, /unlock and /retract. */
   readonly keyholderIds: readonly number[];
+  /** The key of the reporter references and link hashes: at least 32 characters, never the token's, the webhook secret's or the path segment's value. */
   readonly reporterRefKey: string;
+  /** The admin review venue: a negative chat id, never the channel's or the membership chat's. */
   readonly adminChatId: number;
   /** The chat whose members get the members' intake limits. */
   readonly membershipChatId: number;
@@ -260,9 +349,10 @@ const configInvalid = (variables: readonly string[]): AppError => {
  * CONFIG_INVALID whose `variables` lists the offending names, sorted; an
  * environment that defines DEBUG, NODE_DEBUG or NODE_DEBUG_NATIVE, with any
  * value, the empty one included, is refused the same way, naming each and
- * why; a configuration whose
- * ADMIN_IDS and KEYHOLDER_IDS share an id is refused the same way, naming
- * both.
+ * why. Once every variable holds on its own, a configuration that breaks
+ * any of CROSS_FIELD_RULES (ADMIN_IDS and KEYHOLDER_IDS sharing an id, say)
+ * is refused the same way, by one error naming every variable the broken
+ * rules bind and saying each rule.
  */
 export function loadConfig(env: Record<string, string | undefined>): Config {
   // Defined at all is enough: the empty value counts here, unlike below.
@@ -282,7 +372,8 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   }
 
   const values = parsed.data;
-  if (values.KEYHOLDER_IDS.some((id) => values.ADMIN_IDS.includes(id))) throw sharedId();
+  const broken = CROSS_FIELD_RULES.filter((rule) => !rule.holds(values));
+  if (broken.length > 0) throw crossFieldInvalid(broken);
   return Object.freeze({
     botToken: values.BOT_TOKEN,
     botId: values.BOT_ID,

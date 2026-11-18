@@ -450,12 +450,20 @@ the VPN. The procedure, from the keyholder's machine, logged in with
 3. `npx wrangler deploy --config wrangler.probe.jsonc`, then
    `npx wrangler secret put <NAME> --config wrangler.probe.jsonc` for each
    variable of the configuration: `BOT_TOKEN`, `BOT_ID` and `BOT_USERNAME`
-   of the throwaway bot; a fresh random `WEBHOOK_SECRET`,
-   `WEBHOOK_PATH_SEGMENT` and `REPORTER_REF_KEY`; `ADMIN_IDS=1` and
-   `KEYHOLDER_IDS=2` (no admin or keyholder takes part); any non-zero
-   `ADMIN_CHAT_ID` and `MEMBERSHIP_CHAT_ID`; the throwaway channel's
-   `BROADCAST_CHAT_ID`. Never `DEBUG`, `NODE_DEBUG` or
-   `NODE_DEBUG_NATIVE`, which the configuration refuses.
+   of the throwaway bot; a fresh `WEBHOOK_SECRET` (32 to 256 characters),
+   `WEBHOOK_PATH_SEGMENT` and `REPORTER_REF_KEY` (at least 32 characters),
+   each from its own run of the generation command of the
+   [developer setup](../guides/developer-setup.md), section 6, so that the
+   configuration's four pairs that must differ hold (the secret and the
+   segment; the key and each of the secret, the segment and the token);
+   `ADMIN_IDS=1` and `KEYHOLDER_IDS=2` (no admin or keyholder takes part);
+   a negative `ADMIN_CHAT_ID` that is neither the throwaway channel's id nor
+   `MEMBERSHIP_CHAT_ID` (no venue takes part, but the configuration refuses
+   a positive venue and either overlap, so the former "any non-zero" no
+   longer loads); any non-zero `MEMBERSHIP_CHAT_ID`, the throwaway
+   channel's own id included; the throwaway channel's `BROADCAST_CHAT_ID`.
+   Never `DEBUG`, `NODE_DEBUG` or `NODE_DEBUG_NATIVE`, which the
+   configuration refuses.
 4. Register the webhook with the bot's own script (Node 22.18 or later,
    after `npm ci`), run with the probe's own values in the environment:
    one `NAME=value` line for each variable step 3 lists, the throwaway

@@ -125,9 +125,11 @@ export async function editMessage(
 }
 
 /**
- * editMessage(), after a decision committed: a message already gone (a
- * card another decision deleted) is left alone, any other failure is
- * logged by class, and nothing ends. True when the edit went.
+ * editMessage() where a failed edit must not end the flow: after a decision
+ * committed, after an approval's batch that lost, or before a stale press
+ * is answered (src/review/approve.ts). A message already gone (a card
+ * another decision deleted) is left alone, any other failure is logged by
+ * class, and nothing ends. True when the edit went.
  */
 export async function editAfterCommit(
   deps: Pick<ReviewDeps, 'api' | 'config' | 'logger'>,

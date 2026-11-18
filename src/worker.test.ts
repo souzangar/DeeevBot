@@ -102,6 +102,15 @@ describe('the Worker entry', () => {
     expect(telegram.calls).toEqual([]);
     expect(log.records()).toEqual([{ level: 'error', event: 'config.invalid', errorClass: 'AppError', errorCode: 'CONFIG_INVALID' }]);
   });
+
+  it('answers 500 when the review venue is the broadcast channel: no bot, no Bot API call, a class-only line', async () => {
+    const { telegram, log, call } = setup();
+    const response = await call(post(privateMessage(IDS.reporter, '/start')), { ...TEST_VARIABLES, ADMIN_CHAT_ID: TEST_VARIABLES.BROADCAST_CHAT_ID, DB });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe('');
+    expect(telegram.calls).toEqual([]);
+    expect(log.records()).toEqual([{ level: 'error', event: 'config.invalid', errorClass: 'AppError', errorCode: 'CONFIG_INVALID' }]);
+  });
 });
 
 describe('the cron handler', () => {
@@ -126,6 +135,13 @@ describe('the cron handler', () => {
   it('runs nothing on a configuration that does not load, and logs it by class', async () => {
     const { telegram, log, fire } = scheduledSetup();
     expect(await fire('* * * * *', { ...TEST_VARIABLES, DEBUG: '', DB })).toEqual([]);
+    expect(telegram.calls).toEqual([]);
+    expect(log.records()).toEqual([{ level: 'error', event: 'config.invalid', errorClass: 'AppError', errorCode: 'CONFIG_INVALID' }]);
+  });
+
+  it('runs nothing when the review venue is the broadcast channel: no store touched, no post, no Bot API call', async () => {
+    const { telegram, log, fire } = scheduledSetup();
+    expect(await fire('* * * * *', { ...TEST_VARIABLES, ADMIN_CHAT_ID: TEST_VARIABLES.BROADCAST_CHAT_ID, DB })).toEqual([]);
     expect(telegram.calls).toEqual([]);
     expect(log.records()).toEqual([{ level: 'error', event: 'config.invalid', errorClass: 'AppError', errorCode: 'CONFIG_INVALID' }]);
   });

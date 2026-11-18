@@ -46,7 +46,7 @@ const digest = (value: string): Buffer => createHash('sha256').update(value, 'ut
 /**
  * Whether `header` holds `secret`: timingSafeEqual over the SHA-256 digests,
  * which have the same length whatever the inputs. A missing header is
- * compared as the empty string, which never matches: the secret has 1 to
+ * compared as the empty string, which never matches: the secret has 32 to
  * 256 characters.
  */
 export const secretMatches = (header: string | null, secret: string): boolean =>

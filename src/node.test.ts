@@ -192,8 +192,15 @@ describe('startPort', () => {
     expect(second.log.records()[0]).toEqual({ level: 'info', event: 'port.migrated', count: 0 });
   });
 
-  it('refuses to start on a configuration that does not load, NODE_DEBUG included: no database, no Bot API call, a class-only line', async () => {
-    for (const variables of [{ BOT_TOKEN: undefined }, { DEBUG: '' }, { NODE_DEBUG: 'fetch' }, { NODE_DEBUG_NATIVE: '' }, { ADMIN_IDS: '@someadmin' }]) {
+  it('refuses to start on a configuration that does not load, NODE_DEBUG and a venue that is the channel included: no database, no Bot API call, a class-only line', async () => {
+    for (const variables of [
+      { BOT_TOKEN: undefined },
+      { DEBUG: '' },
+      { NODE_DEBUG: 'fetch' },
+      { NODE_DEBUG_NATIVE: '' },
+      { ADMIN_IDS: '@someadmin' },
+      { ADMIN_CHAT_ID: TEST_VARIABLES.BROADCAST_CHAT_ID },
+    ]) {
       const setup = rig(at(15, 12, 0, 30), variables);
       const openDatabase = vi.fn(setup.options.openDatabase);
       expect(await startPort({ ...setup.options, openDatabase })).toBeNull();

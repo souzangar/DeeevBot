@@ -14,7 +14,11 @@
 // - rule 3: the post and the keyholders' notice carry no reporter
 //   reference, comment, reporter id, username or name, no admin id, and no
 //   post URL under the account mode, in both locales; the card shows the
-//   reference and never a reporter's id, username or name;
+//   reference and never a reporter's id, username or name; a post-mode
+//   approval that an affected reporter's duplicate made stale before its
+//   batch is never written: past its grace no call reaches the channel, no
+//   keyholder's chat keeps the post URL, and the re-approval's one post
+//   carries the account link alone;
 // - rule 4: every send and edit of the review has previews off and HTML
 //   parse mode, and every tappable link in it is on the two lists; the
 //   points validator refuses a URL, a bare domain, a mention, t.me, a phone
@@ -23,6 +27,13 @@
 // - rule 5: the review sends to the venue and, by direct message, to the
 //   keyholders only: never to the channel, a reporter or the membership
 //   group;
+// - rules 3, 5 and 7: no bot is built whose venue is the broadcast channel
+//   or the membership chat (the configuration is refused), so no card, with
+//   its links, comment and reference, reaches their members; with the
+//   channel as the membership chat, the supported fallback, a member of the
+//   channel reports twice in a day, a non-member's second report of the day
+//   is refused, and the intake and the review to an approval write nothing
+//   into the channel;
 // - rule 7: a report the admin categorises as suspected CSAM gets no
 //   approval, by any path; Route nulls the links, the comment and the flag
 //   on the report and on its merged rows in one batch; the routing card is
@@ -35,6 +46,7 @@
 // The commit gate runs this file on every commit (`npm run test:invariants`).
 import { describe, expect, it } from 'vitest';
 import { sql } from '../../src/db/sql';
+import { AppError } from '../../src/errors/app-error';
 import { t } from '../../src/i18n/index';
 import { linksIn, outgoingLinkProblems } from '../../src/platforms/link-policy';
 import { reporterRef } from '../../src/privacy/reporter-ref';
@@ -43,11 +55,15 @@ import { noticeData, REJECT_REASONS, REVIEW_PREFIXES, reviewData, type ReviewAct
 import { CATEGORIES } from '../../src/review/categories';
 import { renderBilingualPost } from '../../src/review/render-post';
 import { routeStatements } from '../../src/review/route';
+import { reviewFeatures } from '../../src/telegram/review';
 import { FAILURES, type RecordedCall } from '../fakes/bot-api';
 import { botHarness, type BotHarness } from '../support/bot-harness';
+import { report, reporterIn } from '../support/intake-driver';
 import { reviewIn, type ReviewDriver, type SubmittedReport } from '../support/review-driver';
 import { insertReport } from '../support/review-rows';
+import { storeWith } from '../support/review-store';
 import { isOwnTable } from '../support/schema-description';
+import { tickHarness, type TickHarness } from '../support/tick-harness';
 import { IDS } from '../support/variables';
 
 const X_POST = 'https://x.com/doxxed_target/status/1234567890';
@@ -116,6 +132,7 @@ describe('critical invariant 1: no approval without the whole flow', () => {
       adminId: IDS.admin,
       category: 'harassment',
       linkMode: 'account',
+      links: { url: 'https://x.com/someone/status/1234567890', accountUrl: 'https://x.com/someone' },
       recommendedComment: POINTS,
       broadcastText: 'post',
       now: 1,
@@ -180,6 +197,57 @@ describe('critical invariant 3: the post, the notice and the card expose nobody'
     const text = review.card(report)?.text ?? '';
     expect(text).toContain(await reporterRef(IDS.reporter, harness.config.reporterRefKey));
     for (const fragment of [String(IDS.reporter), NAMES.username, NAMES.firstName]) expect(text).not.toContain(fragment);
+  });
+
+  it("never lets a post-mode approval through once an affected reporter's duplicate made it stale before its batch: nothing to the channel, no post URL left with a keyholder", async () => {
+    let fired = false;
+    let noticeHeldPost = false;
+    const built: { harness?: TickHarness } = {};
+    const self = (): TickHarness => {
+      if (built.harness === undefined) throw new Error('the harness is not built yet');
+      return built.harness;
+    };
+    // The review runs over a store whose approval batch lets the affected person's duplicate land first, once.
+    const harness = tickHarness({
+      features: (deps) => [
+        reviewFeatures({
+          ...deps,
+          db: storeWith(deps.db, {
+            batch: async (statements) => {
+              if (!fired) {
+                fired = true;
+                noticeHeldPost = (self().telegram.messagesIn(IDS.keyholder)[0]?.text ?? '').includes('status/1234567890');
+                await reviewIn(self()).submit({ url: X_POST, category: 'private_data', affected: true, comment: 'it is my address' }, IDS.stranger);
+              }
+              return deps.db.batch(statements);
+            },
+          }),
+        }),
+      ],
+    });
+    built.harness = harness;
+    const review = reviewIn(harness);
+    const target = await review.submit({ url: X_POST, category: 'private_data', affected: false, comment: COMMENT }, IDS.reporter, NAMES);
+    await review.approve(IDS.admin, target, { category: 'private_data', mode: 'post', points: POINTS });
+    expect(fired).toBe(true);
+    expect(noticeHeldPost).toBe(true);
+    expect(await approvals(harness)).toEqual([]);
+    const channel = (): RecordedCall[] => harness.telegram.calls.filter((call) => call.chatId === IDS.broadcastChannel);
+    // Past the grace the stale approval would have had: no call of any method reaches the channel.
+    harness.clock.advance(GRACE + 2 * 60_000);
+    await harness.run();
+    expect(channel()).toEqual([]);
+    for (const keyholder of harness.config.keyholderIds) {
+      for (const message of harness.telegram.messagesIn(keyholder)) expect(message.text ?? '', String(keyholder)).not.toContain('status/1234567890');
+    }
+    // The re-approval takes the account mode, the one the report allows now; past its grace, the one post carries the account link alone.
+    await review.approve(IDS.admin, target, { category: 'private_data', mode: 'account', points: POINTS });
+    harness.clock.advance(GRACE + 2 * 60_000);
+    await harness.run();
+    const posted = channel();
+    expect(posted.map((call) => call.method)).toEqual(['sendMessage']);
+    expect(String(posted[0]?.payload.text)).toContain(X_ACCOUNT);
+    expect(String(posted[0]?.payload.text)).not.toContain('status/1234567890');
   });
 
   it('renders a Telegram target as code text, never a link', async () => {
@@ -247,6 +315,56 @@ describe('critical invariants 4 and 5: what the review sends, and where', () => 
     await review.approve(IDS.admin, report, { category: 'private_data', mode: 'account', points });
     expect(await approvals(harness)).toEqual([]);
     expect(harness.telegram.calls.filter((call) => call.chatId === IDS.keyholder)).toEqual([]);
+  });
+});
+
+describe('critical invariants 3, 5 and 7: the review venue is never the channel or the membership chat', () => {
+  /** The methods that put text into a chat, or take it out. */
+  const MESSAGE_METHODS = ['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'deleteMessage'];
+
+  it.each([
+    ['the broadcast channel', IDS.broadcastChannel],
+    ['the membership chat', IDS.membershipChat],
+  ])('builds no bot whose venue is %s: the configuration is refused', (_label, venue) => {
+    let caught: unknown;
+    try {
+      botHarness({ variables: { ADMIN_CHAT_ID: String(venue) } });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AppError);
+    expect(caught).toMatchObject({ code: 'CONFIG_INVALID' });
+    expect((caught as AppError).variables).toContain('ADMIN_CHAT_ID');
+  });
+
+  it('runs the intake and the review with the channel as the membership chat, the supported fallback, and writes nothing into the channel', async () => {
+    const harness = botHarness({ variables: { MEMBERSHIP_CHAT_ID: String(IDS.broadcastChannel) } });
+    // The channel's members are the members now: the reporter is one; the stranger is not (the fake answers "left").
+    harness.telegram.setMember(IDS.broadcastChannel, IDS.reporter, { status: 'member' });
+    const member = reporterIn(harness, IDS.reporter, NAMES);
+    await report(member, { url: X_POST, category: 'private_data', affected: false, comment: COMMENT });
+    await report(member, { url: 'https://x.com/second_target/status/2234567890', category: 'harassment', affected: false });
+    const stranger = reporterIn(harness, IDS.stranger);
+    await report(stranger, { url: 'https://x.com/third_target/status/3234567890', category: 'harassment', affected: false });
+    await report(stranger, { url: 'https://x.com/fourth_target/status/4234567890', category: 'harassment', affected: false });
+    const reportsOf = async (id: number) =>
+      harness.db.all<{ id: string; card_message_id: number | null }>(sql`SELECT id, card_message_id FROM reports WHERE reporter_ref = ? ORDER BY created_at, rowid`, [
+        await reporterRef(id, harness.config.reporterRefKey),
+      ]);
+    // A member of the channel reports twice in a day; a non-member's second report of the day is refused.
+    const [first, second] = await reportsOf(IDS.reporter);
+    expect(second).toBeDefined();
+    expect(await reportsOf(IDS.stranger)).toHaveLength(1);
+    expect(harness.telegram.callsOf('getChatMember').map((call) => call.chatId)).toContain(IDS.broadcastChannel);
+    // The card is in the venue, and the review runs there to an approval.
+    const submitted = { reportId: first?.id ?? '', cardId: first?.card_message_id ?? 0 };
+    expect(reviewIn(harness).card(submitted)?.text).toContain(X_POST);
+    await reviewIn(harness).approve(IDS.admin, submitted, { category: 'private_data', mode: 'account', points: POINTS });
+    expect(await approvals(harness)).toEqual([expect.objectContaining({ report_id: submitted.reportId, voided_at: null })]);
+    // Nothing was written into, edited in or deleted from the channel.
+    const messages = harness.telegram.calls.filter((call) => MESSAGE_METHODS.includes(call.method));
+    expect(messages.length).toBeGreaterThan(10);
+    expect(messages.filter((call) => call.chatId === IDS.broadcastChannel)).toEqual([]);
   });
 });
 
